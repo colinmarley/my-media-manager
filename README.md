@@ -3,7 +3,7 @@ This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-
 The app aims to make a management interface to lookup metadata for movies and shows in my personal collection. It uses the [OMDB API](https://www.omdbapi.com/#usage) to lookup the information about the media and then stores the information in the firebase firestore setup for the project. From here, once all of the metadata is stored for my collection I can connect the a rag-ai agent to answer questions/queries about the movies in my collection.
 
 First Look at development:
-
+![screenshot of development](./assets/Screenshot_Early_development.png)
 
 ## Getting Started
 
