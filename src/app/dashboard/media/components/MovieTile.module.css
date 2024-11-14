@@ -1,0 +1,31 @@
+.movieTile {
+    display: flex;
+    align-items: center;
+    padding: 10px;
+    margin: 10px 0;
+    background-color: #2a2a2a; /* Darker background for tiles */
+    border-radius: 10px;
+    box-shadow: 0 0 5px rgba(0, 255, 255, 0.5); /* Neon glow effect */
+    color: #00ffff; /* Neon cyan text */
+  }
+  
+  .poster {
+    width: 100px;
+    height: auto;
+    border-radius: 5px;
+    margin-right: 20px;
+  }
+  
+  .details {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .details h3 {
+    margin: 0;
+    margin-bottom: 10px;
+  }
+  
+  .details p {
+    margin: 5px 0;
+  }
