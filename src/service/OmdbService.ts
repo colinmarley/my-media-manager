@@ -1,13 +1,13 @@
 import { OmdbResponseFull, OmdbSearchResponse } from '../types/OmdbResponse.type';
 
-const API_KEY = '4253525e';
-const BASE_URL = 'https://www.omdbapi.com/';
+const API_KEY = process.env.NEXT_PUBLIC_OMDB_API_KEY;
+const BASE_URL = process.env.NEXT_PUBLIC_OMDB_BASE_URL;
 
 const searchOmdb = async (params: string): Promise<OmdbSearchResponse[]> => {
   const response = await fetch(`${BASE_URL}?${params}&apikey=${API_KEY}`);
-  console.log(response);
+  
   const data = await response.json();
-  console.log(data);
+
   if (data.Response === 'True') {
     return data.Search;
   } else {
