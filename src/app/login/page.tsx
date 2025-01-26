@@ -1,90 +1,47 @@
 "use client";
 
-import React, {FormEvent, useState} from 'react';
-import {  signInWithEmailAndPassword   } from 'firebase/auth';
-import { auth } from '../../../firebaseConfig';
+import React, { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import useAuthentication from '../../hooks/useAuthentication';
 
 const Login = () => {
-    const router = useRouter();
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
+  const router = useRouter();
+  const { login, user, loading, error } = useAuthentication();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
 
-    const onLogin = (e: FormEvent) => {
-        e.preventDefault();
-        signInWithEmailAndPassword(auth, email, password)
-        .then((userCredential) => {
-            // Signed in
-            const user = userCredential.user;
-            router.push("/dashboard")
-            console.log(user);
-        })
-        .catch((error) => {
-            const errorCode = error.code;
-            const errorMessage = error.message;
-            console.log(errorCode, errorMessage)
-        });
-
+  const onLogin = async (e: FormEvent) => {
+    e.preventDefault();
+    await login(email, password);
+    if (user) {
+      router.push('/dashboard');
     }
+  };
 
-    return(
-        <>
-            <main >        
-                <section>
-                    <div>                                            
-                        <p> FocusApp </p>                       
+  return (
+    <div>
+      <form onSubmit={onLogin}>
+        <input
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder="Email"
+        />
+        <input
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password"
+        />
+        <button type="submit" disabled={loading}>
+          {loading ? 'Logging in...' : 'Login'}
+        </button>
+        {error && <p>{error}</p>}
+      </form>
+      <Link href="/register">Register</Link>
+    </div>
+  );
+};
 
-                        <form>                                              
-                            <div>
-                                <label htmlFor="email-address">
-                                    Email address
-                                </label>
-                                <input
-                                    id="email-address"
-                                    name="email"
-                                    type="email"                                    
-                                    required                                                                                
-                                    placeholder="Email address"
-                                    onChange={(e)=>setEmail(e.target.value)}
-                                />
-                            </div>
-
-                            <div>
-                                <label htmlFor="password">
-                                    Password
-                                </label>
-                                <input
-                                    id="password"
-                                    name="password"
-                                    type="password"                                    
-                                    required                                                                                
-                                    placeholder="Password"
-                                    onChange={(e)=>setPassword(e.target.value)}
-                                />
-                            </div>
-
-                            <div>
-                                <button                                    
-                                    onClick={onLogin}                                        
-                                >      
-                                    Login                                                                  
-                                </button>
-                            </div>                               
-                        </form>
-
-                        <p className="text-sm text-white text-center">
-                            No account yet? {' '}
-                            <Link href="/signup">
-                                Sign up
-                            </Link>
-                        </p>
-
-                    </div>
-                </section>
-            </main>
-        </>
-    )
-}
-
-export default Login
+export default Login;

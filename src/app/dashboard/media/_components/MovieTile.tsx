@@ -1,5 +1,5 @@
 import React from 'react';
-import styles from './MovieTile.module.css';
+import styles from '../_styles/MovieTile.module.css';
 import { OmdbSearchResponse } from '@/types/OmdbResponse.type';
 
 interface MovieTileProps {
@@ -8,7 +8,7 @@ interface MovieTileProps {
 
 const MovieTile: React.FC<MovieTileProps> = ({movieInfo}) => {
   return (
-    <div className={styles.movieTile}>
+    <div key={movieInfo.imdbID} className={styles.movieTile}>
       <img src={movieInfo.Poster} alt={`${movieInfo.Title} poster`} className={styles.poster} />
       <div className={styles.details}>
         <h3>{movieInfo.Title}</h3>

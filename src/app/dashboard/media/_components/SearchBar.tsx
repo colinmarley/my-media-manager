@@ -1,12 +1,12 @@
-import { useState } from 'react';
 import { searchByText } from '../../../../service/OmdbService';
+import { useMediaSelectorContext } from '@/context/MediaSelectorContext';
 
-const SearchBar = ({ setSearchResults }: { setSearchResults: (results: any[]) => void }) => {
-  const [query, setQuery] = useState('');
+const SearchBar = () => {
+  const { setSearchResults, searchQuery, setSearchQuery } = useMediaSelectorContext();
 
   const handleSearch = async () => {
     try {
-      const results = await searchByText(query);
+      const results = await searchByText(searchQuery);
       console.log(results);
       setSearchResults(results);
     } catch (error) {
@@ -18,8 +18,8 @@ const SearchBar = ({ setSearchResults }: { setSearchResults: (results: any[]) =>
     <div>
       <input
         type="text"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        value={searchQuery}
+        onChange={(e) => setSearchQuery(e.target.value)}
         placeholder="Search for movies or shows..."
       />
       <button onClick={handleSearch}>Search</button>

@@ -6,35 +6,35 @@ export interface OmdbSearchResponse {
     Poster: string;
 }
 export interface OmdbResponseFull {
-    title: string;
-    year: string;
-    rated: string;
-    released: string;
-    runtime: string;
-    genre: string;
-    director: string;
-    writer: string;
-    actors: string;
-    plot: string;
-    language: string;
-    country: string;
-    awards: string;
-    poster: string;
-    ratings: Rating[];
-    metascore: string;
+    Title: string;
+    Year: string;
+    Rated: string;
+    Released: string;
+    Runtime: string;
+    Genre: string;
+    Director: string;
+    Writer: string;
+    Actors: string;
+    Plot: string;
+    Language: string;
+    Country: string;
+    Awards: string;
+    Poster: string;
+    Ratings: Rating[];
+    Metascore: string;
     imdbRating: string;
     imdbVotes: string;
     imdbID: string;
-    type: string;
-    dvd?: string; // Optional field for movies
-    boxOffice?: string; // Optional field for movies
-    production?: string; // Optional field for movies
-    website?: string; // Optional field for movies
-    response: string;
-    totalSeasons?: string; // Optional field for series
+    Type: string;
+    Dvd?: string; // Optional field for movies
+    BoxOffice?: string; // Optional field for movies
+    Production?: string; // Optional field for movies
+    Website?: string; // Optional field for movies
+    Response: string;
+    TotalSeasons?: string; // Optional field for series
 }
 
 export interface Rating {
-    source: string;
-    value: string;
+    Source: string;
+    Value: string;
 }

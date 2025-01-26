@@ -15,7 +15,7 @@ const searchOmdb = async (params: string): Promise<OmdbSearchResponse[]> => {
   }
 };
 
-const fetchFromOmdb = async (params: string): Promise<OmdbResponseFull[]> => {
+const fetchFromOmdb = async (params: string): Promise<OmdbResponseFull> => {
   const response = await fetch(`${BASE_URL}?${params}&apikey=${API_KEY}`);
   const data = await response.json();
   if (data.Response === 'True') {
@@ -25,13 +25,17 @@ const fetchFromOmdb = async (params: string): Promise<OmdbResponseFull[]> => {
   }
 };
 
-export const searchMovieByTitle = async (title: string): Promise<OmdbResponseFull[]> => {
+export const retrieveMovieDataByTitle = async (title: string): Promise<OmdbResponseFull> => {
   return fetchFromOmdb(`t=${title}&type=movie&plot=full`);
 };
 
-export const searchShowByTitle = async (title: string): Promise<OmdbResponseFull[]> => {
+export const retrieveShowDataByTitle = async (title: string): Promise<OmdbResponseFull> => {
   return fetchFromOmdb(`t=${title}&type=series&plot=full`);
 };
+
+export const retrieveMediaDataById = async (id: string): Promise<OmdbResponseFull> => {
+  return fetchFromOmdb(`i=${id}&plot=full`);
+}
 
 export const searchByText = async (text: string): Promise<OmdbSearchResponse[]> => {
   return searchOmdb(`s=${text}`);

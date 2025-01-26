@@ -4,7 +4,7 @@ import MovieTile from "./MovieTile";
 const CollectionList = ({ collection }: { collection: OmdbSearchResponse[] }) => {
   return (
     <div style={{ overflowY: 'scroll', height: '80vh' }}>
-      {collection.map((movie) => (<MovieTile movieInfo={movie} />))}
+      {collection.map((movie: OmdbSearchResponse) => (<MovieTile movieInfo={movie} />))}
     </div>
   );
 };
