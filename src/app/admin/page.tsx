@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
+import AddDiscForm from './_components/DiscForm';
 
 const AdminPage: React.FC = () => {
   const [selectedType, setSelectedType] = useState<string>('');
@@ -37,7 +38,7 @@ const CustomComponent: React.FC<CustomComponentProps> = ({ type }) => {
     case 'Resource':
       return <ResourceForm />;
     case 'Disc':
-      return <DiscForm />;
+      return <AddDiscForm />;
     case 'Movie':
       return <MovieForm />;
     case 'Collection':
@@ -58,15 +59,6 @@ const ResourceForm: React.FC = () => (
     <h2>Add a new Resource</h2>
     <input type="text" placeholder="Resource Name" />
     <input type="text" placeholder="Resource Description" />
-    {/* Add more input fields as needed */}
-  </div>
-);
-
-const DiscForm: React.FC = () => (
-  <div>
-    <h2>Add a new Disc</h2>
-    <input type="text" placeholder="Disc Title" />
-    <input type="text" placeholder="Disc Format" />
     {/* Add more input fields as needed */}
   </div>
 );
