@@ -34,7 +34,8 @@ export const retrieveShowDataByTitle = async (title: string): Promise<OmdbRespon
 };
 
 export const retrieveMediaDataById = async (id: string): Promise<OmdbResponseFull> => {
-  return fetchFromOmdb(`i=${id}&plot=full`);
+  const response = await fetchFromOmdb(`i=${id}&plot=full`);
+  return response;
 }
 
 export const searchByText = async (text: string): Promise<OmdbSearchResponse[]> => {

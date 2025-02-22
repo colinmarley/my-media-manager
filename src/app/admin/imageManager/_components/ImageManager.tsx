@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
-import ImageService from '../../../service/ImageService';
+import ImageService from '../../../../service/ImageService';
+import ImageSearch from './ImageSearch';
 
 const ImageManager: React.FC = () => {
-  const [query, setQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<string[]>([]);
   const [listResults, setListResults] = useState<string>('');
   const [currentName, setCurrentName] = useState('');
   const [newName, setNewName] = useState('');
@@ -11,15 +10,6 @@ const ImageManager: React.FC = () => {
   const [message, setMessage] = useState('');
 
   const imageService = new ImageService();
-
-  const handleSearch = async () => {
-    try {
-      const results = await imageService.searchImages(query);
-      setSearchResults(results);
-    } catch (error) {
-      console.error('Error searching images:', error);
-    }
-  };
 
   const handleList = async () => {
     try {
@@ -41,16 +31,7 @@ const ImageManager: React.FC = () => {
 
   return (
     <div>
-      <div>
-        <h2>Search Images</h2>
-        <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search query" />
-        <button onClick={handleSearch}>Search</button>
-        <ul>
-          {searchResults.map((file, index) => (
-            <li key={index}>{file}</li>
-          ))}
-        </ul>
-      </div>
+      <ImageSearch />
       <div>
         <h2>List Images</h2>
         <button onClick={handleList}>List Images</button>

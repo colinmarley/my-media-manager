@@ -1,4 +1,3 @@
-import Image from "next/image";
 import styles from "./_styles/page.module.css";
 import LandingPage from "./_components/LandingPage";
 
