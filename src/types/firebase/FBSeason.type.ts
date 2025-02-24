@@ -15,7 +15,7 @@ export interface FBSeason {
   seriesId: string; // Reference to the series this season belongs to
   number: number;
   countryOfOrigin: string;
-  directors: Director[];
+  directors: Director[];    
   imageFiles: ImageFile[];
   letterboxdLink?: string; // Optional field for Letterboxd link
   plexLink?: string; // Optional field for Plex link

@@ -8,6 +8,12 @@ export interface Director {
     awards: string[];
 }
 
+export interface DirectorEntry {
+    directorId?: string;
+    name: string;
+    title: string;
+}
+
 export interface ImageFile {
   fileName: string;
   fileSize: number; // in bytes

@@ -31,24 +31,24 @@ export interface ImageFile {
 
 export interface MovieInfoSmall {
     id: string;
-    title: string;
-    releaseYear: number;
+    title?: string;
+    releaseYear?: number;
 }
 
 export interface SeasonInfoSmall {
     id: string;
-    title: string;
-    releaseYear: number;
+    title?: string;
+    releaseYear?: number;
 }
 
 export interface SeriesInfoSmall {
     id: string;
-    title: string;
-    releaseYear: number;
+    title?: string;
+    releaseYear?: number;
 }
 
 export interface EpisodeInfoSmall {
     id: string;
-    title: string;
-    releaseDate: number;
+    title?: string;
+    releaseDate?: number;
 }
