@@ -6,6 +6,8 @@ import { MediaSelectorProvider } from '@/context/MediaSelectorContext';
 import './globals.css'; // Import the global CSS file
 import { ThemeProvider } from '@emotion/react';
 import { createTheme } from '@mui/material/styles';
+import useAuthentication from '@/hooks/useAuthentication';
+import useUserStore from '@/store/useUserStore';
 
 
 const theme = createTheme({
@@ -33,6 +35,19 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+
+  const { logout } = useAuthentication();
+  const { user, loading, error, setUser, setLoading, setError } = useUserStore();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      setUser(null);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
+
   return (
     <html lang="en">
       <body className={`dark-theme`}>
@@ -48,9 +63,19 @@ export default function RootLayout({
                 <h1 className="header-title">My App</h1>
               </div>
               <div className="header-right">
-                <Link href="/signup">
-                  <button className="header-button">Login/Sign Up</button>
-                </Link>
+                {user && (
+                  <div>
+                    <p>{user}</p>
+                    <button className="header-button" onClick={handleLogout}>
+                      Logout
+                    </button>
+                  </div>
+                )}
+                {!user && (
+                  <Link href="/signup">
+                    <button className="header-button">Login/Sign Up</button>
+                  </Link>
+                )}
               </div>
             </header>
             <main className="main-content">

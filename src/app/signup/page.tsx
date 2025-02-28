@@ -4,18 +4,26 @@ import React, { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import useAuthentication from '../../hooks/useAuthentication';
+import useUserStore from '../../store/useUserStore';
 
 const Signup = () => {
   const router = useRouter();
-  const { register, user, loading, error } = useAuthentication();
+  const { register } = useAuthentication();
+  const { user, loading, error, setUser, setLoading, setError } = useUserStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    await register(email, password);
-    if (user) {
+    setLoading(true);
+    try {
+      await register(email, password);
+      setUser(email);
       router.push('/login');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 

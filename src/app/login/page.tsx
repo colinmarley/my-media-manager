@@ -4,18 +4,26 @@ import React, { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import useAuthentication from '../../hooks/useAuthentication';
+import useUserStore from '../../store/useUserStore';
 
 const Login = () => {
   const router = useRouter();
-  const { login, user, loading, error } = useAuthentication();
+  const { login } = useAuthentication();
+  const { user, loading, error, setUser, setLoading, setError } = useUserStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   const onLogin = async (e: FormEvent) => {
     e.preventDefault();
-    await login(email, password);
-    if (user) {
+    setLoading(true);
+    try {
+      await login(email, password);
+      setUser(email);
       router.push('/dashboard');
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -39,7 +47,7 @@ const Login = () => {
         </button>
         {error && <p>{error}</p>}
       </form>
-      <Link href="/register">Register</Link>
+      <Link href="/signup">Sign Up</Link>
     </div>
   );
 };
