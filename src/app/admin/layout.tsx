@@ -26,6 +26,10 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         centered
       >
         <Tab label="Movies" value="/admin/movie" />
+        <Tab label="Series" value="/admin/series" />
+        <Tab label="Seasons" value="/admin/season" />
+        <Tab label="Episodes" value="/admin/episode" />
+        <Tab label="Resources" value="/admin/resource" />
         <Tab label="Discs" value="/admin/disc" />
         <Tab label="Collection" value="/admin/collection" />
         <Tab label="Image Manager" value="/admin/imageManager" />

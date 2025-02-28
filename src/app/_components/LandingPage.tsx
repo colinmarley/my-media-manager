@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
+
+import { Button, ButtonGroup, Typography } from '@mui/material';
 import '../_styles/LandingPage.module.css';
 
 const LandingPage: React.FC = () => {
@@ -11,11 +12,13 @@ const LandingPage: React.FC = () => {
   return (
     <div className="landing-page">
       <div className="content">
-        <img src="/path/to/your/image.png" alt="Landing Page Image" className="landing-image" />
-        <div className="buttons">
-          <button className='landing-pg-btn' onClick={() => router.push('/signup')}>Sign Up</button>
-          <button className='landing-pg-btn' onClick={() => router.push('/login')}>Sign In</button>
-        </div>
+        <Typography variant="h1" className="header">My Media Manager</Typography>
+        <Typography variant="h4" className="subheader">Organize your media with ease</Typography>
+        <Typography variant="body1" className="description">My Media Manager is a simple and easy-to-use media manager that allows you to organize your media files in one place. Sign up now to get started!</Typography>
+        <ButtonGroup variant="outlined" aria-label="Basic button group">
+          <Button onClick={() => router.push('/signup')}>Sign Up</Button>
+          <Button onClick={() => router.push('/login')}>Sign In</Button>
+        </ButtonGroup>
       </div>
     </div>
   );
