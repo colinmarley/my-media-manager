@@ -1,30 +1,19 @@
 "use client";
 
 import React, { FormEvent, useState } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import useAuthentication from '../../hooks/useAuthentication';
-import useUserStore from '../../store/useUserStore';
+import useAuth from '../../hooks/useAuth';
+import useAuthenticationStore from '../../store/useAuthenticationStore';
 
 const Signup = () => {
-  const router = useRouter();
-  const { register } = useAuthentication();
-  const { user, loading, error, setUser, setLoading, setError } = useUserStore();
+  const { handleSignup } = useAuth();
+  const { loading, error } = useAuthenticationStore();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    setLoading(true);
-    try {
-      await register(email, password);
-      setUser(email);
-      router.push('/login');
-    } catch (err: any) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+    await handleSignup(email, password, '/login');
   };
 
   return (

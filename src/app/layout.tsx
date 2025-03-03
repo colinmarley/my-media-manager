@@ -1,13 +1,16 @@
 'use client'
 
-import React from 'react';
-import Link from 'next/link';
+import React, { useEffect, useState } from 'react';
 import { MediaSelectorProvider } from '@/context/MediaSelectorContext';
 import './globals.css'; // Import the global CSS file
 import { ThemeProvider } from '@emotion/react';
 import { createTheme } from '@mui/material/styles';
-import useAuthentication from '@/hooks/useAuthentication';
-import useUserStore from '@/store/useUserStore';
+import { AppProvider } from '@toolpad/core/AppProvider';
+import useAuth from '@/hooks/useAuth';
+import useAuthenticationStore from '@/store/useAuthenticationStore';
+import Link from '@mui/material/Link';
+import { Avatar, Button, ButtonGroup } from '@mui/material';
+import { deepOrange } from '@mui/material/colors';
 
 
 const theme = createTheme({
@@ -24,7 +27,7 @@ const theme = createTheme({
       paper: '#1d1d1d',
     },
     text: {
-      primary: '#000000',
+      primary: '#ffffff',
       secondary: '#aaaaaa',
     },
   },
@@ -35,54 +38,56 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const { user } = useAuthenticationStore();
+  const [displayName, setDisplayName] = useState<string | null>(null);
+  const { handleLogout } = useAuth();
 
-  const { logout } = useAuthentication();
-  const { user, loading, error, setUser, setLoading, setError } = useUserStore();
-
-  const handleLogout = async () => {
-    try {
-      await logout();
-      setUser(null);
-    } catch (err: any) {
-      setError(err.message);
+  useEffect(() => {
+    if (user) {
+      if (user.providerData[0].displayName) {
+        setDisplayName(user.providerData[0].displayName);
+      } else {
+        setDisplayName(user.providerData[0].email);
+      }
+    } else {
+      setDisplayName(null);
     }
-  };
+  }, [user]);
 
   return (
     <html lang="en">
       <body className={`dark-theme`}>
-        <ThemeProvider theme={theme}>
-          <MediaSelectorProvider>
-            <header className="header">
-              <div className="header-left">
-                <Link href="/dashboard">
-                  <button className="header-button">Dashboard</button>
-                </Link>
-              </div>
-              <div className="header-center">
-                <h1 className="header-title">My App</h1>
-              </div>
-              <div className="header-right">
+        <AppProvider theme={theme}>
+          <ThemeProvider theme={theme}>
+            <MediaSelectorProvider>
+              <header className="header">
+                <div className="header-left">
+                  <Link href="/dashboard">Dashboard</Link>
+                </div>
+                <div className="header-center">
+                  <h1 className="header-title">My App</h1>
+                </div>
+                <div className="header-right">
                 {user && (
-                  <div>
-                    <p>{user}</p>
-                    <button className="header-button" onClick={handleLogout}>
-                      Logout
-                    </button>
-                  </div>
-                )}
-                {!user && (
-                  <Link href="/signup">
-                    <button className="header-button">Login/Sign Up</button>
-                  </Link>
-                )}
-              </div>
-            </header>
-            <main className="main-content">
-              {children}
-            </main>
-          </MediaSelectorProvider>
-        </ThemeProvider>
+                    <ButtonGroup>
+                      <Button>
+                        {displayName}
+                      </Button>
+                      <Avatar sx={{ bgcolor: deepOrange[500] }}></Avatar>
+                      <Button onClick={handleLogout}>Logout</Button>
+                    </ButtonGroup>
+                  )}
+                  {!user && (
+                    <Link href="/signup">Login/Sign Up</Link>
+                  )}
+                </div>
+              </header>
+              <main className="main-content">
+                {children}
+              </main>
+            </MediaSelectorProvider>
+          </ThemeProvider>
+        </AppProvider>
       </body>
     </html>
   );

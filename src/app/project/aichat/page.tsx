@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useState } from 'react';
-import styles from './_styles/Dashboard.module.css';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../../../firebaseConfig';
+import styles from './_styles/aichat.module.css';
 import useAuthenticationStore from '@/store/useAuthenticationStore';
 
 const Dashboard = () => {
