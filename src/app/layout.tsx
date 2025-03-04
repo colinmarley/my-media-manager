@@ -1,17 +1,15 @@
 'use client'
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
+import Link from 'next/link';
 import { MediaSelectorProvider } from '@/context/MediaSelectorContext';
 import './globals.css'; // Import the global CSS file
 import { ThemeProvider } from '@emotion/react';
 import { createTheme } from '@mui/material/styles';
+import { Button } from '@mui/material';
 import { AppProvider } from '@toolpad/core/AppProvider';
-import useAuth from '@/hooks/useAuth';
+import ProfileAccess from './_components/ProfileAccess';
 import useAuthenticationStore from '@/store/useAuthenticationStore';
-import Link from '@mui/material/Link';
-import { Avatar, Button, ButtonGroup } from '@mui/material';
-import { deepOrange } from '@mui/material/colors';
-
 
 const theme = createTheme({
   palette: {
@@ -39,21 +37,6 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   const { user } = useAuthenticationStore();
-  const [displayName, setDisplayName] = useState<string | null>(null);
-  const { handleLogout } = useAuth();
-
-  useEffect(() => {
-    if (user) {
-      if (user.providerData[0].displayName) {
-        setDisplayName(user.providerData[0].displayName);
-      } else {
-        setDisplayName(user.providerData[0].email);
-      }
-    } else {
-      setDisplayName(null);
-    }
-  }, [user]);
-
   return (
     <html lang="en">
       <body className={`dark-theme`}>
@@ -62,23 +45,28 @@ export default function RootLayout({
             <MediaSelectorProvider>
               <header className="header">
                 <div className="header-left">
-                  <Link href="/dashboard">Dashboard</Link>
+                  <Link href="/dashboard">
+                    <Button className="header-button" variant="contained" color="primary">
+                      Dashboard
+                    </Button>
+                  </Link>
+                  <Link href="/admin">
+                    <Button className="header-button" variant="contained" color="primary">
+                      Admin
+                    </Button>
+                  </Link>
                 </div>
                 <div className="header-center">
                   <h1 className="header-title">My App</h1>
                 </div>
                 <div className="header-right">
-                {user && (
-                    <ButtonGroup>
-                      <Button>
-                        {displayName}
-                      </Button>
-                      <Avatar sx={{ bgcolor: deepOrange[500] }}></Avatar>
-                      <Button onClick={handleLogout}>Logout</Button>
-                    </ButtonGroup>
-                  )}
+                  {user && <ProfileAccess />}
                   {!user && (
-                    <Link href="/signup">Login/Sign Up</Link>
+                    <Link href="/signup">
+                      <Button className="header-button" variant="contained" color="primary">
+                        Login/Sign Up
+                      </Button>
+                    </Link>
                   )}
                 </div>
               </header>

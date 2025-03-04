@@ -19,12 +19,17 @@ class ImageService {
     }
   }
 
-  async listImages(): Promise<string> {
+  async listImages(): Promise<{ name: string; url: string }[]> {
     try {
       const response = await axios.get(`${this.baseUrl}/list`, {
-        responseType: 'text',
+        responseType: 'json',
       });
-      return response.data;
+      console.log(response.data);
+      // Assuming the response data is an array of objects with `name` and `url` properties
+      return response.data.images.map((image: any) => ({
+        name: image.name,
+        url: image.url,
+      }));
     } catch (error) {
       console.error('Error listing images:', error);
       throw error;
