@@ -1,14 +1,15 @@
 import React, { useEffect, useCallback } from 'react';
-import { Button, TextField, Typography, Box, Dialog, DialogTitle, DialogContent, DialogActions, FormControl } from '@mui/material';
+import { Button, Typography, Box } from '@mui/material';
 import { debounce } from 'lodash';
 import useImageStore from '../../../../store/useImageStore';
 import ImageListComponent from './ImageListComponent';
 import ImagePreviewDialog from './ImagePreviewDialog';
 import ImageEditorComponent from './ImageEditorComponent';
+import ImageDataTable from './ImageDataTable';
 
 const ImageManager: React.FC = () => {
   const {
-    listResults,
+    imageResults,
     currentName,
     newName,
     subfolder,
@@ -92,10 +93,7 @@ const ImageManager: React.FC = () => {
         <Button variant="contained" color="primary" onClick={handleList}>
           List Images
         </Button>
-        <ImageListComponent
-          listResults={listResults}
-          handleCopy={handleCopy}
-          handlePreview={handlePreview} />
+        <ImageDataTable images={imageResults} handleRename={handleRename} />
       </Box>
       <ImageEditorComponent
         currentName={currentName}
@@ -105,16 +103,12 @@ const ImageManager: React.FC = () => {
         setCurrentName={setCurrentName}
         handleNewNameChange={handleNewNameChange}
         handleSubfolderChange={handleSubfolderChange}
-        handleRename={handleRename} />
+        handleRename={handleRename}
+      />
       <ImagePreviewDialog
         previewUrl={previewUrl}
-        newName={newName}
-        subfolder={subfolder}
-        renameMessage={renameMessage}
-        handleNewNameChange={handleNewNameChange}
-        handleSubfolderChange={handleSubfolderChange}
-        handleRenamePreview={handleRenamePreview}
-        handleClosePreview={handleClosePreview} />
+        handleClosePreview={handleClosePreview}
+      />
     </Box>
   );
 };

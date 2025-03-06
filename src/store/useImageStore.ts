@@ -1,8 +1,17 @@
 import { create } from 'zustand';
 import ImageService from '../service/ImageService';
 
+export interface ImageResult {
+    name: string;
+    url: string;
+    parentFolder: string;
+    size: string;
+    lastModified: string;
+}
+
 interface ImageState {
   listResults: { name: string; url: string }[];
+  imageResults: ImageResult[];
   currentName: string;
   newName: string;
   subfolder: string;
@@ -11,6 +20,7 @@ interface ImageState {
   previewName: string;
   renameMessage: string;
   setListResults: (results: { name: string; url: string }[]) => void;
+  setImageResults: (results: ImageResult[]) => void;
   setCurrentName: (name: string) => void;
   setNewName: (name: string) => void;
   setSubfolder: (subfolder: string) => void;
@@ -20,13 +30,14 @@ interface ImageState {
   setRenameMessage: (message: string) => void;
   handleList: () => Promise<void>;
   handleRename: () => Promise<void>;
-  handleRenamePreview: () => Promise<void>;
+  handleRenamePreview: (name: string, subfolder: string) => Promise<void>;
 }
 
 const imageService = new ImageService();
 
 const useImageStore = create<ImageState>((set) => ({
   listResults: [],
+  imageResults: [],
   currentName: '',
   newName: '',
   subfolder: '',
@@ -35,6 +46,7 @@ const useImageStore = create<ImageState>((set) => ({
   previewName: '',
   renameMessage: '',
   setListResults: (results) => set({ listResults: results }),
+  setImageResults: (results) => set({ imageResults: results }),
   setCurrentName: (name) => set({ currentName: name }),
   setNewName: (name) => set({ newName: name }),
   setSubfolder: (subfolder) => set({ subfolder }),
@@ -45,7 +57,7 @@ const useImageStore = create<ImageState>((set) => ({
   handleList: async () => {
     try {
       const results = await imageService.listImages();
-      set({ listResults: results });
+      set({ imageResults: results });
     } catch (error) {
       console.error('Error listing images:', error);
     }
@@ -63,8 +75,8 @@ const useImageStore = create<ImageState>((set) => ({
       console.error('Error renaming image:', error);
     }
   },
-  handleRenamePreview: async () => {
-    const { previewName, newName, subfolder, setRenameMessage, setMessage, setCurrentName, setNewName, setPreviewName, setSubfolder } = useImageStore.getState();
+  handleRenamePreview: async (newName: string, subfolder: string) => {
+    const { previewName, setRenameMessage, setMessage, setCurrentName, setNewName, setPreviewName, setSubfolder } = useImageStore.getState();
     const newFullName = newName.replaceAll(" ", "_").toUpperCase() + "_DVD_SLEEVE.png";
     try {
       const resultMessage = await imageService.renameImage(previewName, newFullName, subfolder);
