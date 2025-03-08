@@ -17,12 +17,28 @@ import styles from '../_styles/MovieForm.module.css';
 import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
+import useMovieValidation from '../../../utils/useMovieValidation';
+
+interface ValidationErrors {
+    title: string | null;
+    year: string | null;
+    countryOfOrigin: string | null;
+    directors: string | null;
+    imageFiles: string | null;
+    releaseDate: string | null;
+    runtime: string | null;
+    topCast: string | null;
+    writers: string | null;
+    genres: string | null;
+    language: string | null;
+}
 
 const FormTextField = (
     props: { 
         label: string,
         value: string,
-        onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+        onChange: (e: React.ChangeEvent<HTMLInputElement>) => void,
+        error?: string | null
     }) => (
         <TextField
             label={props.label}
@@ -31,6 +47,8 @@ const FormTextField = (
             sx={{input: { color: 'white' }, label: { color: 'white' }}}
             fullWidth
             required
+            error={!!props.error}
+            helperText={props.error}
         />
 );
 
@@ -52,6 +70,34 @@ const MovieForm: React.FC = () => {
     const [isPartOfCollection, setIsPartOfCollection] = useState(false);
     const [genres, setGenres] = useState<string[]>([]);
     const [language, setLanguage] = useState('');
+
+    const { 
+        validateTitle,
+        validateYear,
+        validateCountryOfOrigin,
+        validateDirectors,
+        validateImageFiles,
+        validateReleaseDate,
+        validateRuntime,
+        validateTopCast,
+        validateWriters,
+        validateGenres,
+        validateLanguage,
+    } = useMovieValidation();
+
+    const [errors, setErrors] = useState<ValidationErrors>({
+        title: null,
+        year: null,
+        countryOfOrigin: null,
+        directors: null,
+        imageFiles: null,
+        releaseDate: null,
+        runtime: null,
+        topCast: null,
+        writers: null,
+        genres: null,
+        language: null,
+    });
 
     useEffect(() => {
         setTitle(omdbData?.Title || title);
@@ -83,7 +129,7 @@ const MovieForm: React.FC = () => {
         setDirectors(newDirectors);
     };
 
-    const handleMovieSelect = async (selectedTitle: string, selectedYear: string, selectedImdbId: string) =>{
+    const handleMovieSelect = async (selectedTitle: string, selectedYear: string, selectedImdbId: string) => {
         setTitle(selectedTitle);
         setYear(selectedYear);
         const fullMovieData = await retrieveMediaDataById(selectedImdbId)
@@ -93,6 +139,27 @@ const MovieForm: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        const newErrors = {
+            title: validateTitle(title),
+            year: validateYear(year),
+            countryOfOrigin: validateCountryOfOrigin(countryOfOrigin),
+            directors: validateDirectors(directors),
+            imageFiles: validateImageFiles(imageFiles),
+            releaseDate: validateReleaseDate(releaseDate),
+            runtime: validateRuntime(runtime),
+            topCast: validateTopCast(topCast),
+            writers: validateWriters(writers),
+            genres: validateGenres(genres),
+            language: validateLanguage(language),
+        };
+
+        setErrors(newErrors);
+
+        const hasErrors = Object.values(newErrors).some(error => error !== null);
+        if (hasErrors) {
+            return;
+        }
 
         const movie: FBMovie = {
             id: '', // Firebase will generate the ID
@@ -127,17 +194,17 @@ const MovieForm: React.FC = () => {
                     <Typography variant="h4" color="white">Add New Movie</Typography>
                 </Grid>
                 <Grid size={9}>
-                <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
+                    <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
                 </Grid>
                 <Grid size={12}>
                     <Button onClick={() => handleMovieTitleSearch(title)} variant="contained" color="primary">
                         Search Movie Title
                     </Button>
                 </Grid>
-                    {omdbResults.length > 0 && (
-                        <Grid size={12}>
-                            <Typography variant="h6">Search Results:</Typography>
-                            <List>
+                {omdbResults.length > 0 && (
+                    <Grid size={12}>
+                        <Typography variant="h6">Search Results:</Typography>
+                        <List>
                             {omdbResults.map((result, index) => (
                                 <ListItem key={`search-result-${index}`} disablePadding>
                                     <ListItemButton onClick={() => handleMovieSelect(result.Title, result.Year, result.imdbID)}>
@@ -145,25 +212,25 @@ const MovieForm: React.FC = () => {
                                     </ListItemButton>
                                 </ListItem>
                             ))}
-                            </List>
-                        </Grid>
-                    )}
+                        </List>
+                    </Grid>
+                )}
                 <Grid size={12} color={"white"}>
-                    <FormTextField label="Year" value={year} onChange={(e) => setYear(e.target.value)} />
+                    <FormTextField label="Year" value={year} onChange={(e) => setYear(e.target.value)} error={errors.year} />
                 </Grid>
                 <Grid size={3} color={"white"}>
-                    <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} />
+                    <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} error={errors.countryOfOrigin} />
                 </Grid>
                 <Grid size={12}>
                     <Typography variant="h6">Directors</Typography>
                     {directors.map((director, index) => (
                         <Grid container spacing={2} key={index}>
-                        <Grid size={6}>
-                            <FormTextField label="Name" value={director.name} onChange={(e) => handleDirectorChange(index, 'name', e.target.value)} />
-                        </Grid>
-                        <Grid size={6}>
-                            <FormTextField label="Title" value={director.title} onChange={(e) => handleDirectorChange(index, 'title', e.target.value)} />
-                        </Grid>
+                            <Grid size={6}>
+                                <FormTextField label="Name" value={director.name} onChange={(e) => handleDirectorChange(index, 'name', e.target.value)} />
+                            </Grid>
+                            <Grid size={6}>
+                                <FormTextField label="Title" value={director.title} onChange={(e) => handleDirectorChange(index, 'title', e.target.value)} />
+                            </Grid>
                         </Grid>
                     ))}
                     <Button onClick={handleAddDirector}>Add Director</Button>
@@ -175,33 +242,33 @@ const MovieForm: React.FC = () => {
                     <FormTextField label="Plex Link" value={plexLink} onChange={(e) => setPlexLink(e.target.value)} />
                 </Grid>
                 <Grid size={3}>
-                    <FormTextField label="Release Date" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} />
+                    <FormTextField label="Release Date" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} error={errors.releaseDate} />
                 </Grid>
                 <Grid size={3}>
-                    <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} />
+                    <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} error={errors.runtime} />
                 </Grid>
                 <Grid size={6}>
-                    <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} />
+                    <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} error={errors.topCast} />
                 </Grid>
                 <Grid size={6}>
-                    <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} />
+                    <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} error={errors.writers} />
                 </Grid>
                 <Grid size={6}>
                     <FormControlLabel
                         control={
-                        <Checkbox
-                            checked={isPartOfCollection}
-                            onChange={(e) => setIsPartOfCollection(e.target.checked)}
-                        />
+                            <Checkbox
+                                checked={isPartOfCollection}
+                                onChange={(e) => setIsPartOfCollection(e.target.checked)}
+                            />
                         }
                         label="Is Part of Collection"
                     />
                 </Grid>
                 <Grid size={4}>
-                    <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} />
+                    <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} error={errors.genres} />
                 </Grid>
                 <Grid size={8}>
-                    <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} />
+                    <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
                 </Grid>
                 <Grid size={12}>
                     <ImageSearch />
@@ -211,11 +278,11 @@ const MovieForm: React.FC = () => {
                         Add Movie
                     </Button>
                 </Grid>
-                    {omdbData && (
-                        <Grid size={12}>
-                            <Typography variant="body1">OMDB Data: {JSON.stringify(omdbData)}</Typography>
-                        </Grid>
-                    )}
+                {omdbData && (
+                    <Grid size={12}>
+                        <Typography variant="body1">OMDB Data: {JSON.stringify(omdbData)}</Typography>
+                    </Grid>
+                )}
             </Grid>
         </FormControl>
     );

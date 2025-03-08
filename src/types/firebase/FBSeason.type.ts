@@ -21,7 +21,7 @@ export interface FBSeason {
   plexLink?: string; // Optional field for Plex link
   omdbData: OmdbResponseFull;
   releaseDate: string;
-  releases: FBRelease[];
+  releases: string[];
   runtime: string;
   topCast: string[];
   writers: string[];

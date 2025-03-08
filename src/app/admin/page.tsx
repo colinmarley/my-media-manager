@@ -5,6 +5,7 @@ import CollectionForm from './_components/CollectionForm';
 import AddDiscForm from './_components/DiscForm';
 import EpisodeForm from './_components/EpisodeForm';
 import MovieForm from './_components/MovieForm';
+import ReleaseForm from './_components/ReleaseForm';
 import SeasonForm from './_components/SeasonForm';
 import SeriesForm from './_components/SeriesForm';
 import ImageManager from './imageManager/_components/ImageManager';
@@ -31,6 +32,8 @@ const AdminFormComponent: React.FC<AdminFormComponentProps> = ({ type }) => {
       return <AddDiscForm />;
     case 'Movie':
       return <MovieForm />;
+    case 'Release':
+      return <ReleaseForm />;
     case 'Collection':
       return <CollectionForm />;
     case 'Series':

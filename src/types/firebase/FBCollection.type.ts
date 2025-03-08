@@ -5,11 +5,11 @@ export interface FBCollection {
     id: string;
     title: string;
     description: string;
-    imageFiles: ImageFile[];
-    movieIds?: MovieInfoSmall[];
-    seriesIds?: SeriesInfoSmall[];
-    seasonIds?: SeasonInfoSmall[];
-    episodeIds?: EpisodeInfoSmall[];
-    directors: DirectorEntry[];
+    imageFiles: string[];
+    movieIds?: string[];
+    seriesIds?: string[];
+    seasonIds?: string[];
+    episodeIds?: string[];
+    directors: string[];
     genres: string[];
 }

@@ -4,9 +4,21 @@ import Grid from '@mui/material/Grid2';
 import useAddDisc from '../../../hooks/newMedia/useAddDisc';
 import { ImageFile, VideoFile } from '../../../types/firebase/FBCommon.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
+import useDiscValidation from '../../../utils/useDiscValidation';
 import styles from '../_styles/DiscForm.module.css';
 
-const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void }) => (
+interface DiscValidation {
+  title: string | null;
+  videoFiles: string | null;
+  imageFiles: string | null;
+  releaseDate: string | null;
+  genre: string | null;
+  language: string | null;
+  subtitles: string | null;
+  regionCode: string | null;
+}
+
+const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, error?: string | null }) => (
   <TextField
     label={props.label}
     value={props.value}
@@ -14,6 +26,8 @@ const FormTextField = (props: { label: string, value: string, onChange: (e: Reac
     sx={{ input: { color: 'white' }, label: { color: 'white' } }}
     fullWidth
     required
+    error={!!props.error}
+    helperText={props.error}
   />
 );
 
@@ -32,8 +46,49 @@ const AddDiscForm: React.FC = () => {
   const [subtitles, setSubtitles] = useState<string[] | undefined>(undefined);
   const [regionCode, setRegionCode] = useState<string | undefined>(undefined);
 
+  const {
+    validateTitle,
+    validateVideoFiles,
+    validateImageFiles,
+    validateReleaseDate,
+    validateGenre,
+    validateLanguage,
+    validateSubtitles,
+    validateRegionCode,
+  } = useDiscValidation();
+
+  const [errors, setErrors] = useState<DiscValidation>({
+    title: null,
+    videoFiles: null,
+    imageFiles: null,
+    releaseDate: null,
+    genre: null,
+    language: null,
+    subtitles: null,
+    regionCode: null,
+  });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const newErrors = {
+      title: validateTitle(title),
+      videoFiles: validateVideoFiles(videoFiles),
+      imageFiles: validateImageFiles(imageFiles),
+      releaseDate: validateReleaseDate(releaseDate),
+      genre: validateGenre(genre),
+      language: validateLanguage(language),
+      subtitles: validateSubtitles(subtitles),
+      regionCode: validateRegionCode(regionCode),
+    };
+
+    setErrors(newErrors);
+
+    const hasErrors = Object.values(newErrors).some(error => error !== null);
+    if (hasErrors) {
+      return;
+    }
+
     await addDisc(
       title,
       videoFiles,
@@ -60,7 +115,7 @@ const AddDiscForm: React.FC = () => {
           <Typography variant="h4" color="white">Add New Disc</Typography>
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
         </Grid>
         <Grid size={12}>
           <label>Video Files:</label>
@@ -135,19 +190,21 @@ const AddDiscForm: React.FC = () => {
             InputLabelProps={{
               shrink: true,
             }}
+            error={!!errors.releaseDate}
+            helperText={errors.releaseDate}
           />
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Genre" value={genre || ''} onChange={(e) => setGenre(e.target.value)} />
+          <FormTextField label="Genre" value={genre || ''} onChange={(e) => setGenre(e.target.value)} error={errors.genre} />
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Language" value={language || ''} onChange={(e) => setLanguage(e.target.value)} />
+          <FormTextField label="Language" value={language || ''} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Subtitles" value={subtitles?.join(', ') || ''} onChange={(e) => setSubtitles(e.target.value.split(', '))} />
+          <FormTextField label="Subtitles" value={subtitles?.join(', ') || ''} onChange={(e) => setSubtitles(e.target.value.split(', '))} error={errors.subtitles} />
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Region Code" value={regionCode || ''} onChange={(e) => setRegionCode(e.target.value)} />
+          <FormTextField label="Region Code" value={regionCode || ''} onChange={(e) => setRegionCode(e.target.value)} error={errors.regionCode} />
         </Grid>
         <Grid size={12}>
           <ImageSearch />

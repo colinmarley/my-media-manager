@@ -29,6 +29,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         centered
       >
         <Tab label="Movies" value="Movie" />
+        <Tab label="Release" value="Release" />
         <Tab label="Series" value="Series" />
         <Tab label="Seasons" value="Season" />
         <Tab label="Episodes" value="Episode" />

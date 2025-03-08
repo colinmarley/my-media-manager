@@ -6,9 +6,28 @@ import { Director, DirectorEntry, ImageFile } from '../../../types/firebase/FBCo
 import { OmdbResponseFull, OmdbSearchResponse } from '../../../types/OmdbResponse.type';
 import { searchByText, retrieveMediaDataById } from '../../../service/OmdbService';
 import ImageSearch from '../imageManager/_components/ImageSearch';
+import useEpisodeValidation from '../../../utils/useEpisodeValidation';
 import styles from '../_styles/Form.module.css';
 
-const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void }) => (
+interface EpisodeValidation {
+  title: string | null;
+  seasonId: string | null;
+  seriesId: string | null;
+  episodeNumber: string | null;
+  countryOfOrigin: string | null;
+  directors: string | null;
+  imageFiles: string | null;
+  releaseDate: string | null;
+  runtime: string | null;
+  topCast: string | null;
+  writers: string | null;
+  actors: string | null;
+  genres: string | null;
+  language: string | null;
+  regionCode: string | null;
+}
+
+const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, error?: string | null }) => (
   <TextField
     label={props.label}
     value={props.value}
@@ -16,6 +35,8 @@ const FormTextField = (props: { label: string, value: string, onChange: (e: Reac
     sx={{ input: { color: 'white' }, label: { color: 'white' } }}
     fullWidth
     required
+    error={!!props.error}
+    helperText={props.error}
   />
 );
 
@@ -43,6 +64,42 @@ const EpisodeForm: React.FC = () => {
   const [genres, setGenres] = useState<string[]>([]);
   const [language, setLanguage] = useState('');
   const [regionCode, setRegionCode] = useState('');
+
+  const {
+    validateTitle,
+    validateSeasonId,
+    validateSeriesId,
+    validateEpisodeNumber,
+    validateCountryOfOrigin,
+    validateDirectors,
+    validateImageFiles,
+    validateReleaseDate,
+    validateRuntime,
+    validateTopCast,
+    validateWriters,
+    validateActors,
+    validateGenres,
+    validateLanguage,
+    validateRegionCode,
+  } = useEpisodeValidation();
+
+  const [errors, setErrors] = useState<EpisodeValidation>({
+    title: null,
+    seasonId: null,
+    seriesId: null,
+    episodeNumber: null,
+    countryOfOrigin: null,
+    directors: null,
+    imageFiles: null,
+    releaseDate: null,
+    runtime: null,
+    topCast: null,
+    writers: null,
+    actors: null,
+    genres: null,
+    language: null,
+    regionCode: null,
+  });
 
   useEffect(() => {
     setTitle(omdbData?.Title || title);
@@ -88,11 +145,35 @@ const EpisodeForm: React.FC = () => {
       otherCollections: [],
       awards: [],
     };
-  }; 
-
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const newErrors = {
+      title: validateTitle(title),
+      seasonId: validateSeasonId(seasonId),
+      seriesId: validateSeriesId(seriesId),
+      episodeNumber: validateEpisodeNumber(episodeNumber),
+      countryOfOrigin: validateCountryOfOrigin(countryOfOrigin),
+      directors: validateDirectors(directors.map(directorEntryToDirector)),
+      imageFiles: validateImageFiles(imageFiles),
+      releaseDate: validateReleaseDate(releaseDate),
+      runtime: validateRuntime(runtime),
+      topCast: validateTopCast(topCast),
+      writers: validateWriters(writers),
+      actors: validateActors(actors),
+      genres: validateGenres(genres),
+      language: validateLanguage(language),
+      regionCode: validateRegionCode(regionCode),
+    };
+
+    setErrors(newErrors);
+
+    const hasErrors = Object.values(newErrors).some(error => error !== null);
+    if (hasErrors) {
+      return;
+    }
 
     const episode: FBEpisode = {
       id: '', // Firebase will generate the ID
@@ -102,7 +183,7 @@ const EpisodeForm: React.FC = () => {
       episodeNumber,
       notes,
       countryOfOrigin,
-      directors: directors.map(director => directorEntryToDirector(director)),
+      directors: directors.map(directorEntryToDirector),
       imageFiles,
       letterboxdLink,
       plexLink,
@@ -131,7 +212,7 @@ const EpisodeForm: React.FC = () => {
           <Typography variant="h4" color="white">Add New Episode</Typography>
         </Grid>
         <Grid item xs={12}>
-          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
         </Grid>
         <Grid item xs={12}>
           <Button onClick={() => handleEpisodeTitleSearch(title)} variant="contained" color="primary">
@@ -153,19 +234,19 @@ const EpisodeForm: React.FC = () => {
           </Grid>
         )}
         <Grid item xs={12}>
-          <FormTextField label="Season ID" value={seasonId} onChange={(e) => setSeasonId(e.target.value)} />
+          <FormTextField label="Season ID" value={seasonId} onChange={(e) => setSeasonId(e.target.value)} error={errors.seasonId} />
         </Grid>
         <Grid item xs={12}>
-          <FormTextField label="Series ID" value={seriesId} onChange={(e) => setSeriesId(e.target.value)} />
+          <FormTextField label="Series ID" value={seriesId} onChange={(e) => setSeriesId(e.target.value)} error={errors.seriesId} />
         </Grid>
         <Grid item xs={12}>
-          <FormTextField label="Episode Number" value={episodeNumber} onChange={(e) => setEpisodeNumber(e.target.value)} />
+          <FormTextField label="Episode Number" value={episodeNumber} onChange={(e) => setEpisodeNumber(e.target.value)} error={errors.episodeNumber} />
         </Grid>
         <Grid item xs={12}>
           <FormTextField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Grid>
         <Grid item xs={12}>
-          <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} />
+          <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} error={errors.countryOfOrigin} />
         </Grid>
         <Grid item xs={12}>
           <Typography variant="h6">Directors</Typography>
@@ -196,19 +277,19 @@ const EpisodeForm: React.FC = () => {
           <FormTextField label="Plex Link" value={plexLink} onChange={(e) => setPlexLink(e.target.value)} />
         </Grid>
         <Grid item xs={3}>
-          <FormTextField label="Release Date" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} />
+          <FormTextField label="Release Date" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} error={errors.releaseDate} />
         </Grid>
         <Grid item xs={3}>
-          <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} />
+          <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} error={errors.runtime} />
         </Grid>
         <Grid item xs={6}>
-          <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} />
+          <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} error={errors.topCast} />
         </Grid>
         <Grid item xs={6}>
-          <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} />
+          <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} error={errors.writers} />
         </Grid>
         <Grid item xs={6}>
-          <FormTextField label="Actors" value={actors.join(', ')} onChange={(e) => setActors(e.target.value.split(', '))} />
+          <FormTextField label="Actors" value={actors.join(', ')} onChange={(e) => setActors(e.target.value.split(', '))} error={errors.actors} />
         </Grid>
         <Grid item xs={6}>
           <FormControlLabel
@@ -222,10 +303,10 @@ const EpisodeForm: React.FC = () => {
           />
         </Grid>
         <Grid item xs={4}>
-          <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} />
+          <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} error={errors.genres} />
         </Grid>
         <Grid item xs={8}>
-          <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} />
+          <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
         </Grid>
         <Grid item xs={12}>
           <ImageSearch />

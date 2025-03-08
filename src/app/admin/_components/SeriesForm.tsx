@@ -7,9 +7,25 @@ import { Director, DirectorEntry, ImageFile } from '../../../types/firebase/FBCo
 import { OmdbResponseFull, OmdbSearchResponse } from '../../../types/OmdbResponse.type';
 import { searchByText, retrieveMediaDataById } from '../../../service/OmdbService';
 import ImageSearch from '../imageManager/_components/ImageSearch';
+import useSeriesValidation from '../../../utils/useSeriesValidation';
 import styles from '../_styles/Form.module.css';
 
-const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void }) => (
+interface SeriesValidation {
+  title: string | null;
+  countryOfOrigin: string | null;
+  directors: string | null;
+  imageFiles: string | null;
+  runningDates: string | null;
+  runtime: string | null;
+  topCast: string | null;
+  writers: string | null;
+  seasons: string | null;
+  genres: string | null;
+  language: string | null;
+  regionCode: string | null;
+}
+
+const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, error?: string | null }) => (
   <TextField
     label={props.label}
     value={props.value}
@@ -17,6 +33,8 @@ const FormTextField = (props: { label: string, value: string, onChange: (e: Reac
     sx={{ input: { color: 'white' }, label: { color: 'white' } }}
     fullWidth
     required
+    error={!!props.error}
+    helperText={props.error}
   />
 );
 
@@ -40,6 +58,36 @@ const SeriesForm: React.FC = () => {
   const [genres, setGenres] = useState<string[]>([]);
   const [language, setLanguage] = useState('');
   const [regionCode, setRegionCode] = useState('');
+
+  const {
+    validateTitle,
+    validateCountryOfOrigin,
+    validateDirectors,
+    validateImageFiles,
+    validateRunningDates,
+    validateRuntime,
+    validateTopCast,
+    validateWriters,
+    validateSeasons,
+    validateGenres,
+    validateLanguage,
+    validateRegionCode,
+  } = useSeriesValidation();
+
+  const [errors, setErrors] = useState<SeriesValidation>({
+    title: null,
+    countryOfOrigin: null,
+    directors: null,
+    imageFiles: null,
+    runningDates: null,
+    runtime: null,
+    topCast: null,
+    writers: null,
+    seasons: null,
+    genres: null,
+    language: null,
+    regionCode: null,
+  });
 
   useEffect(() => {
     setTitle(omdbData?.Title || title);
@@ -90,11 +138,33 @@ const SeriesForm: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    const newErrors = {
+      title: validateTitle(title),
+      countryOfOrigin: validateCountryOfOrigin(countryOfOrigin),
+      directors: validateDirectors(directors.map(directorEntryToDirector)),
+      imageFiles: validateImageFiles(imageFiles),
+      runningDates: validateRunningDates(runningDates),
+      runtime: validateRuntime(runtime),
+      topCast: validateTopCast(topCast),
+      writers: validateWriters(writers),
+      seasons: validateSeasons(seasons),
+      genres: validateGenres(genres),
+      language: validateLanguage(language),
+      regionCode: validateRegionCode(regionCode),
+    };
+
+    setErrors(newErrors);
+
+    const hasErrors = Object.values(newErrors).some(error => error !== null);
+    if (hasErrors) {
+      return;
+    }
+
     const series: FBSeries = {
       id: '', // Firebase will generate the ID
       title,
       countryOfOrigin,
-      directors: directors.map(director => directorEntryToDirector(director)),
+      directors: directors.map(directorEntryToDirector),
       imageFiles,
       letterboxdLink,
       plexLink,
@@ -123,7 +193,7 @@ const SeriesForm: React.FC = () => {
           <Typography variant="h4" color="white">Add New Series</Typography>
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
         </Grid>
         <Grid size={12}>
           <Button onClick={() => handleSeriesTitleSearch(title)} variant="contained" color="primary">
@@ -145,7 +215,7 @@ const SeriesForm: React.FC = () => {
           </Grid>
         )}
         <Grid size={12}>
-          <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} />
+          <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} error={errors.countryOfOrigin} />
         </Grid>
         <Grid size={12}>
           <Typography variant="h6">Directors</Typography>
@@ -176,16 +246,16 @@ const SeriesForm: React.FC = () => {
           <FormTextField label="Plex Link" value={plexLink} onChange={(e) => setPlexLink(e.target.value)} />
         </Grid>
         <Grid size={3}>
-          <FormTextField label="Running Dates" value={runningDates} onChange={(e) => setRunningDates(e.target.value)} />
+          <FormTextField label="Running Dates" value={runningDates} onChange={(e) => setRunningDates(e.target.value)} error={errors.runningDates} />
         </Grid>
         <Grid size={3}>
-          <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} />
+          <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} error={errors.runtime} />
         </Grid>
         <Grid size={6}>
-          <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} />
+          <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} error={errors.topCast} />
         </Grid>
         <Grid size={6}>
-          <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} />
+          <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} error={errors.writers} />
         </Grid>
         <Grid size={6}>
           <FormControlLabel
@@ -199,10 +269,10 @@ const SeriesForm: React.FC = () => {
           />
         </Grid>
         <Grid size={4}>
-          <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} />
+          <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} error={errors.genres} />
         </Grid>
         <Grid size={8}>
-          <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} />
+          <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
         </Grid>
         <Grid size={12}>
           <ImageSearch />

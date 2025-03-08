@@ -5,9 +5,22 @@ import { FBCollection } from '../../../types/firebase/FBCollection.type';
 import { DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import Grid from '@mui/material/Grid2';
+import useCollectionValidation from '../../../utils/useCollectionValidation';
 import styles from '../_styles/MovieForm.module.css';
 
-const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void }) => (
+interface CollectionValidation {
+  title: string | null;
+  description: string | null;
+  imageFiles: string | null;
+  directors: string | null;
+  genres: string | null;
+  movieIds: string | null;
+  seriesIds: string | null;
+  seasonIds: string | null;
+  episodeIds: string | null;
+}
+
+const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, error?: string | null }) => (
   <TextField
     label={props.label}
     value={props.value}
@@ -15,42 +28,77 @@ const FormTextField = (props: { label: string, value: string, onChange: (e: Reac
     sx={{ input: { color: 'white' }, label: { color: 'white' } }}
     fullWidth
     required
+    error={!!props.error}
+    helperText={props.error}
   />
 );
 
 const CollectionForm: React.FC = () => {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [imageFiles, setImageFiles] = useState<ImageFile[]>([]);
-  const [directors, setDirectors] = useState<DirectorEntry[]>([]);
+  const [imageFiles, setImageFiles] = useState<string[]>([]);
+  const [directors, setDirectors] = useState<string[]>([]);
   const [genres, setGenres] = useState<string[]>([]);
   const [movieIds, setMovieIds] = useState<string[]>([]);
   const [seriesIds, setSeriesIds] = useState<string[]>([]);
   const [seasonIds, setSeasonIds] = useState<string[]>([]);
   const [episodeIds, setEpisodeIds] = useState<string[]>([]);
 
-  const handleAddDirector = () => {
-    setDirectors([...directors, { name: '', title: '' }]);
-  };
+  const {
+    validateTitle,
+    validateDescription,
+    validateImageFiles,
+    validateDirectors,
+    validateGenres,
+    validateMovieIds,
+    validateSeriesIds,
+    validateSeasonIds,
+    validateEpisodeIds,
+  } = useCollectionValidation();
 
-  const handleDirectorChange = (index: number, field: keyof DirectorEntry, value: string) => {
-    const newDirectors = [...directors];
-    newDirectors[index][field] = value;
-    setDirectors(newDirectors);
-  };
+  const [errors, setErrors] = useState<CollectionValidation>({
+    title: null,
+    description: null,
+    imageFiles: null,
+    directors: null,
+    genres: null,
+    movieIds: null,
+    seriesIds: null,
+    seasonIds: null,
+    episodeIds: null,
+  });
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const newErrors = {
+      title: validateTitle(title),
+      description: validateDescription(description),
+      imageFiles: validateImageFiles(imageFiles),
+      directors: validateDirectors(directors),
+      genres: validateGenres(genres),
+      movieIds: validateMovieIds(movieIds),
+      seriesIds: validateSeriesIds(seriesIds),
+      seasonIds: validateSeasonIds(seasonIds),
+      episodeIds: validateEpisodeIds(episodeIds),
+    };
+
+    setErrors(newErrors);
+
+    const hasErrors = Object.values(newErrors).some(error => error !== null);
+    if (hasErrors) {
+      return;
+    }
 
     const collection: FBCollection = {
       id: '', // Firebase will generate the ID
       title,
       description,
       imageFiles,
-      movieIds: movieIds.map(id => ({ id })),
-      seriesIds: seriesIds.map(id => ({ id })),
-      seasonIds: seasonIds.map(id => ({ id })),
-      episodeIds: episodeIds.map(id => ({ id })),
+      movieIds,
+      seriesIds,
+      seasonIds,
+      episodeIds,
       directors,
       genres,
     };
@@ -69,7 +117,7 @@ const CollectionForm: React.FC = () => {
           <Typography variant="h4" color="white">Add New Collection</Typography>
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
         </Grid>
         <Grid size={12}>
           <TextField
@@ -81,6 +129,8 @@ const CollectionForm: React.FC = () => {
             multiline
             rows={4}
             required
+            error={!!errors.description}
+            helperText={errors.description}
           />
         </Grid>
         <Grid size={12}>
@@ -90,35 +140,32 @@ const CollectionForm: React.FC = () => {
               <Grid size={6}>
                 <FormTextField
                   label="Name"
-                  value={director.name}
-                  onChange={(e) => handleDirectorChange(index, 'name', e.target.value)}
-                />
-              </Grid>
-              <Grid size={6}>
-                <FormTextField
-                  label="Title"
-                  value={director.title}
-                  onChange={(e) => handleDirectorChange(index, 'title', e.target.value)}
+                  value={director}
+                  onChange={(e) => {
+                    const newDirectors = [...directors];
+                    newDirectors[index] = e.target.value;
+                    setDirectors(newDirectors);
+                  }}
                 />
               </Grid>
             </Grid>
           ))}
-          <Button onClick={handleAddDirector}>Add Director</Button>
+          <Button onClick={() => setDirectors([...directors, ''])}>Add Director</Button>
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} />
+          <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} error={errors.genres} />
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Movie IDs" value={movieIds.join(', ')} onChange={(e) => setMovieIds(e.target.value.split(', '))} />
+          <FormTextField label="Movie IDs" value={movieIds.join(', ')} onChange={(e) => setMovieIds(e.target.value.split(', '))} error={errors.movieIds} />
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Series IDs" value={seriesIds.join(', ')} onChange={(e) => setSeriesIds(e.target.value.split(', '))} />
+          <FormTextField label="Series IDs" value={seriesIds.join(', ')} onChange={(e) => setSeriesIds(e.target.value.split(', '))} error={errors.seriesIds} />
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Season IDs" value={seasonIds.join(', ')} onChange={(e) => setSeasonIds(e.target.value.split(', '))} />
+          <FormTextField label="Season IDs" value={seasonIds.join(', ')} onChange={(e) => setSeasonIds(e.target.value.split(', '))} error={errors.seasonIds} />
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Episode IDs" value={episodeIds.join(', ')} onChange={(e) => setEpisodeIds(e.target.value.split(', '))} />
+          <FormTextField label="Episode IDs" value={episodeIds.join(', ')} onChange={(e) => setEpisodeIds(e.target.value.split(', '))} error={errors.episodeIds} />
         </Grid>
         <Grid size={12}>
           <ImageSearch />
