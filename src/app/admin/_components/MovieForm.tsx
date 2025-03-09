@@ -70,6 +70,7 @@ const MovieForm: React.FC = () => {
     const [isPartOfCollection, setIsPartOfCollection] = useState(false);
     const [genres, setGenres] = useState<string[]>([]);
     const [language, setLanguage] = useState('');
+    const [imdbId, setImdbId] = useState('');
 
     const { 
         validateTitle,
@@ -112,6 +113,7 @@ const MovieForm: React.FC = () => {
         setWriters(omdbData?.Writer.split(',').map((writer: string) => writer.trim()) || writers);
         setGenres(omdbData?.Genre.split(',').map((genre: string) => genre.trim()) || genres);
         setLanguage(omdbData?.Language || language);
+        setImdbId(omdbData?.imdbID || imdbId);
     }, [omdbData]);
 
     const handleMovieTitleSearch = async (title: string) => {
@@ -130,6 +132,17 @@ const MovieForm: React.FC = () => {
     };
 
     const handleMovieSelect = async (selectedTitle: string, selectedYear: string, selectedImdbId: string) => {
+        //check if the imdbId is already in the database
+        console.log(selectedImdbId)
+        const movieService = new FirestoreService('movies');
+        const existingMovie = await movieService.getDocumentsByField('omdbData.imdbID', selectedImdbId);
+        if (existingMovie.length > 0) {
+            console.log("Found Movie in DB")
+            alert("Movie already exists in database");
+            return;
+        }
+        console.log("no movie found in DB")
+        
         setTitle(selectedTitle);
         setYear(selectedYear);
         const fullMovieData = await retrieveMediaDataById(selectedImdbId)

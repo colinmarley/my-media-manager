@@ -1,4 +1,7 @@
+import FirestoreService from '@/service/FirestoreService';
 import { FBMovie } from '../types/firebase/FBMovie.type';
+
+const movieCollection = new FirestoreService('movies');
 
 const useMovieValidation = () => {
   const validateTitle = (title: string): string | null => {
