@@ -11,6 +11,7 @@ class FirestoreService {
   async addDocument(data: DocumentData): Promise<void> {
     try {
       const docRef = await addDoc(collection(db, this.collectionName), data);
+      alert(`Added ${data.title} to the database`);
       console.log('Document written with ID: ', docRef.id);
     } catch (e) {
       console.error('Error adding document: ', e);

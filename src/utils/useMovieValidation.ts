@@ -89,6 +89,48 @@ const useMovieValidation = () => {
     return null;
   };
 
+  const validateRated = (rated: string): string | null => {
+    if (!rated) {
+      return 'Rated is required';
+    }
+    return null;
+  };
+
+  const validatePlot = (plot: string): string | null => {
+    if (!plot) {
+      return 'Plot is required';
+    }
+    return null;
+  };
+
+  const validateAwards = (awards: string): string | null => {
+    if (!awards) {
+      return 'Awards is required';
+    }
+    return null;
+  };
+
+  const validateMetascore = (metascore: string): string | null => {
+    if (!metascore) {
+      return 'Metascore is required';
+    }
+    return null;
+  };
+
+  const validateImdbRating = (imdbRating: string): string | null => {
+    if (!imdbRating) {
+      return 'IMDb Rating is required';
+    }
+    return null;
+  };
+
+  const validateImdbVotes = (imdbVotes: string): string | null => {
+    if (!imdbVotes) {
+      return 'IMDb Votes is required';
+    }
+    return null;
+  };
+
   return {
     validateTitle,
     validateYear,
@@ -101,6 +143,12 @@ const useMovieValidation = () => {
     validateWriters,
     validateGenres,
     validateLanguage,
+    validateRated,
+    validatePlot,
+    validateAwards,
+    validateMetascore,
+    validateImdbRating,
+    validateImdbVotes,
   };
 };
 

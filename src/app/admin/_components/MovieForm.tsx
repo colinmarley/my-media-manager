@@ -10,7 +10,7 @@ import List from '@mui/material/List';
 import ListItem from '@mui/material/ListItem';
 import TextField from '@mui/material/TextField';
 import { FBMovie, Director, ImageFile } from '../../../types/firebase/FBMovie.type';
-import { OmdbResponseFull, OmdbSearchResponse } from '../../../types/OmdbResponse.type';
+import { OmdbResponseFull, OmdbSearchResponse, Rating } from '../../../types/OmdbResponse.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import { retrieveMediaDataById, searchByText } from '../../../service/OmdbService';
 import styles from '../_styles/MovieForm.module.css';
@@ -18,6 +18,7 @@ import ListItemButton from '@mui/material/ListItemButton';
 import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import useMovieValidation from '../../../utils/useMovieValidation';
+import RatingsInput from './RatingsInput';
 
 interface ValidationErrors {
     title: string | null;
@@ -31,6 +32,12 @@ interface ValidationErrors {
     writers: string | null;
     genres: string | null;
     language: string | null;
+    rated: string | null;
+    plot: string | null;
+    awards: string | null;
+    metascore: string | null;
+    imdbRating: string | null;
+    imdbVotes: string | null;
 }
 
 const FormTextField = (
@@ -64,6 +71,7 @@ const MovieForm: React.FC = () => {
     const [omdbResults, setOmdbResults] = useState<OmdbSearchResponse[]>([]);
     const [releaseDate, setReleaseDate] = useState('');
     const [releases, setReleases] = useState<string[]>([]);
+    const [ratings, setRatings] = useState<Rating[]>([]);
     const [runtime, setRuntime] = useState('');
     const [topCast, setTopCast] = useState<string[]>([]);
     const [writers, setWriters] = useState<string[]>([]);
@@ -71,6 +79,16 @@ const MovieForm: React.FC = () => {
     const [genres, setGenres] = useState<string[]>([]);
     const [language, setLanguage] = useState('');
     const [imdbId, setImdbId] = useState('');
+    const [rated, setRated] = useState('');
+    const [plot, setPlot] = useState('');
+    const [awards, setAwards] = useState('');
+    const [metascore, setMetascore] = useState('');
+    const [imdbRating, setImdbRating] = useState('');
+    const [imdbVotes, setImdbVotes] = useState('');
+    const [dvd, setDvd] = useState('');
+    const [boxOffice, setBoxOffice] = useState('');
+    const [production, setProduction] = useState('');
+    const [totalSeasons, setTotalSeasons] = useState('');
 
     const { 
         validateTitle,
@@ -84,6 +102,12 @@ const MovieForm: React.FC = () => {
         validateWriters,
         validateGenres,
         validateLanguage,
+        validateRated,
+        validatePlot,
+        validateAwards,
+        validateMetascore,
+        validateImdbRating,
+        validateImdbVotes,
     } = useMovieValidation();
 
     const [errors, setErrors] = useState<ValidationErrors>({
@@ -98,6 +122,12 @@ const MovieForm: React.FC = () => {
         writers: null,
         genres: null,
         language: null,
+        rated: null,
+        plot: null,
+        awards: null,
+        metascore: null,
+        imdbRating: null,
+        imdbVotes: null,
     });
 
     useEffect(() => {
@@ -114,6 +144,17 @@ const MovieForm: React.FC = () => {
         setGenres(omdbData?.Genre.split(',').map((genre: string) => genre.trim()) || genres);
         setLanguage(omdbData?.Language || language);
         setImdbId(omdbData?.imdbID || imdbId);
+        setRated(omdbData?.Rated || rated);
+        setRatings(omdbData?.Ratings || ratings);
+        setPlot(omdbData?.Plot || plot);
+        setAwards(omdbData?.Awards || awards);
+        setMetascore(omdbData?.Metascore || metascore);
+        setImdbRating(omdbData?.imdbRating || imdbRating);
+        setImdbVotes(omdbData?.imdbVotes || imdbVotes);
+        setDvd(omdbData?.Dvd || dvd);
+        setBoxOffice(omdbData?.BoxOffice || boxOffice);
+        setProduction(omdbData?.Production || production);
+        setTotalSeasons(omdbData?.TotalSeasons || totalSeasons);
     }, [omdbData]);
 
     const handleMovieTitleSearch = async (title: string) => {
@@ -123,6 +164,10 @@ const MovieForm: React.FC = () => {
 
     const handleAddDirector = () => {
         setDirectors([...directors, { name: '', title: '' }]);
+    };
+
+    const handleSetRatings = (ratings: Rating[]) => {
+        setRatings(ratings);
     };
 
     const handleDirectorChange = (index: number, field: keyof Director, value: string) => {
@@ -165,6 +210,12 @@ const MovieForm: React.FC = () => {
             writers: validateWriters(writers),
             genres: validateGenres(genres),
             language: validateLanguage(language),
+            rated: validateRated(rated),
+            plot: validatePlot(plot),
+            awards: validateAwards(awards),
+            metascore: validateMetascore(metascore),
+            imdbRating: validateImdbRating(imdbRating),
+            imdbVotes: validateImdbVotes(imdbVotes),
         };
 
         setErrors(newErrors);
@@ -282,6 +333,28 @@ const MovieForm: React.FC = () => {
                 </Grid>
                 <Grid size={8}>
                     <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
+                </Grid>
+                <Grid size={12}>
+                    <FormTextField label="Rated" value={rated} onChange={(e) => setRated(e.target.value)} error={errors.rated} />
+                </Grid>
+                <Grid size={12}>
+                    <FormTextField label="Plot" value={plot} onChange={(e) => setPlot(e.target.value)} error={errors.plot} />
+                </Grid>
+                <Grid size={12}>
+                    <FormTextField label="Awards" value={awards} onChange={(e) => setAwards(e.target.value)} error={errors.awards} />
+                </Grid>
+                <RatingsInput ratings={ratings} numberOfImdbVoters={imdbVotes} setRatings={setRatings} />
+                <Grid size={12}>
+                    <FormTextField label="DVD Release Date" value={dvd} onChange={(e) => setDvd(e.target.value)} />
+                </Grid>
+                <Grid size={12}>
+                    <FormTextField label="Box Office" value={boxOffice} onChange={(e) => setBoxOffice(e.target.value)} />
+                </Grid>
+                <Grid size={12}>
+                    <FormTextField label="Production" value={production} onChange={(e) => setProduction(e.target.value)} />
+                </Grid>
+                <Grid size={12}>
+                    <FormTextField label="Total Seasons" value={totalSeasons} onChange={(e) => setTotalSeasons(e.target.value)} />
                 </Grid>
                 <Grid size={12}>
                     <ImageSearch />
