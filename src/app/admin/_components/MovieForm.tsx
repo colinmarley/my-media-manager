@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
+import Divider from '@mui/material/Divider';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import Typography from '@mui/material/Typography';
 import Grid from '@mui/material/Grid2';
@@ -19,6 +20,8 @@ import ListItemIcon from '@mui/material/ListItemIcon';
 import ListItemText from '@mui/material/ListItemText';
 import useMovieValidation from '../../../utils/useMovieValidation';
 import RatingsInput from './RatingsInput';
+import { Image } from '@mui/icons-material';
+import { Box } from '@mui/material';
 
 interface ValidationErrors {
     title: string | null;
@@ -45,19 +48,23 @@ const FormTextField = (
         label: string,
         value: string,
         onChange: (e: React.ChangeEvent<HTMLInputElement>) => void,
-        error?: string | null
-    }) => (
+        error?: string | null,
+        required?: boolean
+    }) => {
+    const { label, value, onChange, error, required = true } = props;
+    return (
         <TextField
-            label={props.label}
-            value={props.value}
-            onChange={props.onChange}
-            sx={{input: { color: 'white' }, label: { color: 'white' }}}
+            label={label}
+            value={value}
+            onChange={onChange}
+            sx={{ input: { color: 'white' }, label: { color: 'white' } }}
             fullWidth
-            required
-            error={!!props.error}
-            helperText={props.error}
+            required={required}
+            error={!!error}
+            helperText={error}
         />
-);
+    );
+};
 
 const MovieForm: React.FC = () => {
     const [title, setTitle] = useState('');
@@ -252,21 +259,30 @@ const MovieForm: React.FC = () => {
         <FormControl
             onSubmit={handleSubmit}
             classes={styles.root}
-            color="secondary">
-            <Grid container spacing={2}>
-                <Grid size={12}>
+            color="secondary"
+            sx={{maxWidth: "100%"}}>
+            <Grid container spacing={2} sx={{maxWidth: "100%"}}>
+                <Grid size={7}>
                     <Typography variant="h4" color="white">Add New Movie</Typography>
                 </Grid>
-                <Grid size={9}>
+                <Grid size={7}>
                     <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
                 </Grid>
-                <Grid size={12}>
+                <Grid size={2}>
                     <Button onClick={() => handleMovieTitleSearch(title)} variant="contained" color="primary">
                         Search Movie Title
                     </Button>
                 </Grid>
+                <Grid size={3}>
+                    <Box
+                        component="img"
+                        src={omdbData?.Poster}
+                        alt={title}
+                        sx={{width: "100%", height: "auto"}}
+                    />
+                </Grid>
                 {omdbResults.length > 0 && (
-                    <Grid size={12}>
+                    <Grid size={5}>
                         <Typography variant="h6">Search Results:</Typography>
                         <List>
                             {omdbResults.map((result, index) => (
@@ -279,14 +295,25 @@ const MovieForm: React.FC = () => {
                         </List>
                     </Grid>
                 )}
-                <Grid size={12} color={"white"}>
+                <Grid size={12}>
+                    <Divider sx={{color: "white"}} variant="fullWidth"> Movie Details </Divider>
+                </Grid>
+                <Grid size={3} color={"white"}>
                     <FormTextField label="Year" value={year} onChange={(e) => setYear(e.target.value)} error={errors.year} />
                 </Grid>
                 <Grid size={3} color={"white"}>
                     <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} error={errors.countryOfOrigin} />
                 </Grid>
+                <Grid size={3}>
+                    <FormTextField label="Release Date" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} error={errors.releaseDate} />
+                </Grid>
+                <Grid size={3}>
+                    <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} error={errors.runtime} />
+                </Grid>
                 <Grid size={12}>
-                    <Typography variant="h6">Directors</Typography>
+                    <Divider sx={{color: "white"}} variant="fullWidth"> Crew Details </Divider>
+                </Grid>
+                <Grid size={12}>
                     {directors.map((director, index) => (
                         <Grid container spacing={2} key={index}>
                             <Grid size={6}>
@@ -300,19 +327,25 @@ const MovieForm: React.FC = () => {
                     <Button onClick={handleAddDirector}>Add Director</Button>
                 </Grid>
                 <Grid size={6}>
-                    <FormTextField label="Letterboxd Link" value={letterboxdLink} onChange={(e) => setLetterboxdLink(e.target.value)} />
+                    <FormTextField
+                        label="Letterboxd Link"
+                        value={letterboxdLink}
+                        required={false}
+                        onChange={(e) => setLetterboxdLink(e.target.value)} />
                 </Grid>
                 <Grid size={6}>
-                    <FormTextField label="Plex Link" value={plexLink} onChange={(e) => setPlexLink(e.target.value)} />
-                </Grid>
-                <Grid size={3}>
-                    <FormTextField label="Release Date" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} error={errors.releaseDate} />
-                </Grid>
-                <Grid size={3}>
-                    <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} error={errors.runtime} />
+                    <FormTextField
+                        label="Plex Link"
+                        value={plexLink}
+                        required={false}
+                        onChange={(e) => setPlexLink(e.target.value)} />
                 </Grid>
                 <Grid size={6}>
-                    <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} error={errors.topCast} />
+                    <FormTextField
+                        label="Top Cast"
+                        value={topCast.join(', ')}
+                        onChange={(e) => setTopCast(e.target.value.split(', '))}
+                        error={errors.topCast} />
                 </Grid>
                 <Grid size={6}>
                     <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} error={errors.writers} />
@@ -337,24 +370,30 @@ const MovieForm: React.FC = () => {
                 <Grid size={12}>
                     <FormTextField label="Rated" value={rated} onChange={(e) => setRated(e.target.value)} error={errors.rated} />
                 </Grid>
-                <Grid size={12}>
+                <Grid size={10}>
                     <FormTextField label="Plot" value={plot} onChange={(e) => setPlot(e.target.value)} error={errors.plot} />
                 </Grid>
                 <Grid size={12}>
                     <FormTextField label="Awards" value={awards} onChange={(e) => setAwards(e.target.value)} error={errors.awards} />
                 </Grid>
+                <Grid size={12}>
+                    <Divider sx={{color: "white"}} variant="fullWidth"> Rating Details </Divider>
+                </Grid>
                 <RatingsInput ratings={ratings} numberOfImdbVoters={imdbVotes} setRatings={setRatings} />
                 <Grid size={12}>
-                    <FormTextField label="DVD Release Date" value={dvd} onChange={(e) => setDvd(e.target.value)} />
+                    <Divider sx={{color: "white"}} variant="fullWidth"> Optional Details </Divider>
                 </Grid>
                 <Grid size={12}>
-                    <FormTextField label="Box Office" value={boxOffice} onChange={(e) => setBoxOffice(e.target.value)} />
+                    <FormTextField label="DVD Release Date" value={dvd} required={false} onChange={(e) => setDvd(e.target.value)} />
                 </Grid>
                 <Grid size={12}>
-                    <FormTextField label="Production" value={production} onChange={(e) => setProduction(e.target.value)} />
+                    <FormTextField label="Box Office" value={boxOffice} required={false} onChange={(e) => setBoxOffice(e.target.value)} />
                 </Grid>
                 <Grid size={12}>
-                    <FormTextField label="Total Seasons" value={totalSeasons} onChange={(e) => setTotalSeasons(e.target.value)} />
+                    <FormTextField label="Production" value={production} required={false} onChange={(e) => setProduction(e.target.value)} />
+                </Grid>
+                <Grid size={12}>
+                    <FormTextField label="Total Seasons" value={totalSeasons} required={false} onChange={(e) => setTotalSeasons(e.target.value)} />
                 </Grid>
                 <Grid size={12}>
                     <ImageSearch />

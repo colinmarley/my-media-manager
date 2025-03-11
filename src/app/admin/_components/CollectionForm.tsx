@@ -111,8 +111,9 @@ const CollectionForm: React.FC = () => {
     <FormControl
         onSubmit={handleSubmit}
         className={styles.root}
+        sx={{ maxWidth: "100%"}}
         color="secondary">
-      <Grid container spacing={2}>
+      <Grid container spacing={2} sx={{ maxWidth: "100%"}}>
         <Grid size={12}>
           <Typography variant="h4" color="white">Add New Collection</Typography>
         </Grid>
