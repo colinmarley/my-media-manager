@@ -23,9 +23,10 @@ const ImageDataTable: React.FC<ImageDataTableProps> = ({ images, handleRename })
     setSubfolder('');
   };
 
-  const handleRenameClick = () => {
+  const handleRenameClick = (ind: number) => {
     if (editingName) {
       handleRename(editingName, newName, subfolder);
+      images[ind].name = newName;
       stopEditing();
     }
   };
@@ -43,7 +44,7 @@ const ImageDataTable: React.FC<ImageDataTableProps> = ({ images, handleRename })
           </TableRow>
         </TableHead>
         <TableBody>
-          {images.map((image) => (
+          {images.map((image, ind) => (
             <TableRow key={image.name}>
               <TableCell>
                 <img src={`http://localhost:8082${image.url}`} alt={image.name} style={{ width: '150px', height: '90px' }} />
@@ -57,7 +58,7 @@ const ImageDataTable: React.FC<ImageDataTableProps> = ({ images, handleRename })
                         fullWidth
                         margin="normal"
                     />
-                    <Button variant="contained" color="primary" onClick={handleRenameClick}>
+                    <Button variant="contained" color="primary" onClick={() => handleRenameClick(ind)}>
                       Rename
                     </Button>
                     <Button variant="contained" color="secondary" onClick={stopEditing}>
@@ -80,7 +81,7 @@ const ImageDataTable: React.FC<ImageDataTableProps> = ({ images, handleRename })
                     fullWidth
                     margin="normal"
                   />
-                  <Button variant="contained" color="primary" onClick={handleRenameClick}>
+                  <Button variant="contained" color="primary" onClick={() => handleRenameClick(ind)}>
                     Rename
                   </Button>
                   <Button variant="contained" color="secondary" onClick={stopEditing}>

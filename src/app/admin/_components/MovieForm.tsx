@@ -3,12 +3,9 @@ import Button from '@mui/material/Button';
 import Checkbox from '@mui/material/Checkbox';
 import Divider from '@mui/material/Divider';
 import FormControlLabel from '@mui/material/FormControlLabel';
-import Typography from '@mui/material/Typography';
 import Grid from '@mui/material/Grid2';
 import FirestoreService from '../../../service/FirestoreService';
 import FormControl from '@mui/material/FormControl';
-import List from '@mui/material/List';
-import ListItem from '@mui/material/ListItem';
 import FormTextField from './formInputs/FormTextField';
 import DirectorInput from './formInputs/DirectorInput';
 import { FBMovie, Director, ImageFile } from '../../../types/firebase/FBMovie.type';
@@ -16,15 +13,16 @@ import { OmdbResponseFull, OmdbSearchResponse, Rating } from '../../../types/Omd
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import { retrieveMediaDataById, searchByText } from '../../../service/OmdbService';
 import styles from '../_styles/MovieForm.module.css';
-import ListItemButton from '@mui/material/ListItemButton';
-import ListItemText from '@mui/material/ListItemText';
 import useMovieValidation from '../../../utils/useMovieValidation';
 import RatingsInput from './formInputs/RatingsInput';
 import { Box } from '@mui/material';
-import MovieSearchResults from './formInputs/MovieSearchResults';
 import TopCastInput from './formInputs/TopCastInput';
 import { TopCastEntry } from '@/types/inputs/MovieInputs';
 import WritersInput from './formInputs/WritersInput';
+import MovieTitleSearch from './formInputs/MovieTitleSearch';
+import MovieDetailsInput from './formInputs/MovieDetailsInput';
+import MovieLinkInput from './formInputs/MovieLinkInput';
+import MovieOptionalInput from './formInputs/MovieOptionalInput';
 
 
 interface ValidationErrors {
@@ -166,7 +164,6 @@ const MovieForm: React.FC = () => {
 
     const handleMovieSelect = async (selectedTitle: string, selectedYear: string, selectedImdbId: string) => {
         //check if the imdbId is already in the database
-        console.log(selectedImdbId)
         const movieService = new FirestoreService('movies');
         const existingMovie = await movieService.getDocumentsByField('omdbData.imdbID', selectedImdbId);
         if (existingMovie.length > 0) {
@@ -174,7 +171,6 @@ const MovieForm: React.FC = () => {
             alert("Movie already exists in database");
             return;
         }
-        console.log("no movie found in DB")
         
         setTitle(selectedTitle);
         setYear(selectedYear);
@@ -287,108 +283,35 @@ const MovieForm: React.FC = () => {
                 sx={{maxWidth: "100%"}}>
                 <Grid size={8}>
                     <Grid container spacing={2}>
-                        <Grid size={12}>
-                            <Typography
-                                variant="h4"
-                                color="white">
-                                Add New Movie
-                            </Typography>
-                        </Grid>
-                        <Grid size={9}>
-                            <FormTextField
-                                label="Title"
-                                value={title}
-                                onChange={(e) => setTitle(e.target.value)}
-                                error={errors.title} />
-                        </Grid>
-                        <Grid size={3}>
-                            <Button
-                                onClick={() => handleMovieTitleSearch(title)}
-                                variant="contained"
-                                color="primary">
-                                Search Movie Title
-                            </Button>
-                        </Grid>
-                        <MovieSearchResults
+                        <MovieTitleSearch
+                            title={title}
+                            setTitle={setTitle}
+                            errors={errors}
                             omdbResults={omdbResults}
-                            handleMovieSelect={handleMovieSelect} />
-                        <Grid size={12}>
-                            <Divider
-                                sx={{color: "white"}}
-                                variant="fullWidth">
-                                Movie Details
-                            </Divider>
-                        </Grid>
-                        <Grid size={3} color={"white"}>
-                            <FormTextField
-                                label="Year"
-                                value={year}
-                                onChange={(e) => setYear(e.target.value)}
-                                error={errors.year} />
-                        </Grid>
-                        <Grid size={3}>
-                            <FormTextField
-                                label="Release Date"
-                                value={releaseDate}
-                                onChange={(e) => setReleaseDate(e.target.value)}
-                                error={errors.releaseDate} />
-                        </Grid>
-                        <Grid size={3} color={"white"}>
-                            <FormTextField
-                                label="Country of Origin"
-                                value={countryOfOrigin}
-                                onChange={(e) => setCountryOfOrigin(e.target.value)}
-                                error={errors.countryOfOrigin} />
-                        </Grid>
-                        <Grid size={3}>
-                            <FormTextField
-                                label="Runtime"
-                                value={runtime}
-                                onChange={(e) => setRuntime(e.target.value)}
-                                error={errors.runtime} />
-                        </Grid>
-                        <Grid size={3}>
-                            <FormTextField
-                                label="Genres"
-                                value={genres.join(', ')}
-                                onChange={(e) => setGenres(e.target.value.split(', '))}
-                                error={errors.genres} />
-                        </Grid>
-                        <Grid size={3}>
-                            <FormTextField
-                                label="Language"
-                                value={language}
-                                onChange={(e) => setLanguage(e.target.value)}
-                                error={errors.language} />
-                        </Grid>
-                        <Grid size={3}>
-                            <FormTextField
-                                label="Box Office"
-                                value={boxOffice}
-                                required={false}
-                                onChange={(e) => setBoxOffice(e.target.value)} />
-                        </Grid>
-                        <Grid size={3}>
-                            <FormTextField
-                                label="Rated"
-                                value={rated}
-                                onChange={(e) => setRated(e.target.value)}
-                                error={errors.rated} />
-                        </Grid>
-                        <Grid size={6}>
-                            <FormTextField
-                                label="Awards"
-                                value={awards}
-                                onChange={(e) => setAwards(e.target.value)}
-                                error={errors.awards} />
-                        </Grid>
-                        <Grid size={6}>
-                            <FormTextField
-                                label="Language"
-                                value={language}
-                                onChange={(e) => setLanguage(e.target.value)}
-                                error={errors.language} />
-                        </Grid>
+                            handleMovieTitleSearch={handleMovieTitleSearch}
+                            handleMovieSelect={handleMovieSelect}
+                            />
+                        <MovieDetailsInput
+                            year={year}
+                            setYear={setYear}
+                            releaseDate={releaseDate}
+                            setReleaseDate={setReleaseDate}
+                            countryOfOrigin={countryOfOrigin}
+                            setCountryOfOrigin={setCountryOfOrigin}
+                            runtime={runtime}
+                            setRuntime={setRuntime}
+                            genres={genres}
+                            setGenres={setGenres}
+                            language={language}
+                            setLanguage={setLanguage}
+                            boxOffice={boxOffice}
+                            setBoxOffice={setBoxOffice}
+                            rated={rated}
+                            setRated={setRated}
+                            awards={awards}
+                            setAwards={setAwards}
+                            errors={errors}
+                            />
                         <Grid size={12}>
                             <FormTextField
                                 label="Plot"
@@ -397,27 +320,12 @@ const MovieForm: React.FC = () => {
                                 onChange={(e) => setPlot(e.target.value)}
                                 error={errors.plot} />
                         </Grid>
-                        <Grid size={12}>
-                            <Divider
-                                sx={{color: "white"}}
-                                variant="fullWidth">
-                                    Links
-                            </Divider>
-                        </Grid>
-                        <Grid size={6}>
-                            <FormTextField
-                                label="Letterboxd Link"
-                                value={letterboxdLink}
-                                required={false}
-                                onChange={(e) => setLetterboxdLink(e.target.value)} />
-                        </Grid>
-                        <Grid size={6}>
-                            <FormTextField
-                                label="Plex Link"
-                                value={plexLink}
-                                required={false}
-                                onChange={(e) => setPlexLink(e.target.value)} />
-                        </Grid>
+                        <MovieLinkInput
+                            letterboxdLink={letterboxdLink}
+                            setLetterboxdLink={setLetterboxdLink}
+                            plexLink={plexLink}
+                            setPlexLink={setPlexLink}
+                            />
                     </Grid>
                 </Grid>
                 <Grid size={4}>
@@ -443,47 +351,32 @@ const MovieForm: React.FC = () => {
                     setTopCast={setTopCast}
                     error={errors.topCast} />
                 <Grid size={0}>
-                    <Divider orientation="vertical" variant="middle" sx={{color: 'white'}} />
+                    <Divider
+                        orientation="vertical"
+                        variant="middle"
+                        sx={{color: 'white'}} />
                 </Grid>
                 <DirectorInput
                     directors={directors}
                     handleDirectorChange={handleDirectorChange}
                     handleAddDirector={handleAddDirector} />
                 <Grid size={0}>
-                    <Divider orientation="vertical" variant="middle" sx={{color: 'white'}} />
+                    <Divider
+                        orientation="vertical"
+                        variant="middle"
+                        sx={{color: 'white'}} />
                 </Grid>
                 <WritersInput
                     writers={writers}
                     setWriters={setWriters}
                     error={errors.writers} />
-                <Grid size={12}>
-                    <Divider
-                        sx={{color: "white"}}
-                        variant="fullWidth">
-                        Optional Details
-                    </Divider>
-                </Grid>
-                <Grid size={12}>
-                    <FormTextField
-                        label="DVD Release Date"
-                        value={dvd}
-                        required={false}
-                        onChange={(e) => setDvd(e.target.value)} />
-                </Grid>
-                <Grid size={12}>
-                    <FormTextField
-                        label="Production"
-                        value={production}
-                        required={false}
-                        onChange={(e) => setProduction(e.target.value)} />
-                </Grid>
-                <Grid size={12}>
-                    <FormTextField
-                        label="Total Seasons"
-                        value={totalSeasons}
-                        required={false}
-                        onChange={(e) => setTotalSeasons(e.target.value)} />
-                </Grid>
+                <MovieOptionalInput
+                    dvd={dvd}
+                    setDvd={setDvd}
+                    production={production}
+                    setProduction={setProduction}
+                    totalSeasons={totalSeasons}
+                    setTotalSeasons={setTotalSeasons} />
                 <Grid size={3}>
                     <FormControlLabel
                         control={

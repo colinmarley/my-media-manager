@@ -29,7 +29,7 @@ interface ImageState {
   setPreviewName: (name: string) => void;
   setRenameMessage: (message: string) => void;
   handleList: () => Promise<void>;
-  handleRename: () => Promise<void>;
+  handleRename: (currentName: string, newName: string, subfolder: string) => Promise<void>;
   handleRenamePreview: (name: string, subfolder: string) => Promise<void>;
 }
 
@@ -62,15 +62,12 @@ const useImageStore = create<ImageState>((set) => ({
       console.error('Error listing images:', error);
     }
   },
-  handleRename: async () => {
-    const { currentName, newName, subfolder, setMessage, setCurrentName, setNewName, setSubfolder } = useImageStore.getState();
+  handleRename: async (currentName: string, newName: string, subfolder: string) => {
+    const { setMessage } = useImageStore.getState();
     const newFullName = newName.replaceAll(" ", "_").toUpperCase() + "_DVD_SLEEVE.png";
     try {
       const resultMessage = await imageService.renameImage(currentName, newFullName, subfolder);
       setMessage(resultMessage);
-      setCurrentName('');
-      setNewName('');
-      setSubfolder('');
     } catch (error) {
       console.error('Error renaming image:', error);
     }

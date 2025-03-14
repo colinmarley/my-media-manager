@@ -9,7 +9,7 @@ interface ImageEditorComponentProps {
   setCurrentName: (name: string) => void;
   handleNewNameChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   handleSubfolderChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
-  handleRename: () => void;
+  handleRename: (currentName: string, newName: string, subfolder: string) => void;
 }
 
 const ImageEditorComponent: React.FC<ImageEditorComponentProps> = ({
@@ -54,7 +54,7 @@ const ImageEditorComponent: React.FC<ImageEditorComponentProps> = ({
           variant="contained"
           type="submit"
           color="primary"
-          onClick={handleRename}>
+          onClick={() => handleRename(currentName, newName, subfolder)}>
           Rename
         </Button>
         {message && (
