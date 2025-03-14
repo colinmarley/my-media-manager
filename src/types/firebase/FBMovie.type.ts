@@ -1,3 +1,4 @@
+import { TopCastEntry } from '../inputs/MovieInputs';
 import { OmdbResponseFull } from '../OmdbResponse.type';
 import { FBRelease } from './FBRelease.type';
 
@@ -25,7 +26,7 @@ export interface FBMovie {
   releaseDate: string;
   releases: FBRelease[];
   runtime: string;
-  topCast: string[];
+  topCast: TopCastEntry[];
   writers: string[];
   isPartOfCollection: boolean;
   // Additional suggested fields

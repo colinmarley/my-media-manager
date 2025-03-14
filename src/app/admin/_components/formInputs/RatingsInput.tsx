@@ -3,6 +3,7 @@ import { Rating } from "@/types/OmdbResponse.type";
 import Grid from "@mui/material/Grid2";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
+import Divider from "@mui/material/Divider";
 
 enum RatingSource {
     IMDB = "Internet Movie Database",
@@ -58,6 +59,13 @@ const RatingsInput = ({ ratings, numberOfImdbVoters, setRatings }: RatingsInputP
     
     return (
         <Grid container spacing={2}>
+            <Grid size={12}>
+                <Divider
+                    sx={{color: "white"}}
+                    variant="fullWidth">
+                    Rating Details
+                </Divider>
+            </Grid>
             {ratings.map((rating, index) => (
                 <React.Fragment key={`rating-${index}`}>
                     <Grid size={4}>

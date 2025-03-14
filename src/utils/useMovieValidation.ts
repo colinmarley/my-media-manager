@@ -1,5 +1,6 @@
 import FirestoreService from '@/service/FirestoreService';
 import { FBMovie } from '../types/firebase/FBMovie.type';
+import { TopCastEntry } from '@/types/inputs/MovieInputs';
 
 const movieCollection = new FirestoreService('movies');
 
@@ -61,7 +62,7 @@ const useMovieValidation = () => {
     return null;
   };
 
-  const validateTopCast = (topCast: string[]): string | null => {
+  const validateTopCast = (topCast: TopCastEntry[]): string | null => {
     if (topCast.length === 0) {
       return 'At least one top cast member is required';
     }
