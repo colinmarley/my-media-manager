@@ -1,7 +1,7 @@
 import React from 'react';
 import Grid from '@mui/material/Grid2';
 import Divider from '@mui/material/Divider';
-import FormTextField from './FormTextField';
+import FormTextField from '../FormTextField';
 
 interface MovieOptionalInputProps {
   dvd: string;

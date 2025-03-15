@@ -1,8 +1,8 @@
 import React from 'react';
 import { Grid, Typography, Button } from '@mui/material';
-import FormTextField from './FormTextField';
+import FormTextField from '../FormTextField';
 import MovieSearchResults from './MovieSearchResults';
-import { OmdbSearchResponse } from '../../../../types/OmdbResponse.type';
+import { OmdbSearchResponse } from '../../../../../types/OmdbResponse.type';
 
 interface MovieTitleSearchProps {
   title: string;

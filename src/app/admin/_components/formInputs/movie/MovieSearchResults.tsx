@@ -1,6 +1,6 @@
 import React from 'react';
 import { Grid, Typography, List, ListItem, ListItemButton, ListItemText } from '@mui/material';
-import { OmdbSearchResponse } from '../../../../types/OmdbResponse.type';
+import { OmdbSearchResponse } from '../../../../../types/OmdbResponse.type';
 
 interface MovieSearchResultsProps {
   omdbResults: OmdbSearchResponse[];

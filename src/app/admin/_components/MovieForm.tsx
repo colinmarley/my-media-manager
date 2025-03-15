@@ -19,10 +19,10 @@ import { Box } from '@mui/material';
 import TopCastInput from './formInputs/TopCastInput';
 import { TopCastEntry } from '@/types/inputs/MovieInputs';
 import WritersInput from './formInputs/WritersInput';
-import MovieTitleSearch from './formInputs/MovieTitleSearch';
-import MovieDetailsInput from './formInputs/MovieDetailsInput';
-import MovieLinkInput from './formInputs/MovieLinkInput';
-import MovieOptionalInput from './formInputs/MovieOptionalInput';
+import MovieTitleSearch from './formInputs/movie/MovieTitleSearch';
+import MovieDetailsInput from './formInputs/movie/MovieDetailsInput';
+import MovieLinkInput from './formInputs/movie/MovieLinkInput';
+import MovieOptionalInput from './formInputs/movie/MovieOptionalInput';
 
 
 interface ValidationErrors {
