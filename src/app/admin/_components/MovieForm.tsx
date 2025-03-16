@@ -23,6 +23,7 @@ import MovieTitleSearch from './formInputs/movie/MovieTitleSearch';
 import MovieDetailsInput from './formInputs/movie/MovieDetailsInput';
 import MovieLinkInput from './formInputs/movie/MovieLinkInput';
 import MovieOptionalInput from './formInputs/movie/MovieOptionalInput';
+import SubmitButton from '@/app/_components/SubmitButton';
 
 
 interface ValidationErrors {
@@ -392,14 +393,10 @@ const MovieForm: React.FC = () => {
                     <ImageSearch />
                 </Grid>
                 <Grid size={3}>
-                    <Button
-                        type="submit"
-                        variant="contained"
-                        color="primary"
+                    <SubmitButton
+                        label="Add Movie"
                         onClick={handleSubmit}
-                        disabled={!omdbData}>
-                        Add Movie
-                    </Button>
+                        disabled={!omdbData} />
                 </Grid>
             </Grid>
         </FormControl>

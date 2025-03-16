@@ -7,6 +7,7 @@ import ImageSearch from '../imageManager/_components/ImageSearch';
 import Grid from '@mui/material/Grid2';
 import useCollectionValidation from '../../../utils/useCollectionValidation';
 import styles from '../_styles/MovieForm.module.css';
+import SubmitButton from '@/app/_components/SubmitButton';
 
 interface CollectionValidation {
   title: string | null;
@@ -109,7 +110,6 @@ const CollectionForm: React.FC = () => {
 
   return (
     <FormControl
-        onSubmit={handleSubmit}
         className={styles.root}
         sx={{ maxWidth: "100%"}}
         color="secondary">
@@ -172,9 +172,9 @@ const CollectionForm: React.FC = () => {
           <ImageSearch />
         </Grid>
         <Grid size={12}>
-          <Button type="submit" variant="contained" color="primary">
-            Add Collection
-          </Button>
+          <SubmitButton
+            label={'Add Collection'}
+            onClick={handleSubmit} />
         </Grid>
       </Grid>
     </FormControl>

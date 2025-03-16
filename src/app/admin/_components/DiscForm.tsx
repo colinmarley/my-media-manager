@@ -6,6 +6,7 @@ import { ImageFile, VideoFile } from '../../../types/firebase/FBCommon.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import useDiscValidation from '../../../utils/useDiscValidation';
 import styles from '../_styles/DiscForm.module.css';
+import SubmitButton from '@/app/_components/SubmitButton';
 
 interface DiscValidation {
   title: string | null;
@@ -107,7 +108,6 @@ const AddDiscForm: React.FC = () => {
 
   return (
     <FormControl
-      onSubmit={handleSubmit}
       classes={styles.root}
       color="secondary">
       <Grid container spacing={2}>
@@ -210,9 +210,10 @@ const AddDiscForm: React.FC = () => {
           <ImageSearch />
         </Grid>
         <Grid size={12}>
-          <Button type="submit" variant="contained" color="primary" disabled={loading}>
-            {loading ? 'Adding...' : 'Add Disc'}
-          </Button>
+          <SubmitButton
+            label={loading ? 'Adding...' : 'Add Disc'}
+            onClick={handleSubmit}
+            disabled={loading} />
         </Grid>
         {error && (
           <Grid size={12}>

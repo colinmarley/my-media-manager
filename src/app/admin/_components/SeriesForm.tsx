@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { TextField, Button, Typography, FormControl, FormControlLabel, Checkbox, List, ListItem, ListItemText, ListItemButton } from '@mui/material';
 import Grid from '@mui/material/Grid2';
+import Box from '@mui/material/Box';
+import TextField from '@mui/material/TextField';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
+import Checkbox from '@mui/material/Checkbox';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
+import ListItemButton from '@mui/material/ListItemButton';
 import FirestoreService from '../../../service/FirestoreService';
 import { FBSeries, Season, Episode } from '../../../types/firebase/FBSeries.type';
 import { Director, DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
@@ -9,6 +18,7 @@ import { searchByText, retrieveMediaDataById } from '../../../service/OmdbServic
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import useSeriesValidation from '../../../utils/useSeriesValidation';
 import styles from '../_styles/Form.module.css';
+import SubmitButton from '@/app/_components/SubmitButton';
 
 interface SeriesValidation {
   title: string | null;
@@ -189,98 +199,110 @@ const SeriesForm: React.FC = () => {
   return (
     <form onSubmit={handleSubmit} className={styles.root}>
       <Grid container spacing={2}>
-        <Grid size={12}>
-          <Typography variant="h4" color="white">Add New Series</Typography>
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
-        </Grid>
-        <Grid size={12}>
-          <Button onClick={() => handleSeriesTitleSearch(title)} variant="contained" color="primary">
-            Search Series Title
-          </Button>
-        </Grid>
-        {omdbResults.length > 0 && (
+        <Grid size={8}>
           <Grid size={12}>
-            <Typography variant="h6">Search Results:</Typography>
-            <List>
-              {omdbResults.map((result, index) => (
-                <ListItem key={`search-result-${index}`} disablePadding>
-                  <ListItemButton onClick={() => handleSeriesSelect(result.Title, result.Year, result.imdbID)}>
-                    <ListItemText primary={`${result.Title} (${result.Year})`} />
-                  </ListItemButton>
-                </ListItem>
-              ))}
-            </List>
+            <Typography variant="h4" color="white">Add New Series</Typography>
           </Grid>
-        )}
-        <Grid size={12}>
-          <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} error={errors.countryOfOrigin} />
-        </Grid>
-        <Grid size={12}>
-          <Typography variant="h6">Directors</Typography>
-          {directors.map((director, index) => (
-            <Grid container spacing={2} key={index}>
-              <Grid size={6}>
-                <FormTextField
-                  label="Name"
-                  value={director.name}
-                  onChange={(e) => handleDirectorChange(index, 'name', e.target.value)}
-                />
-              </Grid>
-              <Grid size={6}>
-                <FormTextField
-                  label="Title"
-                  value={director.title}
-                  onChange={(e) => handleDirectorChange(index, 'title', e.target.value)}
-                />
-              </Grid>
+          <Grid size={12}>
+            <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
+          </Grid>
+          <Grid size={12}>
+            <Button onClick={() => handleSeriesTitleSearch(title)} variant="contained" color="primary">
+              Search Series Title
+            </Button>
+          </Grid>
+          {omdbResults.length > 0 && (
+            <Grid size={12}>
+              <Typography variant="h6">Search Results:</Typography>
+              <List>
+                {omdbResults.map((result, index) => (
+                  <ListItem key={`search-result-${index}`} disablePadding>
+                    <ListItemButton onClick={() => handleSeriesSelect(result.Title, result.Year, result.imdbID)}>
+                      <ListItemText primary={`${result.Title} (${result.Year})`} />
+                    </ListItemButton>
+                  </ListItem>
+                ))}
+              </List>
             </Grid>
-          ))}
-          <Button onClick={handleAddDirector}>Add Director</Button>
-        </Grid>
-        <Grid size={6}>
-          <FormTextField label="Letterboxd Link" value={letterboxdLink} onChange={(e) => setLetterboxdLink(e.target.value)} />
-        </Grid>
-        <Grid size={6}>
-          <FormTextField label="Plex Link" value={plexLink} onChange={(e) => setPlexLink(e.target.value)} />
-        </Grid>
-        <Grid size={3}>
-          <FormTextField label="Running Dates" value={runningDates} onChange={(e) => setRunningDates(e.target.value)} error={errors.runningDates} />
-        </Grid>
-        <Grid size={3}>
-          <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} error={errors.runtime} />
-        </Grid>
-        <Grid size={6}>
-          <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} error={errors.topCast} />
-        </Grid>
-        <Grid size={6}>
-          <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} error={errors.writers} />
-        </Grid>
-        <Grid size={6}>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={isPartOfCollection}
-                onChange={(e) => setIsPartOfCollection(e.target.checked)}
-              />
-            }
-            label="Is Part of Collection"
-          />
+          )}
+          <Grid size={12}>
+            <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} error={errors.countryOfOrigin} />
+          </Grid>
+          <Grid size={12}>
+            <Typography variant="h6">Directors</Typography>
+            {directors.map((director, index) => (
+              <Grid container spacing={2} key={index}>
+                <Grid size={6}>
+                  <FormTextField
+                    label="Name"
+                    value={director.name}
+                    onChange={(e) => handleDirectorChange(index, 'name', e.target.value)}
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <FormTextField
+                    label="Title"
+                    value={director.title}
+                    onChange={(e) => handleDirectorChange(index, 'title', e.target.value)}
+                  />
+                </Grid>
+              </Grid>
+            ))}
+            <Button onClick={handleAddDirector}>Add Director</Button>
+          </Grid>
+          <Grid size={6}>
+            <FormTextField label="Letterboxd Link" value={letterboxdLink} onChange={(e) => setLetterboxdLink(e.target.value)} />
+          </Grid>
+          <Grid size={6}>
+            <FormTextField label="Plex Link" value={plexLink} onChange={(e) => setPlexLink(e.target.value)} />
+          </Grid>
+          <Grid size={3}>
+            <FormTextField label="Running Dates" value={runningDates} onChange={(e) => setRunningDates(e.target.value)} error={errors.runningDates} />
+          </Grid>
+          <Grid size={3}>
+            <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} error={errors.runtime} />
+          </Grid>
+          <Grid size={6}>
+            <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} error={errors.topCast} />
+          </Grid>
+          <Grid size={6}>
+            <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} error={errors.writers} />
+          </Grid>
+          <Grid size={6}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={isPartOfCollection}
+                  onChange={(e) => setIsPartOfCollection(e.target.checked)}
+                />
+              }
+              label="Is Part of Collection"
+            />
+          </Grid>
+          <Grid size={4}>
+            <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} error={errors.genres} />
+          </Grid>
+          <Grid size={8}>
+            <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
+          </Grid>
+          <Grid size={12}>
+            <ImageSearch />
+          </Grid>
         </Grid>
         <Grid size={4}>
-          <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} error={errors.genres} />
+          <Box
+            component="img"
+            src={omdbData?.Poster} // Use the Poster URL from OMDB data
+            alt={title}
+            sx={{ width: '100%', height: 'auto' }}
+          />
         </Grid>
-        <Grid size={8}>
-          <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
-        </Grid>
-        <Grid size={12}>
-          <ImageSearch />
-        </Grid>
+        
         <Grid size={3}>
-          <Button type="submit" variant="contained" color="primary" onClick={handleSubmit} disabled={!omdbData}>
-            Add Series
-          </Button>
+          <SubmitButton
+            label="Add Series"
+            onClick={handleSubmit}
+            disabled={!omdbData} />
         </Grid>
         {omdbData && (
           <Grid size={12}>

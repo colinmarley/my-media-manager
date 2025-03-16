@@ -1,6 +1,15 @@
 import React, { useState, useEffect } from 'react';
-import { TextField, Button, Typography, FormControl, FormControlLabel, Checkbox, List, ListItem, ListItemText, ListItemButton } from '@mui/material';
 import Grid from '@mui/material/Grid2';
+import Box from '@mui/material/Box';
+import TextField from '@mui/material/TextField';
+import Button from '@mui/material/Button';
+import Typography from '@mui/material/Typography';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Checkbox from '@mui/material/Checkbox';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
+import ListItemButton from '@mui/material/ListItemButton';
 import FirestoreService from '../../../service/FirestoreService';
 import { FBSeason, Episode } from '../../../types/firebase/FBSeason.type';
 import { Director, DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
@@ -9,6 +18,7 @@ import { searchByText, retrieveMediaDataById } from '../../../service/OmdbServic
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import useSeasonValidation from '../../../utils/useSeasonValidation';
 import styles from '../_styles/Form.module.css';
+import SubmitButton from '@/app/_components/SubmitButton';
 
 interface SeasonValidation {
   title: string | null;
@@ -305,9 +315,10 @@ const SeasonForm: React.FC = () => {
           <ImageSearch />
         </Grid>
         <Grid size={12}>
-          <Button type="submit" variant="contained" color="primary" onClick={handleSubmit} disabled={!omdbData}>
-            Add Season
-          </Button>
+          <SubmitButton
+            label="Add Season"
+            onClick={handleSubmit}
+            disabled={!omdbData} />
         </Grid>
         {omdbData && (
           <Grid size={12}>

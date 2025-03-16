@@ -5,6 +5,7 @@ import FirestoreService from '../../../service/FirestoreService';
 import { FBRelease, ImageFile, Extra } from '../../../types/firebase/FBRelease.type';
 import useReleaseValidation from '../../../utils/useReleaseValidation';
 import styles from '../_styles/MovieForm.module.css';
+import SubmitButton from '@/app/_components/SubmitButton';
 
 interface ReleaseValidation {
     title: string | null;
@@ -230,9 +231,9 @@ const ReleaseForm: React.FC = () => {
           <FormTextField label="Series IDs" value={seriesIds.join(', ')} onChange={(e) => setSeriesIds(e.target.value.split(', '))} />
         </Grid>
         <Grid size={12}>
-          <Button type="submit" variant="contained" color="primary" onClick={handleSubmit}>
-            Add Release
-          </Button>
+          <SubmitButton
+            label="Add Release"
+            onClick={handleSubmit} />
         </Grid>
       </Grid>
     </FormControl>

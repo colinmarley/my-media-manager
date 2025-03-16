@@ -47,4 +47,21 @@ enum ExtraType {
     CutScene = 'Cut Scene',
 }
 
-export { MediaGenre, MediaType, DiscType, ExtraType };
+enum MediaRating {
+    G = 'G',
+    PG = 'PG',
+    PG13 = 'PG-13',
+    R = 'R',
+    NC17 = 'NC-17',
+    NOT_RATED = 'Not Rated',
+    UNRATED = 'Unrated',
+    TV_Y = 'TV-Y',
+    TV_Y7 = 'TV-Y7',
+    TV_G = 'TV-G',
+    TV_PG = 'TV-PG',
+    TV_14 = 'TV-14',
+    TV_MA = 'TV-MA',
+    UNKOWN = 'Unknown',
+}
+
+export { MediaGenre, MediaType, MediaRating, DiscType, ExtraType };

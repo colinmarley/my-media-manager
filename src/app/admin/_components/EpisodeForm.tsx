@@ -1,5 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { TextField, Button, Grid, Typography, FormControl, FormControlLabel, Checkbox, List, ListItem, ListItemText, ListItemButton } from '@mui/material';
+import Grid from '@mui/material/Grid2';
+import TextField from '@mui/material/TextField';
+import Button from '@mui/material/Button';
+import Typography from '@mui/material/Typography';
+import FormControlLabel from '@mui/material/FormControlLabel';
+import Checkbox from '@mui/material/Checkbox';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemText from '@mui/material/ListItemText';
+import ListItemButton from '@mui/material/ListItemButton';
 import FirestoreService from '../../../service/FirestoreService';
 import { FBEpisode } from '../../../types/firebase/FBEpisode.type';
 import { Director, DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
@@ -8,6 +17,7 @@ import { searchByText, retrieveMediaDataById } from '../../../service/OmdbServic
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import useEpisodeValidation from '../../../utils/useEpisodeValidation';
 import styles from '../_styles/Form.module.css';
+import SubmitButton from '@/app/_components/SubmitButton';
 
 interface EpisodeValidation {
   title: string | null;
@@ -208,19 +218,19 @@ const EpisodeForm: React.FC = () => {
   return (
     <form onSubmit={handleSubmit} className={styles.root}>
       <Grid container spacing={2}>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <Typography variant="h4" color="white">Add New Episode</Typography>
         </Grid>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
         </Grid>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <Button onClick={() => handleEpisodeTitleSearch(title)} variant="contained" color="primary">
             Search Episode Title
           </Button>
         </Grid>
         {omdbResults.length > 0 && (
-          <Grid item xs={12}>
+          <Grid size={12}>
             <Typography variant="h6">Search Results:</Typography>
             <List>
               {omdbResults.map((result, index) => (
@@ -233,33 +243,33 @@ const EpisodeForm: React.FC = () => {
             </List>
           </Grid>
         )}
-        <Grid item xs={12}>
+        <Grid size={12}>
           <FormTextField label="Season ID" value={seasonId} onChange={(e) => setSeasonId(e.target.value)} error={errors.seasonId} />
         </Grid>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <FormTextField label="Series ID" value={seriesId} onChange={(e) => setSeriesId(e.target.value)} error={errors.seriesId} />
         </Grid>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <FormTextField label="Episode Number" value={episodeNumber} onChange={(e) => setEpisodeNumber(e.target.value)} error={errors.episodeNumber} />
         </Grid>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <FormTextField label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
         </Grid>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} error={errors.countryOfOrigin} />
         </Grid>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <Typography variant="h6">Directors</Typography>
           {directors.map((director, index) => (
             <Grid container spacing={2} key={index}>
-              <Grid item xs={6}>
+              <Grid size={6}>
                 <FormTextField
                   label="Name"
                   value={director.name}
                   onChange={(e) => handleDirectorChange(index, 'name', e.target.value)}
                 />
               </Grid>
-              <Grid item xs={6}>
+              <Grid size={6}>
                 <FormTextField
                   label="Title"
                   value={director.title}
@@ -270,28 +280,28 @@ const EpisodeForm: React.FC = () => {
           ))}
           <Button onClick={handleAddDirector}>Add Director</Button>
         </Grid>
-        <Grid item xs={6}>
+        <Grid size={6}>
           <FormTextField label="Letterboxd Link" value={letterboxdLink} onChange={(e) => setLetterboxdLink(e.target.value)} />
         </Grid>
-        <Grid item xs={6}>
+        <Grid size={6}>
           <FormTextField label="Plex Link" value={plexLink} onChange={(e) => setPlexLink(e.target.value)} />
         </Grid>
-        <Grid item xs={3}>
+        <Grid size={3}>
           <FormTextField label="Release Date" value={releaseDate} onChange={(e) => setReleaseDate(e.target.value)} error={errors.releaseDate} />
         </Grid>
-        <Grid item xs={3}>
+        <Grid size={3}>
           <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} error={errors.runtime} />
         </Grid>
-        <Grid item xs={6}>
+        <Grid size={6}>
           <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} error={errors.topCast} />
         </Grid>
-        <Grid item xs={6}>
+        <Grid size={6}>
           <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} error={errors.writers} />
         </Grid>
-        <Grid item xs={6}>
+        <Grid size={6}>
           <FormTextField label="Actors" value={actors.join(', ')} onChange={(e) => setActors(e.target.value.split(', '))} error={errors.actors} />
         </Grid>
-        <Grid item xs={6}>
+        <Grid size={6}>
           <FormControlLabel
             control={
               <Checkbox
@@ -302,22 +312,23 @@ const EpisodeForm: React.FC = () => {
             label="Is Part of Collection"
           />
         </Grid>
-        <Grid item xs={4}>
+        <Grid size={4}>
           <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} error={errors.genres} />
         </Grid>
-        <Grid item xs={8}>
+        <Grid size={8}>
           <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
         </Grid>
-        <Grid item xs={12}>
+        <Grid size={12}>
           <ImageSearch />
         </Grid>
-        <Grid item xs={3}>
-          <Button type="submit" variant="contained" color="primary" onClick={handleSubmit} disabled={!omdbData}>
-            Add Episode
-          </Button>
+        <Grid size={3}>
+          <SubmitButton
+            label={'Add Episode'}
+            onClick={handleSubmit}
+            disabled={!omdbData} />
         </Grid>
         {omdbData && (
-          <Grid item xs={12}>
+          <Grid size={12}>
             <Typography variant="body1">OMDB Data: {JSON.stringify(omdbData)}</Typography>
           </Grid>
         )}
