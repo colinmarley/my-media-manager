@@ -1,5 +1,7 @@
 import React from 'react';
-import { Grid, Typography, Button } from '@mui/material';
+import Grid from '@mui/material/Grid2';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
 import FormTextField from '../FormTextField';
 import MovieSearchResults from './MovieSearchResults';
 import { OmdbSearchResponse } from '../../../../../types/OmdbResponse.type';
@@ -23,12 +25,12 @@ const MovieTitleSearch: React.FC<MovieTitleSearchProps> = ({
 }) => {
   return (
     <>
-      <Grid item xs={12}>
+      <Grid size={12}>
         <Typography variant="h4" color="white">
           Add New Movie
         </Typography>
       </Grid>
-      <Grid item xs={9}>
+      <Grid size={9}>
         <FormTextField
           label="Title"
           value={title}
@@ -36,7 +38,7 @@ const MovieTitleSearch: React.FC<MovieTitleSearchProps> = ({
           error={errors.title}
         />
       </Grid>
-      <Grid item xs={3}>
+      <Grid size={3}>
         <Button
           onClick={() => handleMovieTitleSearch(title)}
           variant="contained"
