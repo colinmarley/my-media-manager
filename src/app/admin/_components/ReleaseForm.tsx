@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Button, Checkbox, FormControl, FormControlLabel, TextField, Typography } from '@mui/material';
 import Grid from '@mui/material/Grid2';
-import FirestoreService from '../../../service/FirestoreService';
+import FirestoreService from '../../../service/firebase/FirestoreService';
 import { FBRelease, ImageFile, Extra } from '../../../types/firebase/FBRelease.type';
 import useReleaseValidation from '../../../utils/useReleaseValidation';
 import styles from '../_styles/MovieForm.module.css';

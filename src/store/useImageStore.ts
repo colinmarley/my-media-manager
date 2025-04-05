@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import ImageService from '../service/ImageService';
+import ImageService from '../service/image/ImageService';
 
 export interface ImageResult {
     name: string;

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { collection, getDocs, query, where, QueryConstraint } from 'firebase/firestore';
 import { db } from '../../../firebaseConfig';
 import { FBRelease } from '../../types/firebase/FBRelease.type';
-import FirestoreService from '../../service/FirestoreService';
+import FirestoreService from '../../service/firebase/FirestoreService';
 
 const useReleases = (conditions?: [string, any][]) => {
   const [releases, setReleases] = useState<FBRelease[]>([]);

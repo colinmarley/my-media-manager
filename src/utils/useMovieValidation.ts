@@ -1,4 +1,4 @@
-import FirestoreService from '@/service/FirestoreService';
+import FirestoreService from '@/service/firebase/FirestoreService';
 import { FBMovie } from '../types/firebase/FBMovie.type';
 import { TopCastEntry } from '@/types/inputs/MovieInputs';
 

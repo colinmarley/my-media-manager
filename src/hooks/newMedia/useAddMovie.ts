@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FBMovie, Director, ImageFile } from '../../types/firebase/FBMovie.type';
 import { OmdbResponseFull } from '../../types/OmdbResponse.type';
-import FirestoreService from '../../service/FirestoreService';
+import FirestoreService from '../../service/firebase/FirestoreService';
 import { FBRelease } from '@/types/firebase/FBRelease.type';
 
 const useAddMovie = () => {

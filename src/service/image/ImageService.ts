@@ -49,6 +49,33 @@ class ImageService {
       throw error;
     }
   }
+
+  /**
+   * Upload images to the server.
+   * @param files - The files to upload.
+   * @param saveLocation - The folder where the files should be saved.
+   * @returns A promise resolving to the server's response.
+   */
+  async uploadImages(files: File[], saveLocation: string = '/images'): Promise<{ message: string; saved_files: string[] }> {
+    try {
+      const formData = new FormData();
+      files.forEach((file) => {
+        formData.append('files', file);
+      });
+      formData.append('save_location', saveLocation);
+
+      const response = await axios.post(`${this.baseUrl}/upload`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      return response.data;
+    } catch (error) {
+      console.error('Error uploading images:', error);
+      throw error;
+    }
+  }
 }
 
 export default ImageService;

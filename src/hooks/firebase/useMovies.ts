@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { collection, getDocs, query, where, QueryConstraint } from 'firebase/firestore';
 import { db } from '../../../firebaseConfig';
 import { FBMovie } from '../../types/firebase/FBMovie.type';
-import FirestoreService from '../../service/FirestoreService';
+import FirestoreService from '../../service/firebase/FirestoreService';
 
 const useMovies = (conditions?: [string, any][]) => {
   const [movies, setMovies] = useState<FBMovie[]>([]);

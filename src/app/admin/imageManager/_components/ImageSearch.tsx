@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import ImageList from '@mui/material/ImageList';
 import ImageListItem from '@mui/material/ImageListItem';
 import ImageListItemBar from '@mui/material/ImageListItemBar';
-import ImageService from '../../../../service/ImageService';
+import ImageService from '../../../../service/image/ImageService';
 
 const ImageSearch: React.FC = () => {
   const [query, setQuery] = useState('');

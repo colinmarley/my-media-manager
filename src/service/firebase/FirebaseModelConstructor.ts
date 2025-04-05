@@ -1,4 +1,4 @@
-import { OmdbResponseFull, OmdbSearchResponse } from '../types/OmdbResponse.type';
+import { OmdbResponseFull, OmdbSearchResponse } from '../../types/OmdbResponse.type';
 import FirestoreService from './FirestoreService';
 
 class FirebaseModelConstructor {

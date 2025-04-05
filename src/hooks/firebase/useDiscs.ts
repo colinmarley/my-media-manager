@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { collection, getDocs, query, where, QueryConstraint } from 'firebase/firestore';
 import { db } from '../../../firebaseConfig';
 import { FBDisc } from '../../types/firebase/FBDisc.type';
-import FirestoreService from '../../service/FirestoreService';
+import FirestoreService from '../../service/firebase/FirestoreService';
 
 const useDiscs = (conditions?: [string, any][]) => {
   const [discs, setDiscs] = useState<FBDisc[]>([]);

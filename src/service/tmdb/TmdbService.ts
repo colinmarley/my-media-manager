@@ -1,4 +1,5 @@
 import axios from 'axios';
+import TmdbAuthentication from './TmdbAuthentication';
 
 const TMDB_BASE_URL = process.env.NEXT_PUBLIC_TMDB_BASE_URL;
 const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
@@ -15,9 +16,11 @@ const TmdbService = {
    */
   getMovieDetails: async (movieId: number) => {
     try {
+      const sessionId = TmdbAuthentication.getSessionId(); // Get the session ID from the authentication module
       const response = await axios.get(`${TMDB_BASE_URL}/movie/${movieId}`, {
         params: {
           api_key: TMDB_API_KEY,
+          ...(sessionId && { session_id: sessionId }), // Include session_id if available
         },
       });
       return response.data;
@@ -34,10 +37,12 @@ const TmdbService = {
    */
   searchMovies: async (query: string) => {
     try {
+      const sessionId = TmdbAuthentication.getSessionId();
       const response = await axios.get(`${TMDB_BASE_URL}/search/movie`, {
         params: {
           api_key: TMDB_API_KEY,
           query,
+          ...sessionId && { session_id: sessionId }, // Include session_id if available
         },
       });
       return response.data;
@@ -53,10 +58,12 @@ const TmdbService = {
    */
   getPopularMovies: async () => {
     try {
+      const sessionId = TmdbAuthentication.getSessionId();
       const response = await axios.get(`${TMDB_BASE_URL}/movie/popular`, {
         params: {
           api_key: TMDB_API_KEY,
         },
+      ...(sessionId && { session_id: sessionId }), // Include session_id if available
       });
       return response.data;
     } catch (error) {
@@ -71,10 +78,12 @@ const TmdbService = {
    */
   getTopRatedMovies: async () => {
     try {
+      const sessionId = TmdbAuthentication.getSessionId();
       const response = await axios.get(`${TMDB_BASE_URL}/movie/top_rated`, {
         params: {
           api_key: TMDB_API_KEY,
         },
+        ...(sessionId && { session_id: sessionId }), // Include session_id if available
       });
       return response.data;
     } catch (error) {
@@ -89,9 +98,11 @@ const TmdbService = {
    */
   getUpcomingMovies: async () => {
     try {
+      const sessionId = TmdbAuthentication.getSessionId();
       const response = await axios.get(`${TMDB_BASE_URL}/movie/upcoming`, {
         params: {
           api_key: TMDB_API_KEY,
+          ...sessionId && { session_id: sessionId }, // Include session_id if available
         },
       });
       return response.data;

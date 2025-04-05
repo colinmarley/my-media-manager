@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { OmdbResponseFull, OmdbSearchResponse } from '../types/OmdbResponse.type';
-import FirestoreService from '../service/FirestoreService';
+import FirestoreService from '../service/firebase/FirestoreService';
 
 const allMediaService = new FirestoreService('AllMedia');
 const myMediaService = new FirestoreService('MyMedia');

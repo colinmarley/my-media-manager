@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FBDisc } from '../../types/firebase/FBDisc.type';
 import { ImageFile, VideoFile } from '@/types/firebase/FBCommon.type';
-import FirestoreService from '../../service/FirestoreService';
+import FirestoreService from '../../service/firebase/FirestoreService';
 
 const useAddDisc = () => {
   const [loading, setLoading] = useState<boolean>(false);

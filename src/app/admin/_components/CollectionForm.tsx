@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { TextField, Button, Typography, FormControl, FormControlLabel, Checkbox } from '@mui/material';
-import FirestoreService from '../../../service/FirestoreService';
+import FirestoreService from '../../../service/firebase/FirestoreService';
 import { FBCollection } from '../../../types/firebase/FBCollection.type';
 import { DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { FBRelease, Extra, ImageFile, MovieInfoSmall, SeasonInfoSmall, SeriesInfoSmall, EpisodeInfoSmall } from '../../types/firebase/FBRelease.type';
-import FirestoreService from '../../service/FirestoreService';
+import FirestoreService from '../../service/firebase/FirestoreService';
 
 const useAddRelease = () => {
   const [loading, setLoading] = useState<boolean>(false);

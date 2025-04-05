@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { FBSeason, Episode } from '../../types/firebase/FBSeason.type';
 import { DirectorEntry, ImageFile } from '../../types/firebase/FBCommon.type';
-import FirestoreService from '../../service/FirestoreService';
+import FirestoreService from '../../service/firebase/FirestoreService';
 
 const useAddSeason = () => {
   const [loading, setLoading] = useState<boolean>(false);
