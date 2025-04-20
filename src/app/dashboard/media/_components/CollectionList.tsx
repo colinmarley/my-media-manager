@@ -1,12 +1,19 @@
 import { OmdbSearchResponse } from "@/types/OmdbResponse.type";
 import MovieTile from "./MovieTile";
+import Container from "@mui/material/Container";
 
 const CollectionList = ({ collection }: { collection: OmdbSearchResponse[] }) => {
   return (
-    <div style={{ overflowY: 'scroll', height: '80vh' }}>
+    <Container sx={Styles.collectionListContainer}>
       {collection.map((movie: OmdbSearchResponse) => (<MovieTile movieInfo={movie} />))}
-    </div>
+    </Container>
   );
 };
+
+const Styles = {
+  collectionListContainer: {
+    overflowY: 'scroll',
+  },
+}
 
 export default CollectionList;

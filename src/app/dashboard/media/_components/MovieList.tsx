@@ -12,7 +12,7 @@ interface MovieListProps {
 const MovieList = ({ onAddToCollection, onExpand }: MovieListProps) => {
   const { searchResults } = useMediaSelectorContext();
   return (
-    <Container sx={Styles.movieListContainer}>
+    <Container>
       {searchResults.map((searchResult: OmdbSearchResponse, index: number) => {
         return (
           <>
@@ -30,9 +30,6 @@ const MovieList = ({ onAddToCollection, onExpand }: MovieListProps) => {
 };
 
 const Styles = {
-  movieListContainer: {
-    overflowY: 'scroll',
-  },
   divider: {
     marginY: '30px',
   },

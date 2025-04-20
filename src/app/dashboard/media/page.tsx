@@ -45,14 +45,14 @@ const Page = () => {
       </Grid>
       <Grid
         size={6}
-        sx={Styles.movieListContainer}>
+        sx={Styles.scrollableSection}>
         <MovieList
           onAddToCollection={handleAddToCollection}
           onExpand={handleExpand} />
       </Grid>
       <Grid
         size={6}
-        sx={Styles.collectionListContainer}>
+        sx={Styles.scrollableSection}>
         {(showPreview) ?
           <MediaInformation data={selectedMediaInfo}/> :
           <CollectionList collection={collection} />}
@@ -78,7 +78,11 @@ const Styles = {
     justifyContent: 'center',
     alignItems: 'center',
   },
-  
+  scrollableSection: {
+    display: 'flex-start',
+    overflowY: 'scroll',
+    height: '100vh',
+  }
 }
 
 export default Page;

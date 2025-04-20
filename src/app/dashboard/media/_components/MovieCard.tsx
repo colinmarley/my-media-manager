@@ -47,7 +47,7 @@ const MovieCard = ({ mediaSearchResult, onAddToCollection, onExpand }: MovieCard
           </Grid>
           <Grid size={6}>
             <Button
-              variant="outlined"
+              variant="contained"
               color="primary"
               fullWidth
               onClick={() => onExpand(mediaSearchResult)}

@@ -8,3 +8,14 @@ export default function Home() {
     </div>
   );
 }
+
+const Styles = {
+  page: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    height: "100vh",
+    backgroundColor: "#121212",
+  },
+}
