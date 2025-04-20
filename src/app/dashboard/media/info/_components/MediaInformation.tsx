@@ -1,6 +1,7 @@
 import React from 'react';
 import { OmdbResponseFull } from '../../../../../types/OmdbResponse.type';
 import '../_styles/MediaInformation.module.css';
+import Container from '@mui/material/Container';
 
 interface MediaInformationProps {
   data: OmdbResponseFull  | null;
@@ -12,25 +13,25 @@ const MediaInformation: React.FC<MediaInformationProps> = ({ data }) => {
   console.log(data);
 
   return (
-    <div className="media-information">
-      <div className="media-header">
-        <div className="media-poster">
+    <Container className="media-information">
+      <Container className="media-header">
+        <Container className="media-poster">
           <img
             src={data?.Poster || placeholderImage}
             alt={`${data?.Title} Poster`}
             onError={(e) => (e.currentTarget.src = placeholderImage)}
           />
-        </div>
-        <div className="media-title">
+        </Container>
+        <Container className="media-title">
           <h1>{data?.Title}</h1>
           <p><strong>Year:</strong> {data?.Year}</p>
           <p><strong>Rated:</strong> {data?.Rated}</p>
           <p><strong>Released:</strong> {data?.Released}</p>
           <p><strong>Runtime:</strong> {data?.Runtime}</p>
           <p><strong>Genre:</strong> {data?.Genre}</p>
-        </div>
-      </div>
-      <div className="media-details">
+        </Container>
+      </Container>
+      <Container className="media-details">
         <Section title="Director and Writers">
           <p><strong>Director:</strong> {data?.Director}</p>
           <p><strong>Writer:</strong> {data?.Writer}</p>
@@ -57,8 +58,8 @@ const MediaInformation: React.FC<MediaInformationProps> = ({ data }) => {
           {data?.TotalSeasons && <p><strong>Total Seasons:</strong> {data?.TotalSeasons}</p>}
           <p><strong>Response:</strong> {data?.Response}</p>
         </Section>
-      </div>
-    </div>
+      </Container>
+    </Container>
   );
 };
 

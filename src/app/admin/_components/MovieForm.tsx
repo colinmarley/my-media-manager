@@ -11,7 +11,7 @@ import DirectorInput from './formInputs/DirectorInput';
 import { FBMovie, Director, ImageFile } from '../../../types/firebase/FBMovie.type';
 import { OmdbResponseFull, OmdbSearchResponse, Rating } from '../../../types/OmdbResponse.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
-import { retrieveMediaDataById, searchByText } from '../../../service/omdb/OmdbService';
+import { retrieveMediaDataById, searchByText } from '@/service/omdb/OmdbService';
 import styles from '../_styles/MovieForm.module.css';
 import useMovieValidation from '../../../utils/useMovieValidation';
 import RatingsInput from './formInputs/RatingsInput';

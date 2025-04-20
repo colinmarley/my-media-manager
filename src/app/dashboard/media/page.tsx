@@ -8,7 +8,8 @@ import styles from './_styles/Media.module.css';
 import { OmdbSearchResponse } from '@/types/OmdbResponse.type';
 import MediaInformation from './info/_components/MediaInformation';
 import useMediaSelector from '@/hooks/useMediaSelector';
-import { retrieveMediaDataById } from '@/service/OmdbService';
+import { retrieveMediaDataById } from '@/service/omdb/OmdbService';
+import Grid from '@mui/material/Grid2';
 
 const Page = () => {
   const [collection, setCollection] = useState<OmdbSearchResponse[]>([]);
@@ -36,14 +37,48 @@ const Page = () => {
   }
 
   return (
-    <div className={styles.container}>
-      <SearchBar />
-      <div className={styles.listsContainer}>
-        <MovieList onAddToCollection={handleAddToCollection} onExpand={handleExpand} />
-        {(showPreview) ? <MediaInformation data={selectedMediaInfo}/> : <CollectionList collection={collection} />}
-      </div>
-    </div>
+    <Grid container>
+      <Grid
+        size={12}
+        sx={Styles.searchBarContainer} >
+        <SearchBar />
+      </Grid>
+      <Grid
+        size={6}
+        sx={Styles.movieListContainer}>
+        <MovieList
+          onAddToCollection={handleAddToCollection}
+          onExpand={handleExpand} />
+      </Grid>
+      <Grid
+        size={6}
+        sx={Styles.collectionListContainer}>
+        {(showPreview) ?
+          <MediaInformation data={selectedMediaInfo}/> :
+          <CollectionList collection={collection} />}
+      </Grid>
+    </Grid>
   );
 };
+
+const Styles = {
+  searchBarContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: '100%'
+  },
+  movieListContainer: {
+    display: 'flex',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  collectionListContainer: {
+    display: 'flex-start',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  
+}
 
 export default Page;

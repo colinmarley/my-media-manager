@@ -14,7 +14,7 @@ import FirestoreService from '../../../service/firebase/FirestoreService';
 import { FBSeries, Season, Episode } from '../../../types/firebase/FBSeries.type';
 import { Director, DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
 import { OmdbResponseFull, OmdbSearchResponse } from '../../../types/OmdbResponse.type';
-import { searchByText, retrieveMediaDataById } from '../../../service/omdb/OmdbService';
+import { searchByText, retrieveMediaDataById } from '@/service/omdb/OmdbService';
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import useSeriesValidation from '../../../utils/useSeriesValidation';
 import styles from '../_styles/Form.module.css';

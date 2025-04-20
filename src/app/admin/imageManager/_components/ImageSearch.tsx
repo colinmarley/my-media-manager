@@ -1,4 +1,7 @@
 import React, { useState } from 'react';
+import Container from '@mui/material/Container';
+import Button from '@mui/material/Button';
+import Typography from '@mui/material/Typography';
 import ImageList from '@mui/material/ImageList';
 import ImageListItem from '@mui/material/ImageListItem';
 import ImageListItemBar from '@mui/material/ImageListItemBar';
@@ -20,11 +23,11 @@ const ImageSearch: React.FC = () => {
   };
 
   return (
-    <div>
-      <h2>Search Images</h2>
+    <Container>
+      <Typography variant="h2">Search Images</Typography>
       <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search query" />
       <button onClick={handleSearch}>Search</button>
-      <ImageList sx={{ width: 500, height: 450 }}>
+      <ImageList sx={Styles.imageList}>
         {searchResults.map((file, index) => (
           <ImageListItem key={index}>
             <img
@@ -39,8 +42,15 @@ const ImageSearch: React.FC = () => {
           </ImageListItem>
         ))}
       </ImageList>
-    </div>
+    </Container>
   );
 };
+
+const Styles = {
+  imageList: {
+    width: 500,
+    height: 450,
+  },
+}
 
 export default ImageSearch;

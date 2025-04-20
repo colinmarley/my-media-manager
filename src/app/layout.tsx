@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import Container from '@mui/material/Container';
 import { MediaSelectorProvider } from '@/context/MediaSelectorContext';
 import './globals.css'; // Import the global CSS file
 import { ThemeProvider } from '@emotion/react';
@@ -44,7 +45,7 @@ export default function RootLayout({
           <ThemeProvider theme={theme}>
             <MediaSelectorProvider>
               <header className="header">
-                <div className="header-left">
+                <Container className="header-left">
                   <Link href="/dashboard">
                     <Button className="header-button" variant="contained" color="primary">
                       Dashboard
@@ -55,11 +56,11 @@ export default function RootLayout({
                       Admin
                     </Button>
                   </Link>
-                </div>
-                <div className="header-center">
+                </Container>
+                <Container className="header-center">
                   <h1 className="header-title">My App</h1>
-                </div>
-                <div className="header-right">
+                </Container>
+                <Container className="header-right">
                   {user && <ProfileAccess />}
                   {!user && (
                     <Link href="/signup">
@@ -68,9 +69,9 @@ export default function RootLayout({
                       </Button>
                     </Link>
                   )}
-                </div>
+                </Container>
               </header>
-              <main className="main-content">
+              <main >
                 {children}
               </main>
             </MediaSelectorProvider>

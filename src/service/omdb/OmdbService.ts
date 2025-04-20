@@ -1,4 +1,4 @@
-import { OmdbResponseFull, OmdbSearchResponse } from '../types/OmdbResponse.type';
+import { OmdbResponseFull, OmdbSearchResponse } from '../../types/OmdbResponse.type';
 
 const API_KEY = process.env.NEXT_PUBLIC_OMDB_API_KEY;
 const BASE_URL = process.env.NEXT_PUBLIC_OMDB_BASE_URL;

@@ -26,7 +26,7 @@ const ImageEditorComponent: React.FC<ImageEditorComponentProps> = ({
     <Box mb={4}>
       <FormControl
         color="secondary"
-        sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+        sx={Styles.formControl}
       >
         <Typography variant="h6">Rename Image</Typography>
         <TextField
@@ -66,5 +66,9 @@ const ImageEditorComponent: React.FC<ImageEditorComponentProps> = ({
     </Box>
   );
 };
+
+const Styles = {
+  formControl: { display: 'flex', flexDirection: 'column', gap: 2 },
+}
 
 export default ImageEditorComponent;

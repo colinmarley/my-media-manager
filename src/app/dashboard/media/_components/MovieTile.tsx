@@ -1,6 +1,7 @@
 import React from 'react';
 import styles from '../_styles/MovieTile.module.css';
 import { OmdbSearchResponse } from '@/types/OmdbResponse.type';
+import Container from '@mui/material/Container';
 
 interface MovieTileProps {
   movieInfo: OmdbSearchResponse;
@@ -8,13 +9,13 @@ interface MovieTileProps {
 
 const MovieTile: React.FC<MovieTileProps> = ({movieInfo}) => {
   return (
-    <div key={movieInfo.imdbID} className={styles.movieTile}>
+    <Container key={movieInfo.imdbID} className={styles.movieTile}>
       <img src={movieInfo.Poster} alt={`${movieInfo.Title} poster`} className={styles.poster} />
-      <div className={styles.details}>
+      <Container className={styles.details}>
         <h3>{movieInfo.Title}</h3>
         <p><strong>Year:</strong> {movieInfo.Year}</p>
-      </div>
-    </div>
+      </Container>
+    </Container>
   );
 };
 

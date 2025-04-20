@@ -31,8 +31,8 @@ const ProfileAccess = () => {
   return (
     <div>
       <Button onClick={handleClick}>
-        <Avatar sx={{ bgcolor: deepOrange[500] }}>{displayName?.charAt(0)}</Avatar>
-        <Typography variant="body1" sx={{ marginLeft: 1 }}>
+        <Avatar sx={Styles.avatar}>{displayName?.charAt(0)}</Avatar>
+        <Typography variant="body1" sx={Styles.displayName}>
           {displayName}
         </Typography>
       </Button>
@@ -46,5 +46,14 @@ const ProfileAccess = () => {
     </div>
   );
 };
+
+const Styles = {
+  avatar: {
+    bgcolor: deepOrange[500],
+  },
+  displayName: {
+    marginLeft: 1,
+  }
+}
 
 export default ProfileAccess;

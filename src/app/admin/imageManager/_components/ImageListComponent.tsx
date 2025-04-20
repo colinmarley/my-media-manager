@@ -13,7 +13,7 @@ const ImageListComponent: React.FC<ImageListComponentProps> = ({ listResults, ha
     <Box mt={2} overflow={'auto'} maxHeight={400}>
       {listResults.map((image) => (
         <Box key={image.name} display="flex" alignItems="center" mb={2}>
-          <Typography variant="body1" sx={{ flexGrow: 1 }}>
+          <Typography variant="body1" sx={Styles.imageName}>
             {image.name}
           </Typography>
           <IconButton onClick={() => handleCopy(image.name)}>
@@ -27,5 +27,11 @@ const ImageListComponent: React.FC<ImageListComponentProps> = ({ listResults, ha
     </Box>
   );
 };
+
+const Styles = {
+  imageName: {
+    flexGrow: 1,
+  },
+}
 
 export default ImageListComponent;
