@@ -1,4 +1,4 @@
-{
+[{
     "Title": "The Office",
     "Year": "2005–2013",
     "Rated": "TV-14",
@@ -26,4 +26,33 @@
     "Type": "series",
     "totalSeasons": "9",
     "Response": "True"
-}
+},
+{
+    "Actors": "Tony Shalhoub, Jason Gray-Stanford, Ted Levine",
+    "Awards": "Won 8 Primetime Emmys. 22 wins & 47 nominations total",
+    "Country": "United States",
+    "Director": "N/A",
+    "Genre": "Comedy, Crime, Drama",
+    "Language": "English",
+    "Metascore": "N/A",
+    "Plot": "After the unsolved murder of his wife, Trudy, Adrian Monk develops obsessive-compulsive disorder, which includes his terror of germs and contamination. His condition costs him his job as a prominent homicide detective in the San Francisco Police Department, but he continues to solve crimes with the help of his assistant and his former boss.",
+    "Poster": "https://m.media-amazon.com/images/M/MV5BNWM0YjQ4ZjYtNWYyYi00ZDVmLTg5NDQtOTkzZjljYzg2ZWI1XkEyXkFqcGc@._V1_SX300.jpg",
+    "Rated": "TV-PG",
+    "Ratings": [
+        {
+            "Source": "Internet Movie Database",
+            "Value": "8.1/10"
+        }
+    ],
+    "Released": "12 Jul 2002",
+    "Response": "True",
+    "Runtime": "44 min",
+    "Title": "Monk",
+    "Type": "series",
+    "Writer": "Andy Breckman",
+    "Year": "2002–2009",
+    "imdbID": "tt0312172",
+    "imdbRating": "8.1",
+    "imdbVotes": "95,575",
+    "totalSeasons": "8"
+}]

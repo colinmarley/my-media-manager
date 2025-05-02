@@ -39,6 +39,7 @@ export interface FBSeries {
   isPartOfCollection: boolean;
   collectionIds?: string[]; // Optional field for collection IDs
   seasons: Season[];
+  imdbID: string; // Optional field for IMDb ID
   // Additional suggested fields
   genres?: string[]; // Optional field for the genre
   language?: string; // Optional field for the language

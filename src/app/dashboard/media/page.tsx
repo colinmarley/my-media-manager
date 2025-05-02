@@ -4,7 +4,6 @@ import { useState } from 'react';
 import SearchBar from './_components/SearchBar';
 import MovieList from './_components/MovieList';
 import CollectionList from './_components/CollectionList';
-import styles from './_styles/Media.module.css';
 import { OmdbSearchResponse } from '@/types/OmdbResponse.type';
 import MediaInformation from './info/_components/MediaInformation';
 import useMediaSelector from '@/hooks/useMediaSelector';
@@ -20,6 +19,7 @@ const Page = () => {
   const retrieveFullMediaInfo = async (mediaId: string) => {
     if (!mediaId) return;
     const mediaData = await retrieveMediaDataById(mediaId);
+    console.log('Media Data', mediaData);
     setSelectedMediaInfo(mediaData);
   }
 
