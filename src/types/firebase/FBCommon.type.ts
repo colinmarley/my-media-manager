@@ -1,16 +1,7 @@
-import { MovieInfoSmall, SeriesInfoSmall } from "./FBRelease.type";
-
-export interface Director {
-    name: string;
-    notes: string;
-    portfolio: MovieInfoSmall[] | SeriesInfoSmall[];
-    otherCollections: string[];
-    awards: string[];
-}
-
+// This file contains common types used in Firebase-related operations
 export interface DirectorEntry {
     directorId?: string;
-    name: string;
+    fullName: string;
     title: string;
 }
 

@@ -8,7 +8,8 @@ import FirestoreService from '../../../service/firebase/FirestoreService';
 import FormControl from '@mui/material/FormControl';
 import FormTextField from './formInputs/FormTextField';
 import DirectorInput from './formInputs/DirectorInput';
-import { FBMovie, Director, ImageFile } from '../../../types/firebase/FBMovie.type';
+import { FBMovie } from '../../../types/firebase/FBMovie.type';
+import { DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
 import { OmdbResponseFull, OmdbSearchResponse, Rating } from '../../../types/OmdbResponse.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import { retrieveMediaDataById, searchByText } from '@/service/omdb/OmdbService';
@@ -50,7 +51,7 @@ const MovieForm: React.FC = () => {
     const [title, setTitle] = useState('');
     const [year, setYear] = useState('');
     const [countryOfOrigin, setCountryOfOrigin] = useState('');
-    const [directors, setDirectors] = useState<Director[]>([]);
+    const [directors, setDirectors] = useState<DirectorEntry[]>([]);
     const [imageFiles, setImageFiles] = useState<ImageFile[]>([]);
     const [letterboxdLink, setLetterboxdLink] = useState('');
     const [plexLink, setPlexLink] = useState('');
@@ -121,7 +122,7 @@ const MovieForm: React.FC = () => {
         setTitle(omdbData?.Title || title);
         setYear(omdbData?.Year || year);
         setCountryOfOrigin(omdbData?.Country || countryOfOrigin);
-        setDirectors(omdbData?.Director.split(',').map((director: string) => ({ name: director, title: '' })).concat(directors) || directors);
+        setDirectors(omdbData?.Director.split(',').map((director: string) => ({ fullName: director, title: '' })).concat(directors) || directors);
         if (omdbData?.Poster) { setImageFiles([...imageFiles, { fileName: omdbData?.Poster || '', fileSize: 0, resolution: '', format: '' }])};
         setLetterboxdLink(omdbData?.Website || letterboxdLink);
         setReleaseDate(omdbData?.Released || releaseDate);
@@ -150,14 +151,14 @@ const MovieForm: React.FC = () => {
     };
 
     const handleAddDirector = () => {
-        setDirectors([...directors, { name: '', title: '' }]);
+        setDirectors([...directors, { fullName: '', title: '' }]);
     };
 
     const handleSetRatings = (ratings: Rating[]) => {
         setRatings(ratings);
     };
 
-    const handleDirectorChange = (index: number, field: keyof Director, value: string) => {
+    const handleDirectorChange = (index: number, field: keyof DirectorEntry, value: string) => {
         const newDirectors = [...directors];
         newDirectors[index][field] = value;
         setDirectors(newDirectors);

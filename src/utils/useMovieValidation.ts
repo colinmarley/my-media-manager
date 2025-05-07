@@ -30,12 +30,25 @@ const useMovieValidation = () => {
   };
 
   const validateDirectors = (directors: FBMovie['directors']): string | null => {
+    
     if (directors.length === 0) {
       return 'At least one director is required';
     }
     for (const director of directors) {
-      if (!director.name) {
+      if (!director.fullName) {
         return 'Director name is required';
+      }
+      if (!director.directorId) {
+        return 'Director ID is required';
+      }
+      if (director.directorId.length !== 20) {
+        return 'Director ID must be 20 alphanumeric characters';
+      }
+      if (!/^[a-zA-Z0-9]+$/.test(director.directorId)) {
+        return 'Director ID must be alphanumeric characters only';
+      }
+      if (!director.title) {
+        return 'Director title is required';
       }
     }
     return null;

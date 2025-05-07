@@ -1,23 +1,32 @@
-
 Configuration of the firebase database setup for the **my-media-manager** application.
 
 Github Repo: [my-media-manager](https://github.com/colinmarley/my-media-manager)
 Firebase Project: [media-db](https://console.firebase.google.com/project/media-db-cc511/overview)
 
+# TODO
+
+1. **DONE** Define the structure of the `OmdbData` type explicitly, as it is referenced multiple times but not detailed. 
+2. **DONE** Provide clear definitions or references for enums like genres and release types.
+3. Include specific validation rules, such as regex patterns or examples, for fields like `releaseDate` and `runtime`.
+4. **DONE** Centralize shared subtypes (e.g., `MovieDirector`, `SeriesDirector`, `Actor`, `ImageFile`, `Release`) in a dedicated section or file for reuse.
+5. Specify default values or fallback behavior for optional fields like `letterboxdLink` and `plexLink`.
+6. Add error-handling guidelines or examples for validation failures.
+
 # DB Collections
 
 - [Movie Collection](#movie-collection)
-	- [Structure](#movie-data-structure)
+  - [Structure](#movie-data-structure)
 - [Series Collection](#series-collection)
-	- [Structure](#series-data-structure)
+  - [Structure](#series-data-structure)
 - [Season Collection](#season-collection)
-	- [Structure](#season-collection-structure)
+  - [Structure](#season-collection-structure)
 - [Episode Collection](#episode-collection)
-	- [Structure](#episode-collection-structure)
+  - [Structure](#episode-collection-structure)
 - [Release Collection](#release-collection)
-	- [Structure](#release-collection-structure)
+  - [Structure](#release-collection-structure)
 - [Actor Collection](#actor-collection)
 - [Director Collection](#director-collection)
+- [Common Types](#common-types)
 
 ## Movie Collection
 
@@ -29,18 +38,18 @@ The data in the collection is structured as follows:
 - [id](#movie-id): \<**unique string**\>
 - [title](#movie-title): \<**string**\>
 - [countries](#movie-countries): \<**string\[\]**\>
-- [directors](#movie-directors): \<**MovieDirector\[\]**\>
+- [directors](#movie-directors): \<**[DirectorPreview](#directorpreview)\[\]**\>
 - [genres](#movie-genres): \<**string\[\]**\>
-- [imageFiles](#movie-imagefiles): \<**ImageFile\[\]**\>
+- [imageFiles](#movie-imagefiles): \<**[ImageFile](#imagefile)\[\]**\>
 - [languages](#movie-languages): \<**sting\[\]**\>
 - [letterboxdLink](#movie-letterboxdlink): \<**string**\>
 - [plexLink](#movie-plexlink): \<**string**\>
 - [releaseDate](#movie-releasedate):\<**string**\>
-- [releases](#movie-releases):\<**Release\[\]**\>
+- [releases](#movie-releases):\<**[ReleaseEntry](#releaseentry)\[\]**\>
 - [runtime](#movie-runtime): \<**string**\>
 - [cast](#movie-cast):\<**Actor\[\]**\>
 - [writers](#movie-writers): \<**string\[\]**\>
-- [omdbData](#movie-omdbdata): \<**OmdbData**\>
+- [omdbData](#movie-omdbdata): \<**[OmdbData](#omdbdata)**\>
 ### Movie id
 
 [Movie Collection](#movie-collection)
@@ -69,12 +78,7 @@ Because of the possibility of country name changes in the past or future no vali
 ### Movie directors
 
 [Movie Collection](#movie-collection)
-A \<**MovieDirector\[\]**\> of the director(s) involved in the movie.
-
-- **MovieDirector** Object
-	- **name**: A \<**string**\> of the Director's name
-	- **title**: A \<**string**\> of the title of the director on this movie
-	- **directorId**: A <**unique string**> of the id for the director in the **directors** Firebase collection
+A \<**[DirectorPreview](#directorpreview)\[\]**\> of the director(s) involved in the movie.
 
 **validation**
 - Check if the Director exists in the **directors** collection before adding a new entry in Firebase
@@ -117,12 +121,7 @@ A \<**string\[\]**\> representing the genre(s) for the movie. The genres in the 
 ### Movie imageFiles
 
 [Movie Collection](#movie-collection)
-An \<**ImageFile\[\]**\> that contain info images for the movie posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
-- **ImageFile** Object: 
-	- **fileName**: The \<**string**\> of the URL Path where the image is stored
-	- **fileSize**: A \<**string**\> of the file size of the image to be retrieved
-	- **format**: A \<**string**\> of the file type for the image (ex. png, jpeg, jpg, etc.)
-	- **resolution**: A \<**string**\> representing the aspect ratio or dimensions of the image
+An \<**[ImageFile](#imagefile)\[\]**\> that contain info images for the movie posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
 
 **validation**
 - If the array is empty ensure a default missing poster image is displayed instead
@@ -164,12 +163,7 @@ A \<**string**\> formatted from the date the Movie was originally released.
 ### Movie releases
 
 [Movie Collection](#movie-collection)
-A \<**Release\[\]**\> for the known releases of the movie on physical media (DVD, BluRay, VHS, etc.) There can be multiple release entries for the same physical media type, but must differ in either name or year. the releaseName, releaseType, and year will all exist in the releases collection but are included here to make it easier to display without too many extra calls.
-	- **Release** Object
-		- **releaseId**: A \<**unique string**\> of the entry in the **releases** collection in the Firebase Database
-		- **releaseType**: A \<**string**\> of the release type (DVD, BluRay, VHS, etc.)
-		- **year**: A \<**string**\> of the year of the release
-		- **releaseName**: A \<**string**\> for the title/name of the release (Director's Cut, Special Edition, etc.)
+A \<**[ReleaseEntry](#releaseentry)\[\]**\> for the known releases of the movie on physical media (DVD, BluRay, VHS, etc.) There can be multiple release entries for the same physical media type, but must differ in either name or year. the releaseName, releaseType, and year will all exist in the releases collection but are included here to make it easier to display without too many extra calls.
 
 **validation**
 - Must include a releaseID in each of the entries in the array and must be unique, which means a entry must exist in the releases Firebase collection prior to be added to this array
@@ -219,7 +213,7 @@ A \<**string\[\]**\> of the names of writers with credits in the movie
 ### Movie omdbData
 
 [Movie Collection](#movie-collection)
-A \<**OmdbData**\> object containing all of the known information retrieved from the [[Online Movie Database (OMDB) | OMDB API]].
+A \<**[OmdbData](#omdbdata)**\> object containing all of the known information retrieved from the [[Online Movie Database (OMDB) | OMDB API]].
 There should be no changes made to this object after it gets returned by the API. By saving the full response we can keep from reaching the daily limit for calls to OMDB API easier.
 
 --------------
@@ -233,11 +227,11 @@ The data in the collection is structured as follows:
 - [id](#series-id): <**unique string**>
 - [title](#series-title): <**string**>
 - [countries](#series-countries): <**string\[\]**>
-- [directors](#series-directors): <**Director\[\]**>
-- [imageFiles](#series-imagefiles): <**ImageFile\[\]**>
+- [directors](#series-directors): <**[DirectorPreview](#directorpreview)\[\]**>
+- [imageFiles](#series-imagefiles): <**[ImageFile](#imagefile)\[\]**>
 - [plexLink](#series-plexlink): <**string**>
 - [runningYears](#series-runningyears): <**string\[\]**>
-- [releases](#series-releases): <**Release\[\]**>
+- [releases](#series-releases): <**[ReleaseEntry](#releaseentry)\[\]**>
 - [cast](#series-cast): <**Actor\[\]**>
 - [writers](#series-writers): <**string\[\]**>
 - [seasons](#series-seasons): <**SeasonEntry\[\]**>
@@ -245,7 +239,7 @@ The data in the collection is structured as follows:
 - [genres](#series-genres): <**string\[\]**>
 - [languages](#series-languages): <**string\[\]**>
 - [notes](#series-notes): <**string**>
-- [omdbData](#series-omdbdata): <**OmdbData**>
+- [omdbData](#series-omdbdata): <**[OmdbData](#omdbdata)**>
 
 ### Series id
 
@@ -275,13 +269,7 @@ Because of the possibility of country name changes in the past or future no vali
 ### Series directors
 
 [Series Collection](#series-collection)
-A \<**SeriesDirector\[\]**\> of the director(s) involved in the movie.
-
-- **SeriesDirector** Object
-	- **name**: A \<**string**\> of the Director's name
-	- **title**: A \<**string**\> of the title of the director on this Series
-	- seasons: A <**string\[\]**> of the seasons the person Directed
-	- **directorId**: A <**unique string**> of the id for the director in the **directors** Firebase collection
+A \<**[DirectorPreview](#directorpreview)\[\]**\> of the director(s) involved in the movie.
 
 **validation**
 - Check if the Director exists in the **directors** collection before adding a new entry in Firebase
@@ -296,12 +284,7 @@ A \<**SeriesDirector\[\]**\> of the director(s) involved in the movie.
 ### Series imageFiles
 
 [Series Collection](#series-collection)
-An \<**ImageFile\[\]**\> that contain info images for the Series posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
-- **ImageFile** Object: 
-	- **fileName**: The \<**string**\> of the URL Path where the image is stored
-	- **fileSize**: A \<**string**\> of the file size of the image to be retrieved
-	- **format**: A \<**string**\> of the file type for the image (ex. png, jpeg, jpg, etc.)
-	- **resolution**: A \<**string**\> representing the aspect ratio or dimensions of the image
+An \<**[ImageFile](#imagefile)\[\]**\> that contain info images for the Series posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
 
 **validation**
 - If the array is empty ensure a default missing poster image is displayed instead
@@ -327,12 +310,7 @@ A <**string\[\]**> of the year that the series ran. It could be that there were 
 ### Series releases
 
 [Series Collection](#series-collection)
-A \<**Release\[\]**\> for the known releases of the Series on physical media (DVD, BluRay, VHS, etc.) There can be multiple release entries for the same physical media type, but must differ in either name or year. the releaseName, releaseType, and year will all exist in the releases collection but are included here to make it easier to display without too many extra calls.
-	- **Release** Object
-		- **releaseId**: A \<**unique string**\> of the entry in the **releases** collection in the Firebase Database
-		- **releaseType**: A \<**string**\> of the release type (DVD, BluRay, VHS, etc.)
-		- **year**: A \<**string**\> of the year of the release
-		- **releaseName**: A \<**string**\> for the title/name of the release (Director's Cut, Special Edition, etc.)
+A \<**[ReleaseEntry](#releaseentry)\[\]**\> for the known releases of the Series on physical media (DVD, BluRay, VHS, etc.) There can be multiple release entries for the same physical media type, but must differ in either name or year. the releaseName, releaseType, and year will all exist in the releases collection but are included here to make it easier to display without too many extra calls.
 
 **validation**
 - Must include a releaseID in each of the entries in the array and must be unique, which means a entry must exist in the releases Firebase collection prior to be added to this array
@@ -375,9 +353,14 @@ A \<**string\[\]**\> of the names of writers with credits in the series
 
 [Series Collection](#series-collection)
 A <**SeasonEntry\[\]**> to hold the ids for the Seasons from the seasons Firebase Collection
+- **SeasonEntry** Object
+	- **id**: The id of the Season collection entry in Firebase
+	- **number**: A \<**string**\> of the season number
 
 **validation**
 - Check each of the ids in the array for uniqueness and length == 20
+- Check that the **number** field is a string type
+- Ensure the **number** field has a value and not an empty string. ("N/A" is acceptable)
 ### Series awards
 
 [Series Collection](#series-collection)
@@ -438,7 +421,7 @@ A <**string**> to hold any information for the Series that doesn't fit into one 
 ### Series omdbData
 
 [Series Collection](#series-collection)
-A \<**OmdbData**\> object containing all of the known information for the series retrieved from the [[Online Movie Database (OMDB) | OMDB API]].
+A \<**[OmdbData](#omdbdata)**\> object containing all of the known information for the series retrieved from the [[Online Movie Database (OMDB) | OMDB API]].
 There should be no changes made to this object after it gets returned by the API. By saving the full response we can keep from reaching the daily limit for calls to OMDB API easier.
 
 ## Season Collection
@@ -452,16 +435,16 @@ The Season Collection holds data for a single season of a Series in the series c
 - [seriesId](#season-seriesId): <**string**>
 - [number](#season-number): <**string**>
 - [countries](#season-countries): <**string\[\]**>
-- [directors](#season-directors): <**Director\[\]**>
-- [imageFiles](#season-imageFiles): <**ImageFile\[\]**>
+- [directors](#season-directors): <**[DirectorPreview](#directorpreview)\[\]**>
+- [imageFiles](#season-imageFiles): <**[ImageFile](#imagefile)\[\]**>
 - [plexLink](#season-plexLink): <**string**>
 - [releaseYear](#season-releaseYear): <**string**>
-- [releases](#season-releases): <**string\[\]**>
+- [releases](#season-releases): <**[ReleaseEntry](#releaseentry)\[\]**>
 - [cast](#season-cast): <**Actor\[\]**>
 - [writers](#season-writers): <**string\[\]**>
 - [episodes](#season-episodes): <**EpisodeData\[\]**>
 - [languages](#season-languages): <**string\[\]**>
-- [omdbData](#season-omdbData): <**OmdbData**>
+- [omdbData](#season-omdbData): <**[OmdbData](#omdbdata)**>
 
 ### Season id
 
@@ -510,12 +493,7 @@ Because of the possibility of country name changes in the past or future no valu
 ### Season directors
 
 [Season Collection](#season-collection)
-A \<**SeasonDirector\[\]**\> of the director(s) involved in creating the Season.
-
-- **SeasonDirector** Object
-	- **name**: A \<**string**\> of the Director's name
-	- **title**: A \<**string**\> of the title of the director on this Season
-	- **directorId**: A <**unique string**> of the id for the director in the **directors** Firebase collection
+A \<**[DirectorPreview](#directorpreview)\[\]**\> of the director(s) involved in creating the Season.
 
 **validation**
 - Check if the directorId exists in the **directors** collection before adding a new entry in Firebase
@@ -529,12 +507,7 @@ A \<**SeasonDirector\[\]**\> of the director(s) involved in creating the Season.
 ### Season imageFiles
 
 [Season Collection](#season-collection)
-An \<**ImageFile\[\]**\> that contain info images for the Season specific posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
-- **ImageFile** Object: 
-	- **fileName**: The \<**string**\> of the URL Path where the image is stored
-	- **fileSize**: A \<**string**\> of the file size of the image to be retrieved
-	- **format**: A \<**string**\> of the file type for the image (ex. png, jpeg, jpg, etc.)
-	- **resolution**: A \<**string**\> representing the aspect ratio or dimensions of the image
+An \<**[ImageFile](#imagefile)\[\]**\> that contain info images for the Season specific posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
 
 **validation**
 - If the array is empty ensure a default missing poster image is displayed instead
@@ -562,12 +535,7 @@ The <**string**> value of the year that the season Pilot first aired or was rele
 ### Season releases
 
 [Season Collection](#season-collection)
-A \<**Release\[\]**\> for the known releases of the Season on physical media (DVD, BluRay, VHS, etc.) There can be multiple release entries for the same physical media type, but must differ in either name or year. the releaseName, releaseType, and year will all exist in the releases collection but are included here to make it easier to display without too many extra calls.
-	- **Release** Object
-		- **releaseId**: A \<**unique string**\> of the entry in the **releases** collection in the Firebase Database
-		- **releaseType**: A \<**string**\> of the release type (DVD, BluRay, VHS, etc.)
-		- **year**: A \<**string**\> of the year of the release
-		- **releaseName**: A \<**string**\> for the title/name of the release (Director's Cut, Special Edition, etc.)
+A \<**[ReleaseEntry](#releaseentry)\[\]**\> for the known releases of the Season on physical media (DVD, BluRay, VHS, etc.) There can be multiple release entries for the same physical media type, but must differ in either name or year. the releaseName, releaseType, and year will all exist in the releases collection but are included here to make it easier to display without too many extra calls.
 
 **validation**
 - Must include a releaseID in each of the entries in the array and must be unique, which means a entry must exist in the releases Firebase collection prior to be added to this array
@@ -633,7 +601,7 @@ The \<**sting\[\]**\> for the original language(s) the Season was filmed using.
 ### Season omdbData
 
 [Season Collection](#season-collection)
-A \<**OmdbData**\> object containing all of the known information for the series retrieved from the [[Online Movie Database (OMDB) | OMDB API]].
+A \<**[OmdbData](#omdbdata)**\> object containing all of the known information for the series retrieved from the [[Online Movie Database (OMDB) | OMDB API]].
 There should be no changes made to this object after it gets returned by the API. By saving the full response we can keep from reaching the daily limit for calls to OMDB API easier.
 ## Episode Collection
 
@@ -647,15 +615,15 @@ The Episode Collection holds data for a single Episode of a Season in the series
 - [episodeNumber](#episode-episodeNumber): <**EpisodeNumber**>
 - [plot](#episode-plot): <**string**>
 - [countries](#episode-countries): <**string\[\]**>
-- [directors](#episode-directors): <**EpisodeDirector\[\]**>
-- [imageFiles](#episode-imageFiles): <**ImageFile\[\]**>
+- [directors](#episode-directors): <**[DirectorPreview](#directorpreview)\[\]**>
+- [imageFiles](#episode-imageFiles): <**[ImageFile](#imagefile)\[\]**>
 - [plexLink](#episode-plexLink): <**string**>
 - [releaseDate](#episode-releaseDate): <**string**>
 - [runtime](#Episode-runtime): <**string**>
 - [cast](#Episode-cast): <**Actor\[\]**>
 - [writers](#Episode-writers): <**string\[\]**>
 - [languages](#Episode-languages): <**string\[\]**>
-- [omdbData](#episode-omdbData): <**OmdbResponseFull**>
+- [omdbData](#episode-omdbData): <**[OmdbData](#omdbdata)**>
 - [notes](#episode-notes): <**string**>
 ### Episode id
 
@@ -721,12 +689,7 @@ Because of the possibility of country name changes in the past or future no valu
 ### Episode directors
 
 [Episode Collection](#episode-collection)
-A \<**EpisodeDirector\[\]**\> of the director(s) involved in creating the Episode.
-
-- **EpisodeDirector** Object
-	- **name**: A \<**string**\> of the Director's name
-	- **title**: A \<**string**\> of the title of the director on this Episode
-	- **directorId**: A <**unique string**> of the id for the director in the **directors** Firebase collection
+A \<**[DirectorPreview](#directorpreview)\[\]**\> of the director(s) involved in creating the Episode.
 
 **validation**
 - Check if the directorId exists in the **directors** collection before adding a new entry in Firebase
@@ -740,12 +703,7 @@ A \<**EpisodeDirector\[\]**\> of the director(s) involved in creating the Episod
 ### Episode imageFiles
 
 [Episode Collection](#episode-collection)
-An \<**ImageFile\[\]**\> that contain info images for the Episode specific posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
-- **ImageFile** Object: 
-	- **fileName**: The \<**string**\> of the URL Path where the image is stored
-	- **fileSize**: A \<**string**\> of the file size of the image to be retrieved
-	- **format**: A \<**string**\> of the file type for the image (ex. png, jpeg, jpg, etc.)
-	- **resolution**: A \<**string**\> representing the aspect ratio or dimensions of the image
+An \<**[ImageFile](#imagefile)\[\]**\> that contain info images for the Episode specific posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
 
 **validation**
 - If the array is empty ensure a default missing poster image is displayed instead
@@ -814,7 +772,7 @@ The \<**sting\[\]**\> for the original language(s) the Episode was filmed using.
 ### Episode omdbData
 
 [Episode Collection](#episode-collection)
-A \<**OmdbData**\> object containing all of the known information for the series retrieved from the [[Online Movie Database (OMDB) | OMDB API]].
+A \<**[OmdbData](#omdbdata)**\> object containing all of the known information for the series retrieved from the [[Online Movie Database (OMDB) | OMDB API]].
 There should be no changes made to this object after it gets returned by the API. By saving the full response we can keep from reaching the daily limit for calls to OMDB API easier.
 ### Episode notes
 
@@ -842,7 +800,7 @@ The Release Collection holds all of the information for releases of Movies, Seri
 - [seriesIds](#release-seriesids): <**SeriesInfoSmall\[\]**>
 - [title](#release-title): <**string**>
 - [year](#release-year): <**number**>
-- [imageFiles](#release-imagefiles): <**ImageFile\[\]**>
+- [imageFiles](#release-imagefiles): <**[ImageFile](#imagefile)\[\]**>
 
 ### Release id
 
@@ -980,12 +938,7 @@ A <**string**> of the year that the release came out.
 ### Release imageFiles
 
 [Release Structure](#release-structure)
-An \<**ImageFile\[\]**\> that contain info images for the Release specific posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
-- **ImageFile** Object: 
-	- **fileName**: The \<**string**\> of the URL Path where the image is stored
-	- **fileSize**: A \<**string**\> of the file size of the image to be retrieved
-	- **format**: A \<**string**\> of the file type for the image (ex. png, jpeg, jpg, etc.)
-	- **resolution**: A \<**string**\> representing the aspect ratio or dimensions of the image
+An \<**[ImageFile](#imagefile)\[\]**\> that contain info images for the Release specific posters, covers, or stills.  There isn't another images collection and all associated images will have to be managed in the collection they belong to. If deleted from this field in the firebase collection there will not be another way to undo the action. There will likely be a URL for poster image from the omdb response.
 
 **validation**
 - If the array is empty ensure a default missing poster image is displayed instead
@@ -1017,3 +970,93 @@ The Director Collection holds entries for directors for both movies and series. 
 - [birthplace](#director-birthplace): <**string**>
 - [birthday](#director-birthday): <**string**>
 - [notes](#director-notes): <**string**>
+
+# Common Types
+
+## DirectorPreview
+A common type for representing directors across different collections.
+
+- **name**: A <**string**> of the Director's name
+- **title**: A <**string**> of the title of the director (e.g., Director, Co-Director)
+- **directorId**: A <**unique string**> of the id for the director in the **directors** Firebase collection
+- **seasons** (optional): A <**string[]**> of the seasons the person directed (only applicable for series)
+
+**Validation**:
+- Check if the `directorId` exists in the **directors** collection before adding a new entry in Firebase.
+  - If multiple directors with the same name, use an identifier like "Director Name (1)".
+  - If it exists already, update the entry instead of creating a new one.
+- `title` should be one of the following:
+  - Director (if only one name)
+  - Co-Director (if multiple names in array)
+- `name` should not be blank.
+- `seasons` array is optional; if no info, use an empty array.
+
+## ImageFile
+A common type for representing image files across different collections.
+
+- **fileName**: The <**string**> of the URL Path where the image is stored
+- **fileSize**: A <**string**> of the file size of the image to be retrieved
+- **format**: A <**string**> of the file type for the image (e.g., png, jpeg, jpg, etc.)
+- **resolution**: A <**string**> representing the aspect ratio or dimensions of the image
+
+**Validation**:
+- If the array is empty, ensure a default missing poster image is displayed instead.
+- For each entry, ensure there is a `fileName` value.
+- Check that the units of the `fileSize` value are in bytes for more accuracy.
+- Ensure there is an entry in the `format` field, even if it's `Unknown` if no info.
+- Eventually add a check to get the resolution by analyzing the image metadata.
+
+## OmdbData
+A common type for representing OMDB data across different collections. Based on the `OmdbResponseFull` type in the codebase.
+
+- **Title**: <**string**>
+- **Year**: <**string**>
+- **Rated**: <**string**>
+- **Released**: <**string**>
+- **Runtime**: <**string**>
+- **Genre**: <**string**>
+- **Director**: <**string**>
+- **Writer**: <**string**>
+- **Actors**: <**string**>
+- **Plot**: <**string**>
+- **Language**: <**string**>
+- **Country**: <**string**>
+- **Awards**: <**string**>
+- **Poster**: <**string**>
+- **Ratings**: <**Rating[]**>
+- **Metascore**: <**string**>
+- **imdbRating**: <**string**>
+- **imdbVotes**: <**string**>
+- **imdbID**: <**string**>
+- **Type**: <**string**>
+- **Dvd** (optional): <**string**>
+- **BoxOffice** (optional): <**string**>
+- **Production** (optional): <**string**>
+- **Website** (optional): <**string**>
+- **Response**: <**string**>
+- **TotalSeasons** (optional): <**string**>
+
+**Validation**:
+- Ensure the object matches the structure defined above.
+- No changes should be made to this object after it gets returned by the API.
+
+## ReleaseEntry
+A common type for representing release entries across different collections.
+
+- **releaseId**: A <**unique string**> of the entry in the **releases** collection in the Firebase Database
+- **releaseType**: A <**string**> of the release type (DVD, BluRay, VHS, etc.)
+- **year**: A <**string**> of the year of the release
+- **releaseName**: A <**string**> for the title/name of the release (Director's Cut, Special Edition, etc.)
+
+**Validation**:
+- Must include a `releaseId` in each of the entries in the array and must be unique, which means an entry must exist in the releases Firebase collection prior to being added to this array.
+- `releaseName` must exist for each of the entries.
+- `year` must be a single year between 1850-{current year}.
+- `releaseType` must be one of the following:
+  - DVD
+  - BLURAY
+  - VHS
+  - HDDVD
+  - BETA
+  - PSP
+  - BLURAY-3D

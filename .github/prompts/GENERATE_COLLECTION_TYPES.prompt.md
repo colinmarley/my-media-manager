@@ -1,0 +1,3 @@
+Using the types defined in the /docs/FIREBASE_COLLECTIONS.md file of this codebase, Create a type definition for each of the collection types. I want each of the collection types to be defined in it's own file in the /types/collections folder. For the subtypes in each of the collection types define them in a Common.type.ts file in the same folder to be referenced by the collections that use them. 
+
+If there are types already defined in the /types/collections folder for any of the types defined in the FIREBASE_COLLECTIONS.md file instead of generating new files for a new definition, edit the existing files to match how it is defined in the markdown file.

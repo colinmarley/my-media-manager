@@ -1,24 +1,13 @@
 import { TopCastEntry } from '../inputs/MovieInputs';
 import { OmdbResponseFull } from '../OmdbResponse.type';
 import { FBRelease } from './FBRelease.type';
-
-export interface Director {
-  name: string;
-  title: string;
-}
-
-export interface ImageFile {
-  fileName: string;
-  fileSize: number; // in bytes
-  resolution: string; // e.g., "1920x1080"
-  format: string; // e.g., "jpg", "png"
-}
+import { ImageFile, DirectorEntry } from './FBCommon.type';
 
 export interface FBMovie {
   id: string;
   title: string;
   countryOfOrigin: string;
-  directors: Director[];
+  directors: DirectorEntry[];
   imageFiles: ImageFile[];
   letterboxdLink?: string; // Optional field for Letterboxd link
   plexLink?: string; // Optional field for Plex link

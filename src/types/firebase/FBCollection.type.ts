@@ -1,4 +1,4 @@
-import { Director, DirectorEntry, ImageFile } from "./FBCommon.type";
+import { DirectorEntry, ImageFile } from "./FBCommon.type";
 import { EpisodeInfoSmall, MovieInfoSmall, SeasonInfoSmall, SeriesInfoSmall } from "./FBRelease.type";
 
 export interface FBCollection {
