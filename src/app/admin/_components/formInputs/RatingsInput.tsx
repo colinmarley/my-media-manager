@@ -1,9 +1,11 @@
 import React from "react";
 import { Rating } from "@/types/OmdbResponse.type";
 import Grid from "@mui/material/Grid2";
-import TextField from "@mui/material/TextField";
+import { FormTextField } from "./common/FormTextField";
 import Button from "@mui/material/Button";
 import Divider from "@mui/material/Divider";
+import { RatingEntry } from "@/types/collections/Common.type";
+import { FormInputData } from "@/types/inputs/FormInput.type";
 
 enum RatingSource {
     IMDB = "Internet Movie Database",
@@ -12,48 +14,26 @@ enum RatingSource {
 }
 
 interface RatingsInputProps {
-    ratings: Rating[];
-    numberOfImdbVoters: string;
-    setRatings: (ratings: Rating[]) => void;
+    ratings: FormInputData<RatingEntry[]>;
+    setRatings: (ratings: RatingEntry[]) => void;
 }
 
-const FormTextField = (
-    props: { 
-        label: string,
-        value: string,
-        disabled?: boolean,
-        onChange: (e: React.ChangeEvent<HTMLInputElement>) => void,
-        error?: string | null
-    }) => (
-        <TextField
-            label={props.label}
-            value={props.value}
-            onChange={props.onChange}
-            sx={{input: { color: 'white' }, label: { color: 'white' }}}
-            fullWidth
-            required
-            disabled={props.disabled}
-            error={!!props.error}
-            helperText={props.error}
-        />
-);
-
-const RatingsInput = ({ ratings, numberOfImdbVoters, setRatings }: RatingsInputProps) => {
-    const [numberOfRatings, setNumberOfRatings] = React.useState(ratings.length);
+const RatingsInput = ({ ratings, setRatings }: RatingsInputProps) => {
+    const [numberOfRatings, setNumberOfRatings] = React.useState(ratings?.value.length);
 
     React.useEffect(() => {
-        setNumberOfRatings(ratings.length);
+        setNumberOfRatings(ratings?.value.length);
     }, [ratings]);
 
     const handleSourceChange = (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
-        const newRatings = [...ratings];
-        newRatings[index].Source = e.target.value;
+        const newRatings = [...ratings.value];
+        newRatings[index].source = e.target.value;
         setRatings(newRatings);
     }
 
     const handleValueChange = (e: React.ChangeEvent<HTMLInputElement>, index: number) => {
-        const newRatings = [...ratings];
-        newRatings[index].Value = e.target.value;
+        const newRatings = [...ratings.value];
+        newRatings[index].value = e.target.value;
         setRatings(newRatings);
     }
     
@@ -66,32 +46,21 @@ const RatingsInput = ({ ratings, numberOfImdbVoters, setRatings }: RatingsInputP
                     Rating Details
                 </Divider>
             </Grid>
-            {ratings.map((rating, index) => (
+            {ratings?.value.map((rating: RatingEntry, index: number) => (
                 <React.Fragment key={`rating-${index}`}>
                     <Grid size={4}>
                         <FormTextField
                             key={`rating-source-${index}`}
                             label={`Rating Source ${index + 1}`}
-                            value={rating.Source}
+                            value={rating.source}
                             onChange={(e) => handleSourceChange(e, index)}
                             />
                     </Grid>
-                    {rating.Source === RatingSource.IMDB &&
-                        <Grid size={2}>
-                            <FormTextField
-                                key={`rating-imdb-voters-${index}`}
-                                label="Number of voters"
-                                disabled={true}
-                                value={numberOfImdbVoters}
-                                onChange={(e) => {}}
-                                />
-                        </Grid>
-                    }
-                    <Grid size={rating.Source === RatingSource.IMDB ? 2 : 4}>
+                    <Grid size={rating.source === RatingSource.IMDB ? 2 : 4}>
                         <FormTextField
                             key={`rating-value-${index}`}
                             label={`Rating Source ${index + 1}`}
-                            value={rating.Value}
+                            value={rating.value}
                             onChange={(e) => handleValueChange(e, index)}
                             />
                     </Grid>
@@ -99,7 +68,7 @@ const RatingsInput = ({ ratings, numberOfImdbVoters, setRatings }: RatingsInputP
                         <Button
                             variant="contained"
                             color="secondary"
-                            onClick={() => setRatings(ratings.filter((_, i) => i !== index))}
+                            onClick={() => setRatings(ratings?.value.filter((_, i) => i !== index))}
                         >
                             Remove
                         </Button>
@@ -108,7 +77,7 @@ const RatingsInput = ({ ratings, numberOfImdbVoters, setRatings }: RatingsInputP
                         <Button
                             variant="contained"
                             color="primary"
-                            onClick={() => setRatings([...ratings, { Source: '', Value: '' }])}
+                            onClick={() => setRatings([...ratings?.value, { source: '', value: '' }])}
                         >
                             Add
                         </Button>

@@ -1,4 +1,5 @@
-import { EpisodeNumber, EpisodeDirector, ImageFile, Actor, OmdbData } from "./Common.type";
+import { OmdbResponseFull } from "../OmdbResponse.type";
+import { EpisodeNumber, EpisodeDirector, ImageFile, ActorPreview } from "./Common.type";
 
 export interface Episode {
     id: string;
@@ -13,9 +14,9 @@ export interface Episode {
     plexLink?: string;
     releaseDate: string;
     runtime: string;
-    cast: Actor[];
+    cast: ActorPreview[];
     writers: string[];
     languages: string[];
-    omdbData: OmdbData;
+    omdbData: OmdbResponseFull;
     notes?: string;
 }

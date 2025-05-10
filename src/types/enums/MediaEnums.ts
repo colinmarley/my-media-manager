@@ -34,6 +34,16 @@ enum DiscType {
     UHD = 'UHD',
 }
 
+enum ReleaseType {
+    DVD = 'DVD',
+    BluRay = 'Blu-Ray',
+    UHD = 'UHD',
+    Digital = 'Digital',
+    Streaming = 'Streaming',
+    VHS = 'VHS',
+    PSP = 'PSP',
+}
+
 enum ExtraType {
     BehindTheScenes = 'Behind the Scenes',
     DeletedScenes = 'Deleted Scenes',
@@ -61,7 +71,23 @@ enum MediaRating {
     TV_PG = 'TV-PG',
     TV_14 = 'TV-14',
     TV_MA = 'TV-MA',
-    UNKOWN = 'Unknown',
+    UNKNOWN = 'Unknown',
 }
 
-export { MediaGenre, MediaType, MediaRating, DiscType, ExtraType };
+enum MediaCertification {
+    G = 'G',
+    PG = 'PG',
+    PG13 = 'PG-13',
+    R = 'R',
+    NC17 = 'NC-17',
+    NOT_RATED = 'Not Rated',
+    UNRATED = 'Unrated',
+    TV_Y = 'TV-Y',
+    TV_Y7 = 'TV-Y7',
+    TV_G = 'TV-G',
+    TV_PG = 'TV-PG',
+    TV_14 = 'TV-14',
+    TV_MA = 'TV-MA',
+}
+
+export { MediaCertification, MediaGenre, MediaType, MediaRating, DiscType, ReleaseType, ExtraType };

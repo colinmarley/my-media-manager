@@ -2,14 +2,14 @@ import React from 'react';
 import Grid from '@mui/material/Grid2';
 import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
-import FormTextField from '../FormTextField';
+import { FormTextField } from '../common/FormTextField';
 import MovieSearchResults from './MovieSearchResults';
 import { OmdbSearchResponse } from '../../../../../types/OmdbResponse.type';
+import { FormInputData } from '@/types/inputs/FormInput.type'; 
 
 interface MovieTitleSearchProps {
-  title: string;
+  title: FormInputData<string>;
   setTitle: (title: string) => void;
-  errors: { title: string | null };
   omdbResults: OmdbSearchResponse[];
   handleMovieTitleSearch: (title: string) => void;
   handleMovieSelect: (title: string, year: string, imdbId: string) => void;
@@ -18,11 +18,11 @@ interface MovieTitleSearchProps {
 const MovieTitleSearch: React.FC<MovieTitleSearchProps> = ({
   title,
   setTitle,
-  errors,
   omdbResults,
   handleMovieTitleSearch,
   handleMovieSelect,
 }) => {
+
   return (
     <>
       <Grid size={12}>
@@ -33,14 +33,14 @@ const MovieTitleSearch: React.FC<MovieTitleSearchProps> = ({
       <Grid size={9}>
         <FormTextField
           label="Title"
-          value={title}
+          value={title?.value || ''}
           onChange={(e) => setTitle(e.target.value)}
-          error={errors.title}
+          error={title?.errors.join('\n') || null}
         />
       </Grid>
       <Grid size={3}>
         <Button
-          onClick={() => handleMovieTitleSearch(title)}
+          onClick={() => handleMovieTitleSearch(title?.value || '')}
           variant="contained"
           color="primary"
         >

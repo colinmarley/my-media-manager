@@ -1,168 +1,364 @@
 import FirestoreService from '@/service/firebase/FirestoreService';
 import { FBMovie } from '../types/firebase/FBMovie.type';
 import { TopCastEntry } from '@/types/inputs/MovieInputs';
+import { ActorPreview, MovieDirector, RatingEntry } from '@/types/collections/Common.type';
+import { ImageFile, ReleasePreview } from '@/types/collections/Common.type';
+import { MediaCertification, MediaGenre, ReleaseType } from '@/types/enums/MediaEnums';
+import { OmdbResponseFull } from '@/types/OmdbResponse.type';
 
 const movieCollection = new FirestoreService('movies');
 
 const useMovieValidation = () => {
-  const validateTitle = (title: string): string | null => {
+
+  // Validate the Title of the movie
+  const validateTitle = (title: string): string[] | [] => {
     if (!title) {
-      return 'Title is required';
+      return ['Title is required'];
     }
-    return null;
+
+    if (title.length === 0) {
+      return ['Title cannot be empty'];
+    }
+
+    return [];
   };
 
-  const validateYear = (year: string): string | null => {
+  // Validate the Year of the movie
+  const validateYear = (year: string): string[] | [] => {
     if (!year) {
-      return 'Year is required';
+      return ['Year is required'];
     }
+
     if (!/^\d{4}$/.test(year)) {
-      return 'Year must be a 4-digit number';
+      return ['Year must be a 4-digit number'];
     }
-    return null;
+
+    return [];
   };
 
-  const validateCountryOfOrigin = (countryOfOrigin: string): string | null => {
-    if (!countryOfOrigin) {
-      return 'Country of Origin is required';
+  const validateCountries = (countries: string[]): string[] | [] => {
+    if (!countries || countries.length === 0) {
+      return ['Country of Origin is required'];
     }
-    return null;
+
+    return [];
   };
 
-  const validateDirectors = (directors: FBMovie['directors']): string | null => {
-    
+  const validateDirectors = (directors: MovieDirector[]): string[] | [] => {
     if (directors.length === 0) {
-      return 'At least one director is required';
+      return ['At least one director is required'];
     }
-    for (const director of directors) {
-      if (!director.fullName) {
-        return 'Director name is required';
+    let errorList: string[] = [];
+    directors.forEach((director, ind) => {
+      if (!director.name) {
+        errorList.push(`${ind}:name:Director name is required`);
       }
-      if (!director.directorId) {
-        return 'Director ID is required';
-      }
-      if (director.directorId.length !== 20) {
-        return 'Director ID must be 20 alphanumeric characters';
-      }
-      if (!/^[a-zA-Z0-9]+$/.test(director.directorId)) {
-        return 'Director ID must be alphanumeric characters only';
-      }
+
       if (!director.title) {
-        return 'Director title is required';
+        errorList.push(`${ind}:title:Director title is required`);
       }
-    }
-    return null;
+
+      if (!director.directorId) {
+        errorList.push(`${ind}:directorId:Director ID is required`);
+      }
+
+      if (director.directorId && director?.directorId.length !== 20) {
+        errorList.push(`${ind}:directorId:Director ID must be 20 alphanumeric characters`);
+      }
+
+      if (director.directorId && !/^[a-zA-Z0-9]+$/.test(director.directorId)) {
+        errorList.push(`${ind}:directorId:Director ID must be alphanumeric characters only`);
+      }
+    });
+    return errorList;
   };
 
-  const validateImageFiles = (imageFiles: FBMovie['imageFiles']): string | null => {
-    if (imageFiles.length === 0) {
-      return 'At least one image file is required';
+  const validateGenres = (genres: string[]): string[] | [] => {
+    if (!genres || genres.length === 0) {
+      return ['At least one genre is required'];
     }
-    return null;
+
+    let errorList: string[] = [];
+    genres.forEach((genre, ind) => {
+      if (!genre) {
+        errorList.push(`${ind}:Genre is required`);
+      }
+
+      if(genre.length === 0) {
+        errorList.push(`${ind}:Genre cannot be empty`);
+      }
+
+      if (MediaGenre[genre as keyof typeof MediaGenre] === undefined) {
+        errorList.push(`${ind}:${genre} is an invalid genre type`);
+      }
+    });
+
+    return errorList;
   };
 
-  const validateReleaseDate = (releaseDate: string): string | null => {
+  const validateImageFiles = (imageFiles: ImageFile[]): string[] | [] => {
+    // Check if imageFiles is null or empty
+    if (!imageFiles || imageFiles.length === 0) {
+      return ['At least one image file is required'];
+    }
+
+    let errorList: string[] = [];
+    imageFiles.forEach((imageFile, ind) => {
+      if (!imageFile.fileName) {
+        errorList.push(`${ind}:fileName:Image file name is required`);
+      }
+
+      if (!imageFile.fileSize) {
+        errorList.push(`${ind}:fileSize:Image file size is required`);
+      }
+
+      if (!imageFile.format) {
+        errorList.push(`${ind}:format:Image file format is required`);
+      }
+
+      if (!imageFile.resolution) {
+        errorList.push(`${ind}:resolution:Image file resolution is required`);
+      }
+    });
+
+    return errorList;
+  };
+
+  const validateLanguages = (languages: string[]): string[] | [] => {
+    if (!languages || languages.length === 0) {
+      return ['At least one language is required'];
+    }
+
+    let errorList: string[] = [];
+    languages.forEach((language, ind) => {
+      if (!language) {
+        errorList.push(`${ind}:Language is required`);
+      }
+
+      if (language.length === 0) {
+        errorList.push(`${ind}:Language cannot be empty`);
+      }
+    });
+
+    return errorList;
+  };
+
+  const validateLetterboxdLink = (letterboxdLink: string): string[] | [] => {
+    if (!letterboxdLink || letterboxdLink.length === 0) {
+      return ['Letterboxd link cannot be empty'];
+    }
+
+    if (!/^https?:\/\/(www\.)?letterboxd\.com\/[a-zA-Z0-9]+\/?$/.test(letterboxdLink)) {
+      return ['Invalid Letterboxd link format'];
+    }
+
+    return [];
+  }
+
+  const validatePlexLink = (plexLink: string): string[] | [] => {
+    if (!plexLink || plexLink.length === 0) {
+      return ['Plex link cannot be empty'];
+    }
+
+    if (!/^https?:\/\/(www\.)?plex\.tv\/[a-zA-Z0-9]+\/?$/.test(plexLink)) {
+      return ['Invalid Plex link format'];
+    }
+
+    return [];
+  }
+
+  const validateReleaseDate = (releaseDate: string): string[] | [] => {
     if (!releaseDate) {
-      return 'Release Date is required';
+      return ['Release Date is required'];
     }
-    return null;
+
+    if (!/^\d{1,2}-\w{3}-\d{4}$/.test(releaseDate)) {
+      return ['Release Date must be in the format "DayAsNumber-Month-Year"'];
+    }
+
+    return [];
   };
 
-  const validateRuntime = (runtime: string): string | null => {
-    if (!runtime) {
-      return 'Runtime is required';
+  const validateReleases = (releases: ReleasePreview[]): string[] | [] => {
+    if (!releases || releases.length === 0) {
+      return ['At least one release is required'];
     }
-    return null;
+
+    let errorList: string[] = [];
+    releases.forEach((release, ind) => {
+      if (!release.releaseName || release.releaseName.length === 0) {
+        errorList.push(`${ind}:releaseName:Release Name is required`);
+      }
+
+      if (!release.releaseId || release.releaseId.length === 0) {
+        errorList.push(`${ind}:releaseId:Release Id is required`);
+      }
+
+      if (!release.releaseType || release.releaseType.length === 0) {
+        errorList.push(`${ind}:releaseType:Release Type is required`);
+      }
+
+      if (!release.year || release.year.length === 0) {
+        errorList.push(`${ind}:year:Release Year is required`);
+      }
+
+      if (release.releaseId && release.releaseId.length !== 20) {
+        errorList.push(`${ind}:releaseId:Release ID must be 20 alphanumeric characters`);
+      }
+
+      if (release.releaseId && !/^[a-zA-Z0-9]+$/.test(release.releaseId)) {
+        errorList.push(`${ind}:releaseId:Release ID must be alphanumeric characters only`);
+      }
+
+      if (release.releaseType && !ReleaseType[release.releaseType as keyof typeof ReleaseType]) {
+        errorList.push(`${ind}:releaseType:${release.releaseType} is an invalid release type`);
+      }
+    });
+
+    return errorList;
+  }
+
+  const validateRuntime = (runtime: string): string[] | [] => {
+    if (!runtime || runtime.length === 0) {
+      return ['Runtime is required'];
+    }
+
+    if (!/^\d{1,2}:\d{2}:\d{2}$/.test(runtime)) {
+      return ['Runtime must be in the format "{hours}:{minutes}:{seconds}"'];
+    }
+
+    return [];
   };
 
-  const validateTopCast = (topCast: TopCastEntry[]): string | null => {
-    if (topCast.length === 0) {
-      return 'At least one top cast member is required';
+  const validateCast = (cast: ActorPreview[]): string[] | [] => {
+    if (!cast || cast.length === 0) {
+      return ['At least one cast member is required'];
     }
-    return null;
+
+    let errorList: string[] = [];
+    cast.forEach((actor, ind) => {
+      if (!actor.name || actor.name.length === 0) {
+        errorList.push(`${ind}:name:Actor name is required`);
+      }
+
+      if (!actor.actorId || actor.actorId.length === 0) {
+        errorList.push(`${ind}:actorId:Actor ID is required`);
+      }
+
+      if (actor.actorId && actor.actorId.length !== 20) {
+        errorList.push(`${ind}:actorId:Actor ID must be 20 alphanumeric characters`);
+      }
+
+      if (actor.actorId && !/^[a-zA-Z0-9]+$/.test(actor.actorId)) {
+        errorList.push(`${ind}:actorId:Actor ID must be alphanumeric characters only`);
+      }
+
+      if (actor.characters.length === 0) {
+        errorList.push(`${ind}:characters:At least one character is required`);
+      }
+    });
+
+    return errorList;
   };
 
-  const validateWriters = (writers: string[]): string | null => {
+  const validateWriters = (writers: string[]): string[] | [] => {
     if (writers.length === 0) {
-      return 'At least one writer is required';
+      return ['At least one writer is required'];
     }
-    return null;
+
+    let errorList: string[] = [];
+    writers.forEach((writer, ind) => {
+      if (!writer || writer.length === 0) {
+        errorList.push(`${ind}:Writer name can't be blank`);
+      }
+    });
+
+    return errorList;
   };
 
-  const validateGenres = (genres: string[]): string | null => {
-    if (genres.length === 0) {
-      return 'At least one genre is required';
+  const validateRatings = (ratings: RatingEntry[]): string[] | [] => {
+    if (!ratings || ratings.length === 0) {
+      return ['At least one rating is required'];
     }
-    return null;
+
+    let errorList: string[] = [];
+    ratings.forEach((rating, ind) => {
+      if (!rating.source || rating.source.length === 0) {
+        errorList.push(`${ind}:source:Rating source is required`);
+      }
+
+      if (!rating.value || rating.value.length === 0) {
+        errorList.push(`${ind}:value:Rating value is required`);
+      }
+    });
+
+    return errorList;
   };
 
-  const validateLanguage = (language: string): string | null => {
-    if (!language) {
-      return 'Language is required';
-    }
-    return null;
-  };
+  const validateImdbId = (imdbId: string): string[] | [] => {
 
-  const validateRated = (rated: string): string | null => {
-    if (!rated) {
-      return 'Rated is required';
+    //Can be empty, but if not, must be 9 characters long and alphanumeric
+    const errorList: string[] = [];
+    if (0 < imdbId.length && imdbId.length !== 9) {
+      errorList.push('IMDB ID must be 9 characters long');
     }
-    return null;
-  };
 
-  const validatePlot = (plot: string): string | null => {
+    if (!/^[a-zA-Z0-9]+$/.test(imdbId)) {
+      errorList.push('IMDB ID must be alphanumeric characters only');
+    }
+
+    return errorList;
+  }
+
+  const validateCertification = (certification: string): string[] | [] => {
+    //Can be empty, but if not, must be 2 characters long and alphanumeric
+    if (!certification) {
+      return ['Certification value must exist, but can be empty'];
+    }
+
+    if (certification.length === 0) {
+      return [];
+    }
+
+    if (MediaCertification[certification as keyof typeof MediaCertification] === undefined) {
+      return [`${certification} is an invalid certification type`];
+    }
+
+    return [];
+  }
+
+  const validatePlot = (plot: string): string[] | [] => {
     if (!plot) {
-      return 'Plot is required';
+      return ['Plot value is required'];
     }
-    return null;
-  };
 
-  const validateAwards = (awards: string): string | null => {
-    if (!awards) {
-      return 'Awards is required';
+    if (plot.length === 0) {
+      return ['Plot cannot be empty'];
     }
-    return null;
-  };
 
-  const validateMetascore = (metascore: string): string | null => {
-    if (!metascore) {
-      return 'Metascore is required';
-    }
-    return null;
-  };
-
-  const validateImdbRating = (imdbRating: string): string | null => {
-    if (!imdbRating) {
-      return 'IMDb Rating is required';
-    }
-    return null;
-  };
-
-  const validateImdbVotes = (imdbVotes: string): string | null => {
-    if (!imdbVotes) {
-      return 'IMDb Votes is required';
-    }
-    return null;
-  };
+    return [];
+  }
+  
 
   return {
     validateTitle,
     validateYear,
-    validateCountryOfOrigin,
+    validateCountries,
     validateDirectors,
-    validateImageFiles,
-    validateReleaseDate,
-    validateRuntime,
-    validateTopCast,
-    validateWriters,
     validateGenres,
-    validateLanguage,
-    validateRated,
+    validateImageFiles,
+    validateLanguages,
+    validateLetterboxdLink,
+    validatePlexLink,
+    validateReleaseDate,
+    validateReleases,
+    validateRuntime,
+    validateCast,
+    validateWriters,
+    validateRatings,
+    validateImdbId,
+    validateCertification,
     validatePlot,
-    validateAwards,
-    validateMetascore,
-    validateImdbRating,
-    validateImdbVotes,
   };
 };
 

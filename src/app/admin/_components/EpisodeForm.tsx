@@ -11,7 +11,7 @@ import ListItemText from '@mui/material/ListItemText';
 import ListItemButton from '@mui/material/ListItemButton';
 import FirestoreService from '../../../service/firebase/FirestoreService';
 import { FBEpisode } from '../../../types/firebase/FBEpisode.type';
-import { Director, DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
+import { DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
 import { OmdbResponseFull, OmdbSearchResponse } from '../../../types/OmdbResponse.type';
 import { searchByText, retrieveMediaDataById } from '@/service/omdb/OmdbService';
 import ImageSearch from '../imageManager/_components/ImageSearch';
@@ -114,7 +114,7 @@ const EpisodeForm: React.FC = () => {
   useEffect(() => {
     setTitle(omdbData?.Title || title);
     setCountryOfOrigin(omdbData?.Country || countryOfOrigin);
-    setDirectors(omdbData?.Director.split(',').map((director: string) => ({ name: director, title: '' })).concat(directors) || directors);
+    omdbData?.Director.split(',').forEach((directorName: string) => handleUpdateDirectorList(directorName.trim()));
     if (omdbData?.Poster) { setImageFiles([...imageFiles, { fileName: omdbData?.Poster || '', fileSize: 0, resolution: '', format: '' }])};
     setLetterboxdLink(omdbData?.Website || letterboxdLink);
     setReleaseDate(omdbData?.Released || releaseDate);
@@ -130,8 +130,13 @@ const EpisodeForm: React.FC = () => {
     setOmdbResults(omdbSearchResults);
   };
 
+  const handleUpdateDirectorList = (directorName: string) => {
+    setDirectors([...directors, { fullName: directorName, title: '' }]);
+  };
+
   const handleAddDirector = () => {
-    setDirectors([...directors, { name: '', title: '' }]);
+    // TODO: Check that the Director exists in firebase Collection prior to adding
+    setDirectors([...directors, { fullName: '', title: '' }]);
   };
 
   const handleDirectorChange = (index: number, field: keyof DirectorEntry, value: string) => {
@@ -147,16 +152,6 @@ const EpisodeForm: React.FC = () => {
     setOmdbResults([]); // Clear the search results after selection
   };
 
-  const directorEntryToDirector = (director: DirectorEntry): Director => {
-    return {
-      name: director.name,
-      notes: '',
-      portfolio: [],
-      otherCollections: [],
-      awards: [],
-    };
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -166,7 +161,7 @@ const EpisodeForm: React.FC = () => {
       seriesId: validateSeriesId(seriesId),
       episodeNumber: validateEpisodeNumber(episodeNumber),
       countryOfOrigin: validateCountryOfOrigin(countryOfOrigin),
-      directors: validateDirectors(directors.map(directorEntryToDirector)),
+      directors: validateDirectors(directors),
       imageFiles: validateImageFiles(imageFiles),
       releaseDate: validateReleaseDate(releaseDate),
       runtime: validateRuntime(runtime),
@@ -193,7 +188,7 @@ const EpisodeForm: React.FC = () => {
       episodeNumber,
       notes,
       countryOfOrigin,
-      directors: directors.map(directorEntryToDirector),
+      directors: directors,
       imageFiles,
       letterboxdLink,
       plexLink,
@@ -265,8 +260,8 @@ const EpisodeForm: React.FC = () => {
               <Grid size={6}>
                 <FormTextField
                   label="Name"
-                  value={director.name}
-                  onChange={(e) => handleDirectorChange(index, 'name', e.target.value)}
+                  value={director.fullName}
+                  onChange={(e) => handleDirectorChange(index, 'fullName', e.target.value)}
                 />
               </Grid>
               <Grid size={6}>

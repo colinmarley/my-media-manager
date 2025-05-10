@@ -47,100 +47,98 @@ const LibraryPage = () => {
 
     return (
         <Box sx={Styles.page}>
-        <Typography variant="h4" sx={Styles.title}>
-            My Media Collection
-        </Typography>
-        <Grid container spacing={2} sx={Styles.grid}>
-            {mediaCollection.length && mediaCollection.map((media) => {
-                console.log('Media:', media);
-                console.log('media.omdbData:', media.omdbData);
-                console.log('media.imdbID:', media?.imdbID);
-                return (
+            <Typography variant="h4" sx={Styles.title}>
+                My Media Collection
+            </Typography>
+            <Grid
+                container
+                spacing={{ xs: 2, md: 3 }} // Add spacing between grid items
+                columns={{ xs: 4, sm: 8, md: 12 }} // Define columns for different breakpoints
+            >
+                {mediaCollection.map((media, index) => (
                     <Grid
-                        size={{ xs: 12, sm: 6, md: 4, lg: 3 }}
-                        key={isSeries(media) ? media.imdbID : media.omdbData.imdbID}>
+                        key={index}
+                        size={3}
+                    >
                         <Card sx={Styles.card} onClick={() => handleTileClick(media)}>
-                        <Badge
-                            badgeContent={isSeries(media) ? 'Series' : 'Movie'}
-                            color="primary"
-                            sx={Styles.badge}
-                        >
                             <CardMedia
-                            component="img"
-                            height="300"
-                            image={media?.omdbData?.Poster}
-                            alt={media.title}
-                            sx={Styles.poster}
+                                component="img"
+                                image={media?.omdbData?.Poster}
+                                alt={media.title}
+                                sx={Styles.poster}
                             />
-                        </Badge>
-                        <CardContent>
-                            <Typography variant="h6" sx={Styles.cardTitle}>
-                            {media.title}
-                            </Typography>
-                            <Typography variant="body2" sx={Styles.cardSubtitle}>
-                            {isSeries(media)
-                                ? media?.runningDates?.toString() || 'N/A'
-                                : media?.releaseDate?.toString() || 'N/A'}
-                            </Typography>
-                        </CardContent>
+                            <CardContent>
+                                <Badge
+                                    badgeContent={isSeries(media) ? 'Series' : 'Movie'}
+                                    color="primary"
+                                    sx={Styles.badge}
+                                />
+                                <Typography variant="h6" sx={Styles.cardTitle}>
+                                    {media.title}
+                                </Typography>
+                                <Typography variant="body2" sx={Styles.cardSubtitle}>
+                                    {isSeries(media)
+                                        ? media?.runningDates?.toString() || 'N/A'
+                                        : media?.releaseDate?.toString() || 'N/A'}
+                                </Typography>
+                            </CardContent>
                         </Card>
                     </Grid>
-                )
-            })}
-        </Grid>
+                ))}
+            </Grid>
 
-        {/* Modal for Selected Media */}
-        <Modal open={!!selectedMedia} onClose={handleCloseModal}>
-            <Box sx={Styles.modal}>
-            {selectedMedia && (
-                <>
-                <CardMedia
-                    component="img"
-                    height="400"
-                    image={selectedMedia.omdbData.Poster}
-                    alt={selectedMedia.title}
-                    sx={Styles.modalPoster}
-                />
-                <Typography variant="h5" sx={Styles.modalTitle}>
-                    {selectedMedia.title}
-                </Typography>
-                <Typography variant="body1" sx={Styles.modalSubtitle}>
-                    {isSeries(selectedMedia) 
-                        ? selectedMedia?.runningDates?.toString() 
-                        : selectedMedia?.releaseDate?.toString()}
-                </Typography>
-                <Typography variant="body2" sx={Styles.modalText}>
-                    <strong>Country:</strong> {selectedMedia.countryOfOrigin}
-                </Typography>
-                <Typography variant="body2" sx={Styles.modalText}>
-                    <strong>Directors:</strong> {selectedMedia.directors.map((d) => d.name).join(', ')}
-                </Typography>
-                <Typography variant="body2" sx={Styles.modalText}>
-                    <strong>Runtime:</strong> {selectedMedia.runtime.toString()}
-                </Typography>
-                <Typography variant="body2" sx={Styles.modalText}>
-                    <strong>Genres:</strong> {selectedMedia.genres?.join(', ')}
-                </Typography>
-                <Typography variant="body2" sx={Styles.modalText}>
-                    <strong>Top Cast:</strong> {selectedMedia.topCast.join(', ')}
-                </Typography>
-                <Typography variant="body2" sx={Styles.modalText}>
-                    <strong>Writers:</strong> {selectedMedia.writers.join(', ')}
-                </Typography>
-                {selectedMedia.plexLink && (
-                    <Button href={selectedMedia.plexLink} target="_blank" sx={Styles.modalButton}>
-                    View on Plex
-                    </Button>
-                )}
-                {selectedMedia.letterboxdLink && (
-                    <Button href={selectedMedia.letterboxdLink} target="_blank" sx={Styles.modalButton}>
-                    View on Letterboxd
-                    </Button>
-                )}
-                </>
-            )}
-            </Box>
-        </Modal>
+            {/* Modal for Selected Media */}
+            <Modal open={!!selectedMedia} onClose={handleCloseModal}>
+                <Box sx={Styles.modal}>
+                    {selectedMedia && (
+                        <>
+                        <CardMedia
+                            component="img"
+                            height="400"
+                            image={selectedMedia.omdbData.Poster}
+                            alt={selectedMedia.title}
+                            sx={Styles.modalPoster}
+                        />
+                        <Typography variant="h5" sx={Styles.modalTitle}>
+                            {selectedMedia.title}
+                        </Typography>
+                        <Typography variant="body1" sx={Styles.modalSubtitle}>
+                            {isSeries(selectedMedia) 
+                                ? selectedMedia?.runningDates?.toString() 
+                                : selectedMedia?.releaseDate?.toString()}
+                        </Typography>
+                        <Typography variant="body2" sx={Styles.modalText}>
+                            <strong>Country:</strong> {selectedMedia.countryOfOrigin}
+                        </Typography>
+                        <Typography variant="body2" sx={Styles.modalText}>
+                            <strong>Directors:</strong> {selectedMedia.directors.map((d) => d.name).join(', ')}
+                        </Typography>
+                        <Typography variant="body2" sx={Styles.modalText}>
+                            <strong>Runtime:</strong> {selectedMedia.runtime.toString()}
+                        </Typography>
+                        <Typography variant="body2" sx={Styles.modalText}>
+                            <strong>Genres:</strong> {selectedMedia.genres?.join(', ')}
+                        </Typography>
+                        <Typography variant="body2" sx={Styles.modalText}>
+                            <strong>Top Cast:</strong> {selectedMedia.topCast.join(', ')}
+                        </Typography>
+                        <Typography variant="body2" sx={Styles.modalText}>
+                            <strong>Writers:</strong> {selectedMedia.writers.join(', ')}
+                        </Typography>
+                        {selectedMedia.plexLink && (
+                            <Button href={selectedMedia.plexLink} target="_blank" sx={Styles.modalButton}>
+                            View on Plex
+                            </Button>
+                        )}
+                        {selectedMedia.letterboxdLink && (
+                            <Button href={selectedMedia.letterboxdLink} target="_blank" sx={Styles.modalButton}>
+                            View on Letterboxd
+                            </Button>
+                        )}
+                        </>
+                    )}
+                </Box>
+            </Modal>
         </Box>
     );
     };
@@ -169,11 +167,10 @@ const LibraryPage = () => {
         '&:hover': {
         boxShadow: '0px 6px 10px rgba(0, 0, 0, 0.5)',
         },
+        padding: '10px',
     },
     badge: {
-        position: 'absolute',
-        top: '10px',
-        left: '10px',
+        // margin: '10px',
     },
     poster: {
         borderRadius: '8px 8px 0 0',

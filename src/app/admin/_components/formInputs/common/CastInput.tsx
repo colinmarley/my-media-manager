@@ -2,49 +2,45 @@ import React from 'react';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
 import Grid from '@mui/material/Grid2';
+import { ActorPreview } from '@/types/collections/Common.type';
+import { FormInputData } from '@/types/inputs/FormInput.type';
 
-interface TopCastEntry {
-  actor: string;
-  characters: string[];
+interface CastInputProps {
+  cast: FormInputData<ActorPreview[]>;
+  setCast: (cast: ActorPreview[]) => void;
 }
 
-interface TopCastInputProps {
-  topCast: TopCastEntry[];
-  setTopCast: (topCast: TopCastEntry[]) => void;
-  error?: string | null;
-}
-
-const TopCastInput: React.FC<TopCastInputProps> = ({ topCast, setTopCast, error }) => {
+const CastInput: React.FC<CastInputProps> = ({ cast, setCast }) => {
   const handleActorChange = (index: number, value: string) => {
-    const newTopCast = [...topCast];
-    newTopCast[index].actor = value;
-    setTopCast(newTopCast);
+    const newCast = [...cast?.value];
+    newCast[index].name = value;
+    setCast(newCast);
   };
 
   const handleCharactersChange = (index: number, value: string) => {
-    const newTopCast = [...topCast];
-    value.split(", ").map((val: string) => { return newTopCast[index].characters.push(val) });
-    setTopCast(newTopCast);
+    const newCast = [...cast?.value];
+    value.split(", ").map((val: string) => { return newCast[index].characters.push(val) });
+    setCast(newCast);
   };
 
-  const handleAddTopCast = () => {
-    setTopCast([...topCast, { actor: '', characters: [] }]);
+  const handleAddCast = () => {
+    setCast([...cast?.value, { name: '', characters: [], actorId: ''}]);
   };
 
   return (
     <Grid size={5}>
         <Grid container spacing={2}>
-            {topCast.map((entry, index) => (
+            {cast?.value.map((entry, index) => (
                 <React.Fragment key={index}>
                 <Grid size={6}>
                     <TextField
                     label={`Actor ${index + 1}`}
-                    value={entry.actor}
+                    value={entry.name}
                     onChange={(e) => handleActorChange(index, e.target.value)}
                     fullWidth
                     required
-                    error={!!error}
-                    helperText={error}
+                    error={cast?.errors.length > 0}
+                    helperText={cast?.errors.join('\n')}
                     sx={{ input: { color: 'white' }, label: { color: 'white' } }}
                     />
                 </Grid>
@@ -55,16 +51,16 @@ const TopCastInput: React.FC<TopCastInputProps> = ({ topCast, setTopCast, error 
                     onChange={(e) => handleCharactersChange(index, e.target.value)}
                     fullWidth
                     required
-                    error={!!error}
-                    helperText={error}
+                    error={cast?.errors.length > 0}
+                    helperText={cast?.errors.join('\n')}
                     sx={{ input: { color: 'white' }, label: { color: 'white' } }}
                     />
                 </Grid>
                 </React.Fragment>
             ))}
             <Grid size={12}>
-                <Button onClick={handleAddTopCast} variant="contained" color="primary">
-                Add Top Cast
+                <Button onClick={handleAddCast} variant="contained" color="primary">
+                Add  Cast
                 </Button>
             </Grid>
         </Grid>
@@ -72,4 +68,4 @@ const TopCastInput: React.FC<TopCastInputProps> = ({ topCast, setTopCast, error 
   );
 };
 
-export default TopCastInput;
+export default CastInput;

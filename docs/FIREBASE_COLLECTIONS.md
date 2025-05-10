@@ -27,6 +27,7 @@ Firebase Project: [media-db](https://console.firebase.google.com/project/media-d
 - [Actor Collection](#actor-collection)
 - [Director Collection](#director-collection)
 - [Common Types](#common-types)
+- [Validation Rules](#validation-rules)
 
 ## Movie Collection
 
@@ -37,6 +38,7 @@ The data in the collection is structured as follows:
 
 - [id](#movie-id): \<**unique string**\>
 - [title](#movie-title): \<**string**\>
+- [plot](#movie-plot): \<**string**\>
 - [countries](#movie-countries): \<**string\[\]**\>
 - [directors](#movie-directors): \<**[DirectorPreview](#directorpreview)\[\]**\>
 - [genres](#movie-genres): \<**string\[\]**\>
@@ -67,6 +69,16 @@ The \<**string**\> value of the title of the movie. Its original title in the ca
 **validation**
 - no max length
 - not empty
+
+### Movie plot
+
+[Movie Collection](#movie-collection)
+A \<**string**\> of for the movie plot. This should only contain the plot of the movie, no notes about the movie or associated releases.
+
+**validation**
+- no max length
+- not empty
+- can vary from the omdbData plot
 ### Movie countries
 
 [Movie Collection](#movie-collection)
@@ -226,6 +238,7 @@ The data in the collection is structured as follows:
 
 - [id](#series-id): <**unique string**>
 - [title](#series-title): <**string**>
+- [plot](#series-plot): \<**string**\>
 - [countries](#series-countries): <**string\[\]**>
 - [directors](#series-directors): <**[DirectorPreview](#directorpreview)\[\]**>
 - [imageFiles](#series-imagefiles): <**[ImageFile](#imagefile)\[\]**>
@@ -257,6 +270,15 @@ The \<**string**\> value of the title of the Series. Its original title in the c
 **validation**
 - no max length
 - not empty
+### Series plot
+
+[Movie Collection](#movie-collection)
+A \<**string**\> of for the series plot. This should only contain the plot of the Series, no notes about the associated Seasons, episodes, or releases.
+
+**validation**
+- no max length
+- not empty
+- can vary from the omdbData plot
 ### Series countries
 
 [Series Collection](#series-collection)
@@ -1060,3 +1082,33 @@ A common type for representing release entries across different collections.
   - BETA
   - PSP
   - BLURAY-3D
+
+# Validation Rules
+
+## Special Validation Rules
+
+### releaseDate
+- **Format**: `DayAsNumber-Month-Year` (e.g., `1-March-2018`)
+- **Validation**:
+  - Ensure the day is a valid number between 1 and 31.
+  - Ensure the month is a valid month name (e.g., January, February, etc.).
+  - Ensure the year is a valid four-digit number between 1850 and the current year (2025).
+
+### runtime
+- **Format**: `{hours}:{minutes}:{seconds}`
+- **Validation**:
+  - Ensure hours, minutes, and seconds are numeric values.
+  - Hours and minutes must be two digits (e.g., `01:30:00`).
+  - Seconds are optional but must default to `00` if not provided.
+  - Ensure the runtime is not empty.
+
+### genres
+- **Validation**:
+  - Ensure each genre is one of the predefined enums listed in the document.
+  - At least one genre must be provided.
+
+### languages
+- **Validation**:
+  - Ensure each language is a recognized language.
+  - Use a predefined list or library for validation.
+  - If no languages are provided, default to an empty array.

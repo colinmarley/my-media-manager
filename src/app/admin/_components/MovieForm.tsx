@@ -6,10 +6,10 @@ import FormControlLabel from '@mui/material/FormControlLabel';
 import Grid from '@mui/material/Grid2';
 import FirestoreService from '../../../service/firebase/FirestoreService';
 import FormControl from '@mui/material/FormControl';
-import FormTextField from './formInputs/FormTextField';
+import { FormTextField } from './formInputs/common/FormTextField';
 import DirectorInput from './formInputs/DirectorInput';
-import { FBMovie } from '../../../types/firebase/FBMovie.type';
-import { DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
+import { Movie } from '../../../types/collections/Movie.type';
+import { ImageFile, MovieDirector, RatingEntry } from '@/types/collections/Common.type';
 import { OmdbResponseFull, OmdbSearchResponse, Rating } from '../../../types/OmdbResponse.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import { retrieveMediaDataById, searchByText } from '@/service/omdb/OmdbService';
@@ -17,14 +17,15 @@ import styles from '../_styles/MovieForm.module.css';
 import useMovieValidation from '../../../utils/useMovieValidation';
 import RatingsInput from './formInputs/RatingsInput';
 import { Box } from '@mui/material';
-import TopCastInput from './formInputs/TopCastInput';
-import { TopCastEntry } from '@/types/inputs/MovieInputs';
+import CastInput from './formInputs/common/CastInput';
 import WritersInput from './formInputs/WritersInput';
 import MovieTitleSearch from './formInputs/movie/MovieTitleSearch';
 import MovieDetailsInput from './formInputs/movie/MovieDetailsInput';
 import MovieLinkInput from './formInputs/movie/MovieLinkInput';
 import MovieOptionalInput from './formInputs/movie/MovieOptionalInput';
 import SubmitButton from '@/app/_components/SubmitButton';
+import useAddMovie from '@/hooks/newMedia/useAddMovie';
+import { has } from 'lodash';
 
 
 interface ValidationErrors {
@@ -48,120 +49,83 @@ interface ValidationErrors {
 }
 
 const MovieForm: React.FC = () => {
-    const [title, setTitle] = useState('');
-    const [year, setYear] = useState('');
-    const [countryOfOrigin, setCountryOfOrigin] = useState('');
-    const [directors, setDirectors] = useState<DirectorEntry[]>([]);
-    const [imageFiles, setImageFiles] = useState<ImageFile[]>([]);
-    const [letterboxdLink, setLetterboxdLink] = useState('');
-    const [plexLink, setPlexLink] = useState('');
-    const [omdbData, setOmdbData] = useState<OmdbResponseFull | null>(null);
-    const [omdbResults, setOmdbResults] = useState<OmdbSearchResponse[]>([]);
-    const [releaseDate, setReleaseDate] = useState('');
-    const [releases, setReleases] = useState<string[]>([]);
-    const [ratings, setRatings] = useState<Rating[]>([]);
-    const [runtime, setRuntime] = useState('');
-    const [writers, setWriters] = useState<string[]>([]);
-    const [isPartOfCollection, setIsPartOfCollection] = useState(false);
-    const [genres, setGenres] = useState<string[]>([]);
-    const [language, setLanguage] = useState('');
-    const [imdbId, setImdbId] = useState('');
-    const [rated, setRated] = useState('');
-    const [plot, setPlot] = useState('');
-    const [awards, setAwards] = useState('');
-    const [metascore, setMetascore] = useState('');
-    const [imdbRating, setImdbRating] = useState('');
-    const [imdbVotes, setImdbVotes] = useState('');
-    const [dvd, setDvd] = useState('');
-    const [boxOffice, setBoxOffice] = useState('');
-    const [production, setProduction] = useState('');
-    const [totalSeasons, setTotalSeasons] = useState('');
-    const [topCast, setTopCast] = useState<TopCastEntry[]>([]);
-
-    const { 
-        validateTitle,
-        validateYear,
-        validateCountryOfOrigin,
-        validateDirectors,
-        validateImageFiles,
-        validateReleaseDate,
-        validateRuntime,
-        validateTopCast,
-        validateWriters,
-        validateGenres,
-        validateLanguage,
-        validateRated,
-        validatePlot,
-        validateAwards,
-        validateMetascore,
-        validateImdbRating,
-        validateImdbVotes,
-    } = useMovieValidation();
-
-    const [errors, setErrors] = useState<ValidationErrors>({
-        title: null,
-        year: null,
-        countryOfOrigin: null,
-        directors: null,
-        imageFiles: null,
-        releaseDate: null,
-        runtime: null,
-        topCast: null,
-        writers: null,
-        genres: null,
-        language: null,
-        rated: null,
-        plot: null,
-        awards: null,
-        metascore: null,
-        imdbRating: null,
-        imdbVotes: null,
-    });
+    // Use the custom hook for managing movie data
+    const {
+        // id, setId,
+        title, setTitleValue,
+        countries, setCountriesValue,
+        directors, setDirectorsValue,
+        genres, setGenresValue,
+        imageFiles, setImageFilesValue,
+        languages, setLanguagesValue,
+        letterboxdLink, setLetterboxdLinkValue,
+        plexLink, setPlexLinkValue,
+        releaseDate, setReleaseDateValue,
+        releases, setReleasesValue,
+        runtime, setRuntimeValue,
+        cast, setCastValue,
+        writers, setWritersValue,
+        omdbData, setOmdbDataValue,
+        omdbResults, setOmdbResultsValue,
+        ratings, setRatingsValue,
+        imdbId, setImdbIdValue,
+        certification, setCertificationValue,
+        plot, setPlotValue,
+        clearAll,
+    } = useAddMovie();
+    const movieService = new FirestoreService('movies');
 
     useEffect(() => {
-        setTitle(omdbData?.Title || title);
-        setYear(omdbData?.Year || year);
-        setCountryOfOrigin(omdbData?.Country || countryOfOrigin);
-        setDirectors(omdbData?.Director.split(',').map((director: string) => ({ fullName: director, title: '' })).concat(directors) || directors);
-        if (omdbData?.Poster) { setImageFiles([...imageFiles, { fileName: omdbData?.Poster || '', fileSize: 0, resolution: '', format: '' }])};
-        setLetterboxdLink(omdbData?.Website || letterboxdLink);
-        setReleaseDate(omdbData?.Released || releaseDate);
-        setRuntime(omdbData?.Runtime || runtime);
-        setTopCast(omdbData?.Actors.split(',').map((actor: string) => ({ actor: actor, characters: [] })) || topCast);
-        setWriters(omdbData?.Writer.split(',').map((writer: string) => writer.trim()) || writers);
-        setGenres(omdbData?.Genre.split(',').map((genre: string) => genre.trim()) || genres);
-        setLanguage(omdbData?.Language || language);
-        setImdbId(omdbData?.imdbID || imdbId);
-        setRated(omdbData?.Rated || rated);
-        setRatings(omdbData?.Ratings || ratings);
-        setPlot(omdbData?.Plot || plot);
-        setAwards(omdbData?.Awards || awards);
-        setMetascore(omdbData?.Metascore || metascore);
-        setImdbRating(omdbData?.imdbRating || imdbRating);
-        setImdbVotes(omdbData?.imdbVotes || imdbVotes);
-        setDvd(omdbData?.Dvd || dvd);
-        setBoxOffice(omdbData?.BoxOffice || boxOffice);
-        setProduction(omdbData?.Production || production);
-        setTotalSeasons(omdbData?.TotalSeasons || totalSeasons);
+        setTitleValue(omdbData?.value?.Title || '');
+        setLetterboxdLinkValue(omdbData?.value?.Website || '');
+        setReleaseDateValue(omdbData?.value?.Released || '');
+        setRuntimeValue(omdbData?.value?.Runtime || '');
+        setImdbIdValue(omdbData?.value?.imdbID || '');
+        setCertificationValue(omdbData?.value?.Rated || '');
+        setPlotValue(omdbData?.value?.Plot || '');
+        setCountriesValue(
+            omdbData?.value?.Country
+            .split(',')
+            .map((country: string) => 
+                country.trim()
+            ) || []
+        );
+        setDirectorsValue(
+            omdbData?.value?.Director
+            .split(',')
+            .map((director: string) => (
+                {name: director || '', title: '', directorId: ''} as MovieDirector
+            )).concat(directors?.value) || []
+        );
+        if (omdbData?.value?.Poster) {setImageFilesValue(
+            [...imageFiles.value,
+                { fileName: omdbData?.value?.Poster || '', fileSize: '0', resolution: '', format: '' } as ImageFile
+            ])
+        };
+        setCastValue(omdbData?.value?.Actors.split(',').map((actorName: string) => ({ name: actorName, characters: [], actorId: '' })) || []);
+        setWritersValue(omdbData?.value?.Writer.split(',').map((writer: string) => writer.trim()) || []);
+        setGenresValue(omdbData?.value?.Genre.split(',').map((genre: string) => genre.trim()) || []);
+        setLanguagesValue(omdbData?.value?.Language.split(',').map((language: string) => language.trim()) || []);
+        setRatingsValue(omdbData?.value?.Ratings.map((ratingData: Rating) => ({source: ratingData.Source, value: ratingData.Value})) || []);
     }, [omdbData]);
 
     const handleMovieTitleSearch = async (title: string) => {
         const omdbSearchResults: OmdbSearchResponse[] = await searchByText(title);
-        setOmdbResults(omdbSearchResults);
+        setOmdbResultsValue(omdbSearchResults);
     };
 
     const handleAddDirector = () => {
-        setDirectors([...directors, { fullName: '', title: '' }]);
+        setDirectorsValue([...directors?.value, { name: '', title: '', directorId: '' } as MovieDirector]);
     };
 
-    const handleSetRatings = (ratings: Rating[]) => {
-        setRatings(ratings);
+    const handleSetRatings = (ratings: RatingEntry[]) => {
+        setRatingsValue(ratings);
     };
 
-    const handleDirectorChange = (index: number, field: keyof DirectorEntry, value: string) => {
-        const newDirectors = [...directors];
+    const handleDirectorChange = (index: number, field: keyof MovieDirector, value: string) => {
+        const newDirectors = [...directors.value];
         newDirectors[index][field] = value;
-        setDirectors(newDirectors);
+        setDirectorsValue(newDirectors);
     };
 
     const handleMovieSelect = async (selectedTitle: string, selectedYear: string, selectedImdbId: string) => {
@@ -174,100 +138,69 @@ const MovieForm: React.FC = () => {
             return;
         }
         
-        setTitle(selectedTitle);
-        setYear(selectedYear);
         const fullMovieData = await retrieveMediaDataById(selectedImdbId)
         handleResetFields();
-        setOmdbData(null);
-        setOmdbData(fullMovieData);
-        setOmdbResults([]); // Clear the search results after selection
+        setOmdbDataValue(null);
+        setOmdbDataValue(fullMovieData);
+        setOmdbResultsValue([]); // Clear the search results after selection
     };
 
-    const handleResetFields = () => {
-        setTitle('');
-        setYear('');
-        setCountryOfOrigin('');
-        setDirectors([]);
-        setImageFiles([]);
-        setLetterboxdLink('');
-        setPlexLink('');
-        setOmdbData(null);
-        setOmdbResults([]);
-        setReleaseDate('');
-        setReleases([]);
-        setRatings([]);
-        setRuntime('');
-        setWriters([]);
-        setIsPartOfCollection(false);
-        setGenres([]);
-        setLanguage('');
-        setImdbId('');
-        setRated('');
-        setPlot('');
-        setAwards('');
-        setMetascore('');
-        setImdbRating('');
-        setImdbVotes('');
-        setDvd('');
-        setBoxOffice('');
-        setProduction('');
-        setTotalSeasons('');
-        setTopCast([]);
-    };
+    const handleResetFields = () => { clearAll(); };
+
+    const hasValidationErrors = () => {
+        return (
+            title?.errors.length > 0 ||
+            countries?.errors.length > 0 ||
+            directors?.errors.length > 0 ||
+            genres?.errors.length > 0 ||
+            imageFiles?.errors.length > 0 ||
+            languages?.errors.length > 0 ||
+            letterboxdLink?.errors.length > 0 ||
+            plexLink?.errors.length > 0 ||
+            releaseDate?.errors.length > 0 ||
+            releases?.errors.length > 0 ||
+            runtime?.errors.length > 0 ||
+            cast?.errors.length > 0 ||
+            writers?.errors.length > 0 ||
+            omdbData?.errors.length > 0 ||
+            ratings?.errors.length > 0 ||
+            imdbId?.errors.length > 0 ||
+            certification?.errors.length > 0 ||
+            plot?.errors.length > 0
+        );
+    }
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        const newErrors = {
-            title: validateTitle(title),
-            year: validateYear(year),
-            countryOfOrigin: validateCountryOfOrigin(countryOfOrigin),
-            directors: validateDirectors(directors),
-            imageFiles: validateImageFiles(imageFiles),
-            releaseDate: validateReleaseDate(releaseDate),
-            runtime: validateRuntime(runtime),
-            topCast: validateTopCast(topCast),
-            writers: validateWriters(writers),
-            genres: validateGenres(genres),
-            language: validateLanguage(language),
-            rated: validateRated(rated),
-            plot: validatePlot(plot),
-            awards: validateAwards(awards),
-            metascore: validateMetascore(metascore),
-            imdbRating: validateImdbRating(imdbRating),
-            imdbVotes: validateImdbVotes(imdbVotes),
-        };
-
-        setErrors(newErrors);
-
-        const hasErrors = Object.values(newErrors).some(error => error !== null);
-        if (hasErrors) {
+        // Validate the form fields before submission, if any found disallow the submission
+        if (hasValidationErrors()) {
             return;
         }
 
-        const movie: FBMovie = {
-            id: '', // Firebase will generate the ID
-            title,
-            countryOfOrigin,
-            directors,
-            imageFiles,
-            letterboxdLink,
-            plexLink,
-            omdbData: omdbData!,
-            releaseDate,
-            releases: [], // Assuming releases are an array of release IDs
-            runtime,
-            topCast,
-            writers,
-            isPartOfCollection,
-            genres,
-            language,
+        const movieSubimission: Movie = {
+            id: imdbId?.value || '',
+            title: title?.value || '',
+            countries: countries?.value || [],
+            directors: directors?.value || [],
+            genres: genres?.value || [],
+            imageFiles: imageFiles?.value || [],
+            languages: languages?.value || [],
+            letterboxdLink: letterboxdLink?.value || '',
+            plexLink: plexLink?.value || '',
+            releaseDate: releaseDate?.value || '',
+            releases: releases?.value || [],
+            runtime: runtime?.value || '',
+            cast: cast?.value || [],
+            writers: writers?.value || [],
+            omdbData: omdbData?.value || {} as OmdbResponseFull,
         };
 
-        const service = new FirestoreService('movies');
-        await service.addDocument(movie).then(() => {
+        
+        await movieService.addDocument(movieSubimission).then(() => {
+            const alertTitle = title?.value || 'Movie';
+            alert(`Movie added successfully!: ${alertTitle}`);
             handleResetFields();
-            setOmdbData(null);
         }).catch((error) => {
             console.error(error);
         });
@@ -287,60 +220,51 @@ const MovieForm: React.FC = () => {
                     <Grid container spacing={2}>
                         <MovieTitleSearch
                             title={title}
-                            setTitle={setTitle}
-                            errors={errors}
-                            omdbResults={omdbResults}
+                            setTitle={setTitleValue}
+                            omdbResults={omdbResults?.value}
                             handleMovieTitleSearch={handleMovieTitleSearch}
                             handleMovieSelect={handleMovieSelect}
                             />
                         <MovieDetailsInput
-                            year={year}
-                            setYear={setYear}
                             releaseDate={releaseDate}
-                            setReleaseDate={setReleaseDate}
-                            countryOfOrigin={countryOfOrigin}
-                            setCountryOfOrigin={setCountryOfOrigin}
+                            setReleaseDate={setReleaseDateValue}
+                            countries={countries}
+                            setCountries={setCountriesValue}
                             runtime={runtime}
-                            setRuntime={setRuntime}
+                            setRuntime={setRuntimeValue}
                             genres={genres}
-                            setGenres={setGenres}
-                            language={language}
-                            setLanguage={setLanguage}
-                            boxOffice={boxOffice}
-                            setBoxOffice={setBoxOffice}
-                            rated={rated}
-                            setRated={setRated}
-                            awards={awards}
-                            setAwards={setAwards}
-                            errors={errors}
+                            setGenres={setGenresValue}
+                            languages={languages}
+                            setLanguages={setLanguagesValue}
+                            certification={certification}
+                            setCertification={setCertificationValue}
                             />
                         <Grid size={12}>
                             <FormTextField
                                 label="Plot"
-                                value={plot}
+                                value={plot?.value}
                                 multiline
-                                onChange={(e) => setPlot(e.target.value)}
-                                error={errors.plot} />
+                                onChange={(e) => setPlotValue(e.target.value)}
+                                error={plot?.errors.join('\n') || null} />
                         </Grid>
                         <MovieLinkInput
                             letterboxdLink={letterboxdLink}
-                            setLetterboxdLink={setLetterboxdLink}
+                            setLetterboxdLink={setLetterboxdLinkValue}
                             plexLink={plexLink}
-                            setPlexLink={setPlexLink}
+                            setPlexLink={setPlexLinkValue}
                             />
                     </Grid>
                 </Grid>
                 <Grid size={4}>
                     <Box
                         component="img"
-                        src={omdbData?.Poster}
-                        alt={title}
+                        src={omdbData?.value?.Poster}
+                        alt={title?.value}
                         sx={{width: "100%", height: "auto"}} />
                 </Grid>
                 <RatingsInput
                     ratings={ratings}
-                    numberOfImdbVoters={imdbVotes}
-                    setRatings={setRatings} />
+                    setRatings={setRatingsValue} />
                 <Grid size={12}>
                     <Divider
                         sx={{color: "white"}}
@@ -348,10 +272,9 @@ const MovieForm: React.FC = () => {
                         Crew Details
                     </Divider>
                 </Grid>
-                <TopCastInput
-                    topCast={topCast}
-                    setTopCast={setTopCast}
-                    error={errors.topCast} />
+                <CastInput
+                    cast={cast}
+                    setCast={setCastValue} />
                 <Grid size={0}>
                     <Divider
                         orientation="vertical"
@@ -370,26 +293,14 @@ const MovieForm: React.FC = () => {
                 </Grid>
                 <WritersInput
                     writers={writers}
-                    setWriters={setWriters}
-                    error={errors.writers} />
-                <MovieOptionalInput
+                    setWriters={setWritersValue} />
+                {/* <MovieOptionalInput
                     dvd={dvd}
                     setDvd={setDvd}
                     production={production}
                     setProduction={setProduction}
                     totalSeasons={totalSeasons}
-                    setTotalSeasons={setTotalSeasons} />
-                <Grid size={3}>
-                    <FormControlLabel
-                        control={
-                            <Checkbox
-                                checked={isPartOfCollection}
-                                onChange={(e) => setIsPartOfCollection(e.target.checked)}
-                            />
-                        }
-                        label="Is Part of Collection"
-                    />
-                </Grid>
+                    setTotalSeasons={setTotalSeasons} /> */}
                 <Grid size={12}>
                     <ImageSearch />
                 </Grid>

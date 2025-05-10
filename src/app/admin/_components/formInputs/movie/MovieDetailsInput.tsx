@@ -1,60 +1,42 @@
 import React from 'react';
 import Grid from '@mui/material/Grid2';
 import Divider from '@mui/material/Divider';
-import FormTextField from '../FormTextField';
+import { FormTextField } from '../common/FormTextField';
+import { FormInputData } from '@/types/inputs/FormInput.type';
+import { Typography } from '@mui/material';
 
 interface MovieDetailsInputProps {
-  year: string;
-  setYear: (value: string) => void;
-  releaseDate: string;
+  releaseDate: FormInputData<string>;
   setReleaseDate: (value: string) => void;
-  countryOfOrigin: string;
-  setCountryOfOrigin: (value: string) => void;
-  runtime: string;
+  countries: FormInputData<string[]>;
+  setCountries: (value: string[]) => void;
+  runtime: FormInputData<string>;
   setRuntime: (value: string) => void;
-  genres: string[];
+  genres: FormInputData<string[]>;
   setGenres: (value: string[]) => void;
-  language: string;
-  setLanguage: (value: string) => void;
-  boxOffice: string;
-  setBoxOffice: (value: string) => void;
-  rated: string;
-  setRated: (value: string) => void;
-  awards: string;
-  setAwards: (value: string) => void;
-  errors: {
-    year: string | null;
-    releaseDate: string | null;
-    countryOfOrigin: string | null;
-    runtime: string | null;
-    genres: string | null;
-    language: string | null;
-    rated: string | null;
-    awards: string | null;
-  };
+  languages: FormInputData<string[]>;
+  setLanguages: (value: string[]) => void;
+  certification: FormInputData<string>;
+  setCertification: (value: string) => void;
 }
 
 const MovieDetailsInput: React.FC<MovieDetailsInputProps> = ({
-  year,
-  setYear,
   releaseDate,
   setReleaseDate,
-  countryOfOrigin,
-  setCountryOfOrigin,
+  countries,
+  setCountries,
   runtime,
   setRuntime,
   genres,
   setGenres,
-  language,
-  setLanguage,
-  boxOffice,
-  setBoxOffice,
-  rated,
-  setRated,
-  awards,
-  setAwards,
-  errors,
+  languages,
+  setLanguages,
+  certification,
+  setCertification,
 }) => {
+
+  const year = releaseDate.value.split('-')[2]; // Extract year from release date
+
   return (
     <>
       <Grid size={12}>
@@ -63,83 +45,64 @@ const MovieDetailsInput: React.FC<MovieDetailsInputProps> = ({
         </Divider>
       </Grid>
       <Grid size={3} color={'white'}>
-        <FormTextField
-          label="Year"
-          value={year}
-          onChange={(e) => setYear(e.target.value)}
-          error={errors.year}
-        />
+        <Typography variant="h6" color="white">
+          Year: {year}
+        </Typography>
       </Grid>
       <Grid size={3}>
         <FormTextField
           label="Release Date"
-          value={releaseDate}
+          value={releaseDate?.value}
           onChange={(e) => setReleaseDate(e.target.value)}
-          error={errors.releaseDate}
+          error={releaseDate?.errors.join('\n') || null}
         />
       </Grid>
       <Grid size={3} color={'white'}>
         <FormTextField
           label="Country of Origin"
-          value={countryOfOrigin}
-          onChange={(e) => setCountryOfOrigin(e.target.value)}
-          error={errors.countryOfOrigin}
+          value={countries?.value.join(', ')}
+          onChange={(e) => setCountries(e.target.value.split(',').map((val) => val.trim()))}
+          error={countries?.errors.join('\n') || null}
         />
       </Grid>
       <Grid size={3}>
         <FormTextField
           label="Runtime"
-          value={runtime}
+          value={runtime?.value}
           onChange={(e) => setRuntime(e.target.value)}
-          error={errors.runtime}
+          error={runtime?.errors.join('\n') || null}
         />
       </Grid>
       <Grid size={3}>
         <FormTextField
           label="Genres"
-          value={genres.join(', ')}
+          value={genres?.value.join(', ')}
           onChange={(e) => setGenres(e.target.value.split(', '))}
-          error={errors.genres}
+          error={genres?.errors.join('\n') || null}
         />
       </Grid>
       <Grid size={3}>
         <FormTextField
           label="Language"
-          value={language}
-          onChange={(e) => setLanguage(e.target.value)}
-          error={errors.language}
+          value={languages?.value.join(', ')}
+          onChange={(e) => setLanguages(e.target.value.split(',').map((val) => val.trim()))}
+          error={languages?.errors.join('\n') || null}
         />
       </Grid>
       <Grid size={3}>
         <FormTextField
-          label="Box Office"
-          value={boxOffice}
-          required={false}
-          onChange={(e) => setBoxOffice(e.target.value)}
-        />
-      </Grid>
-      <Grid size={3}>
-        <FormTextField
-          label="Rated"
-          value={rated}
-          onChange={(e) => setRated(e.target.value)}
-          error={errors.rated}
-        />
-      </Grid>
-      <Grid size={6}>
-        <FormTextField
-          label="Awards"
-          value={awards}
-          onChange={(e) => setAwards(e.target.value)}
-          error={errors.awards}
+          label="Certification"
+          value={certification?.value || ''}  
+          onChange={(e) => setCertification(e.target.value)}
+          error={certification?.errors.join('\n') || null}
         />
       </Grid>
       <Grid size={6}>
         <FormTextField
           label="Language"
-          value={language}
-          onChange={(e) => setLanguage(e.target.value)}
-          error={errors.language}
+          value={languages?.value.join(', ')}
+          onChange={(e) => setLanguages(e.target.value.split(',').map((val) => val.trim()))}
+          error={languages.errors.join('\n') || null}
         />
       </Grid>
     </>

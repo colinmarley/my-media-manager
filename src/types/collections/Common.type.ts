@@ -23,7 +23,7 @@ export interface EpisodeDirector {
     directorId: string;
 }
 
-export interface Actor {
+export interface ActorPreview {
     name: string;
     actorId: string;
     characters: string[];
@@ -36,7 +36,7 @@ export interface ImageFile {
     resolution: string;
 }
 
-export interface Release {
+export interface ReleasePreview {
     releaseId: string;
     releaseType: string;
     year: string;
@@ -71,6 +71,7 @@ export interface SeasonEntry {
     number: string;
 }
 
-export interface OmdbData {
-    // Define fields based on the OmdbData structure
+export interface RatingEntry {
+    source: string;
+    value: string;
 }
