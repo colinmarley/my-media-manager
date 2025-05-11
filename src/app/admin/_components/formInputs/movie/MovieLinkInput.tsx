@@ -11,6 +11,8 @@ interface MovieLinkInputProps {
   setPlexLink: (value: string) => void;
 }
 
+// MovieLinkInput component for adding links to a movie
+// It includes fields for Letterboxd and Plex links
 const MovieLinkInput: React.FC<MovieLinkInputProps> = ({
   letterboxdLink,
   setLetterboxdLink,

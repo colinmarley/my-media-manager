@@ -4,7 +4,7 @@ import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import { FormTextField } from '../common/FormTextField';
 import MovieSearchResults from './MovieSearchResults';
-import { OmdbSearchResponse } from '../../../../../types/OmdbResponse.type';
+import { OmdbSearchResponse } from '@/types/OmdbResponse.type';
 import { FormInputData } from '@/types/inputs/FormInput.type'; 
 
 interface MovieTitleSearchProps {

@@ -76,10 +76,17 @@ const MovieForm: React.FC = () => {
     const movieService = new FirestoreService('movies');
 
     useEffect(() => {
+
+        // Format certain fields in the OMDB data and set the form fields accordingly
+        const formattedReleaseDate = omdbData?.value?.Released.split(' ').join('-') || '';
+        const runtimeInMinutes = omdbData?.value?.Runtime.split(" ")[0];
+        const formattedRuntime = `${Math.floor(Number(runtimeInMinutes) / 60)}:${Number(runtimeInMinutes) % 60}:00`;
+        
+
         setTitleValue(omdbData?.value?.Title || '');
         setLetterboxdLinkValue(omdbData?.value?.Website || '');
-        setReleaseDateValue(omdbData?.value?.Released || '');
-        setRuntimeValue(omdbData?.value?.Runtime || '');
+        setReleaseDateValue(formattedReleaseDate || '');
+        setRuntimeValue(formattedRuntime || '');
         setImdbIdValue(omdbData?.value?.imdbID || '');
         setCertificationValue(omdbData?.value?.Rated || '');
         setPlotValue(omdbData?.value?.Plot || '');
@@ -172,9 +179,11 @@ const MovieForm: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-
+        console.log(`Has Validation Errors: ${hasValidationErrors()}`);
         // Validate the form fields before submission, if any found disallow the submission
         if (hasValidationErrors()) {
+            alert('Please fix the validation errors before submitting.');
+            console.log(title?.errors, countries?.errors, directors?.errors, genres?.errors, imageFiles?.errors, languages?.errors, letterboxdLink?.errors, plexLink?.errors, releaseDate?.errors, releases?.errors, runtime?.errors, cast?.errors, writers?.errors, omdbData?.errors);
             return;
         }
 
@@ -196,7 +205,7 @@ const MovieForm: React.FC = () => {
             omdbData: omdbData?.value || {} as OmdbResponseFull,
         };
 
-        
+        console.log('Movie Submission:', movieSubimission);
         await movieService.addDocument(movieSubimission).then(() => {
             const alertTitle = title?.value || 'Movie';
             alert(`Movie added successfully!: ${alertTitle}`);

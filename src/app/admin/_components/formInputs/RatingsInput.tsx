@@ -46,44 +46,44 @@ const RatingsInput = ({ ratings, setRatings }: RatingsInputProps) => {
                     Rating Details
                 </Divider>
             </Grid>
-            {ratings?.value.map((rating: RatingEntry, index: number) => (
-                <React.Fragment key={`rating-${index}`}>
-                    <Grid size={4}>
-                        <FormTextField
-                            key={`rating-source-${index}`}
-                            label={`Rating Source ${index + 1}`}
-                            value={rating.source}
-                            onChange={(e) => handleSourceChange(e, index)}
-                            />
-                    </Grid>
-                    <Grid size={rating.source === RatingSource.IMDB ? 2 : 4}>
-                        <FormTextField
-                            key={`rating-value-${index}`}
-                            label={`Rating Source ${index + 1}`}
-                            value={rating.value}
-                            onChange={(e) => handleValueChange(e, index)}
-                            />
-                    </Grid>
-                    <Grid size={2}>
-                        <Button
-                            variant="contained"
-                            color="secondary"
-                            onClick={() => setRatings(ratings?.value.filter((_, i) => i !== index))}
-                        >
-                            Remove
-                        </Button>
-                    </Grid>
-                    {(index + 1) === numberOfRatings  && <Grid size={2}>
-                        <Button
-                            variant="contained"
-                            color="primary"
-                            onClick={() => setRatings([...ratings?.value, { source: '', value: '' }])}
-                        >
-                            Add
-                        </Button>
-                    </Grid>}
-                </React.Fragment>
-            ))}
+                {ratings?.value.map((rating: RatingEntry, index: number) => (
+                    <React.Fragment key={`rating-${index}`}>
+                        <Grid size={6}>
+                            <FormTextField
+                                key={`rating-source-${index}`}
+                                label={`Rating Source ${index + 1}`}
+                                value={rating.source}
+                                onChange={(e) => handleSourceChange(e, index)}
+                                />
+                        </Grid>
+                        <Grid size={2}>
+                            <FormTextField
+                                key={`rating-value-${index}`}
+                                label={`Rating Source ${index + 1}`}
+                                value={rating.value}
+                                onChange={(e) => handleValueChange(e, index)}
+                                />
+                        </Grid>
+                        <Grid size={2}>
+                            <Button
+                                variant="contained"
+                                color="secondary"
+                                onClick={() => setRatings(ratings?.value.filter((_, i) => i !== index))}
+                            >
+                                Remove
+                            </Button>
+                        </Grid>
+                        {(index + 1) === numberOfRatings  && <Grid size={2}>
+                            <Button
+                                variant="contained"
+                                color="primary"
+                                onClick={() => setRatings([...ratings?.value, { source: '', value: '' }])}
+                            >
+                                Add
+                            </Button>
+                        </Grid>}
+                    </React.Fragment>
+                ))}
         </Grid>
     );
 };

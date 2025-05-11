@@ -148,7 +148,12 @@ const useMovieValidation = () => {
       return ['Letterboxd link cannot be empty'];
     }
 
-    if (!/^https?:\/\/(www\.)?letterboxd\.com\/[a-zA-Z0-9]+\/?$/.test(letterboxdLink)) {
+    if (letterboxdLink === "N/A") {
+      return [];
+    }
+
+    // Match this format https://letterboxd.com/film/clash-of-the-titans-2010/
+    if (!/^(https?:\/\/)?(www\.)?letterboxd\.com\/film\/[a-zA-Z0-9\-]+\/?$/.test(letterboxdLink)) {
       return ['Invalid Letterboxd link format'];
     }
 
@@ -320,7 +325,8 @@ const useMovieValidation = () => {
       return [];
     }
 
-    if (MediaCertification[certification as keyof typeof MediaCertification] === undefined) {
+    // Check if the certification is a valid MediaCertification enum value, not key
+    if (!Object.values(MediaCertification).includes(certification as MediaCertification)) {
       return [`${certification} is an invalid certification type`];
     }
 
