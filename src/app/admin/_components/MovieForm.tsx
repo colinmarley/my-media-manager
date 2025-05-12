@@ -23,6 +23,8 @@ import SubmitButton from '@/app/_components/SubmitButton';
 import useAddMovie from '@/hooks/newMedia/useAddMovie';
 import AddDirectorModule from './formInputs/modals/AddDirectorModule';
 import AddActorModule from './formInputs/modals/AddActorModule';
+import CastDataGrid from './formInputs/common/CastDataGrid';
+import { ActorPreview } from '@/types/collections/Common.type';
 
 
 interface ValidationErrors {
@@ -157,6 +159,11 @@ const MovieForm: React.FC = () => {
         setOmdbResultsValue([]); // Clear the search results after selection
     };
 
+    const handleAddCastMember = (newCastMember: ActorPreview) => {
+        const updatedCast = [...cast.value, newCastMember];
+        setCastValue(updatedCast);
+    }
+
     const handleResetFields = () => { clearAll(); };
 
     const hasValidationErrors = () => {
@@ -287,7 +294,7 @@ const MovieForm: React.FC = () => {
                             Crew Details
                         </Divider>
                     </Grid>
-                    <CastInput
+                    {/* <CastInput
                         cast={cast}
                         setCast={setCastValue}
                         setShowModal={setShouldShowAddActorModal} />
@@ -296,6 +303,19 @@ const MovieForm: React.FC = () => {
                             orientation="vertical"
                             variant="middle"
                             sx={{color: 'white'}} />
+                    </Grid> */}
+                    <Grid size={12}>
+                        <CastDataGrid
+                            castList={cast?.value}
+                            onAddCastMember={handleAddCastMember}
+                            setShowModal={setShouldShowAddActorModal} />
+                    </Grid>
+                    <Grid size={12}>
+                        <Divider
+                            sx={{color: "white"}}
+                            variant="fullWidth">
+                            Director Details
+                        </Divider>
                     </Grid>
                     <DirectorInput
                         directors={directors}
