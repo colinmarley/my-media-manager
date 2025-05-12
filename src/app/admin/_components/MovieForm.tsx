@@ -1,8 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import Button from '@mui/material/Button';
-import Checkbox from '@mui/material/Checkbox';
 import Divider from '@mui/material/Divider';
-import FormControlLabel from '@mui/material/FormControlLabel';
 import Grid from '@mui/material/Grid2';
 import FirestoreService from '../../../service/firebase/FirestoreService';
 import FormControl from '@mui/material/FormControl';
@@ -14,7 +11,6 @@ import { OmdbResponseFull, OmdbSearchResponse, Rating } from '../../../types/Omd
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import { retrieveMediaDataById, searchByText } from '@/service/omdb/OmdbService';
 import styles from '../_styles/MovieForm.module.css';
-import useMovieValidation from '../../../utils/useMovieValidation';
 import RatingsInput from './formInputs/RatingsInput';
 import { Box } from '@mui/material';
 import CastInput from './formInputs/common/CastInput';
@@ -25,7 +21,8 @@ import MovieLinkInput from './formInputs/movie/MovieLinkInput';
 import MovieOptionalInput from './formInputs/movie/MovieOptionalInput';
 import SubmitButton from '@/app/_components/SubmitButton';
 import useAddMovie from '@/hooks/newMedia/useAddMovie';
-import { has } from 'lodash';
+import AddDirectorModule from './formInputs/modals/AddDirectorModule';
+import AddActorModule from './formInputs/modals/AddActorModule';
 
 
 interface ValidationErrors {
@@ -49,6 +46,12 @@ interface ValidationErrors {
 }
 
 const MovieForm: React.FC = () => {
+
+    // State for showing modals to add directors and actors
+    const [shouldShowAddDirectorModal, setShouldShowAddDirectorModal] = useState(false);
+    const [shouldShowAddActorModal, setShouldShowAddActorModal] = useState(false);
+
+
     // Use the custom hook for managing movie data
     const {
         // id, setId,
@@ -73,7 +76,9 @@ const MovieForm: React.FC = () => {
         plot, setPlotValue,
         clearAll,
     } = useAddMovie();
+
     const movieService = new FirestoreService('movies');
+
 
     useEffect(() => {
 
@@ -216,111 +221,121 @@ const MovieForm: React.FC = () => {
     };
 
     return (
-        <FormControl
-            onSubmit={handleSubmit}
-            classes={styles.root}
-            color="secondary"
-            sx={{maxWidth: "100%"}}>
-            <Grid
-                container
-                spacing={2}
+        <React.Fragment>
+            <FormControl
+                onSubmit={handleSubmit}
+                classes={styles.root}
+                color="secondary"
                 sx={{maxWidth: "100%"}}>
-                <Grid size={8}>
-                    <Grid container spacing={2}>
-                        <MovieTitleSearch
-                            title={title}
-                            setTitle={setTitleValue}
-                            omdbResults={omdbResults?.value}
-                            handleMovieTitleSearch={handleMovieTitleSearch}
-                            handleMovieSelect={handleMovieSelect}
-                            />
-                        <MovieDetailsInput
-                            releaseDate={releaseDate}
-                            setReleaseDate={setReleaseDateValue}
-                            countries={countries}
-                            setCountries={setCountriesValue}
-                            runtime={runtime}
-                            setRuntime={setRuntimeValue}
-                            genres={genres}
-                            setGenres={setGenresValue}
-                            languages={languages}
-                            setLanguages={setLanguagesValue}
-                            certification={certification}
-                            setCertification={setCertificationValue}
-                            />
-                        <Grid size={12}>
-                            <FormTextField
-                                label="Plot"
-                                value={plot?.value}
-                                multiline
-                                onChange={(e) => setPlotValue(e.target.value)}
-                                error={plot?.errors.join('\n') || null} />
+                <Grid
+                    container
+                    spacing={2}
+                    sx={{maxWidth: "100%"}}>
+                    <Grid size={8}>
+                        <Grid container spacing={2}>
+                            <MovieTitleSearch
+                                title={title}
+                                setTitle={setTitleValue}
+                                omdbResults={omdbResults?.value}
+                                handleMovieTitleSearch={handleMovieTitleSearch}
+                                handleMovieSelect={handleMovieSelect}
+                                />
+                            <MovieDetailsInput
+                                releaseDate={releaseDate}
+                                setReleaseDate={setReleaseDateValue}
+                                countries={countries}
+                                setCountries={setCountriesValue}
+                                runtime={runtime}
+                                setRuntime={setRuntimeValue}
+                                genres={genres}
+                                setGenres={setGenresValue}
+                                languages={languages}
+                                setLanguages={setLanguagesValue}
+                                certification={certification}
+                                setCertification={setCertificationValue}
+                                />
+                            <Grid size={12}>
+                                <FormTextField
+                                    label="Plot"
+                                    value={plot?.value}
+                                    multiline
+                                    onChange={(e) => setPlotValue(e.target.value)}
+                                    error={plot?.errors.join('\n') || null} />
+                            </Grid>
+                            <MovieLinkInput
+                                letterboxdLink={letterboxdLink}
+                                setLetterboxdLink={setLetterboxdLinkValue}
+                                plexLink={plexLink}
+                                setPlexLink={setPlexLinkValue}
+                                />
                         </Grid>
-                        <MovieLinkInput
-                            letterboxdLink={letterboxdLink}
-                            setLetterboxdLink={setLetterboxdLinkValue}
-                            plexLink={plexLink}
-                            setPlexLink={setPlexLinkValue}
-                            />
+                    </Grid>
+                    <Grid size={4}>
+                        <Box
+                            component="img"
+                            src={omdbData?.value?.Poster}
+                            alt={title?.value}
+                            sx={{width: "100%", height: "auto"}} />
+                    </Grid>
+                    <RatingsInput
+                        ratings={ratings}
+                        setRatings={setRatingsValue} />
+                    <Grid size={12}>
+                        <Divider
+                            sx={{color: "white"}}
+                            variant="fullWidth">
+                            Crew Details
+                        </Divider>
+                    </Grid>
+                    <CastInput
+                        cast={cast}
+                        setCast={setCastValue}
+                        setShowModal={setShouldShowAddActorModal} />
+                    <Grid size={0}>
+                        <Divider
+                            orientation="vertical"
+                            variant="middle"
+                            sx={{color: 'white'}} />
+                    </Grid>
+                    <DirectorInput
+                        directors={directors}
+                        handleDirectorChange={handleDirectorChange}
+                        handleAddDirector={handleAddDirector}
+                        setShowModal={setShouldShowAddDirectorModal} />
+                    <Grid size={0}>
+                        <Divider
+                            orientation="vertical"
+                            variant="middle"
+                            sx={{color: 'white'}} />
+                    </Grid>
+                    <WritersInput
+                        writers={writers}
+                        setWriters={setWritersValue} />
+                    {/* <MovieOptionalInput
+                        dvd={dvd}
+                        setDvd={setDvd}
+                        production={production}
+                        setProduction={setProduction}
+                        totalSeasons={totalSeasons}
+                        setTotalSeasons={setTotalSeasons} /> */}
+                    <Grid size={12}>
+                        <ImageSearch />
+                    </Grid>
+                    <Grid size={3}>
+                        <SubmitButton
+                            label="Add Movie"
+                            onClick={handleSubmit}
+                            disabled={!omdbData} />
                     </Grid>
                 </Grid>
-                <Grid size={4}>
-                    <Box
-                        component="img"
-                        src={omdbData?.value?.Poster}
-                        alt={title?.value}
-                        sx={{width: "100%", height: "auto"}} />
-                </Grid>
-                <RatingsInput
-                    ratings={ratings}
-                    setRatings={setRatingsValue} />
-                <Grid size={12}>
-                    <Divider
-                        sx={{color: "white"}}
-                        variant="fullWidth">
-                        Crew Details
-                    </Divider>
-                </Grid>
-                <CastInput
-                    cast={cast}
-                    setCast={setCastValue} />
-                <Grid size={0}>
-                    <Divider
-                        orientation="vertical"
-                        variant="middle"
-                        sx={{color: 'white'}} />
-                </Grid>
-                <DirectorInput
-                    directors={directors}
-                    handleDirectorChange={handleDirectorChange}
-                    handleAddDirector={handleAddDirector} />
-                <Grid size={0}>
-                    <Divider
-                        orientation="vertical"
-                        variant="middle"
-                        sx={{color: 'white'}} />
-                </Grid>
-                <WritersInput
-                    writers={writers}
-                    setWriters={setWritersValue} />
-                {/* <MovieOptionalInput
-                    dvd={dvd}
-                    setDvd={setDvd}
-                    production={production}
-                    setProduction={setProduction}
-                    totalSeasons={totalSeasons}
-                    setTotalSeasons={setTotalSeasons} /> */}
-                <Grid size={12}>
-                    <ImageSearch />
-                </Grid>
-                <Grid size={3}>
-                    <SubmitButton
-                        label="Add Movie"
-                        onClick={handleSubmit}
-                        disabled={!omdbData} />
-                </Grid>
-            </Grid>
-        </FormControl>
+            </FormControl>
+            {shouldShowAddDirectorModal && (
+                <AddDirectorModule onClose={() => setShouldShowAddDirectorModal(false)} />
+            )}
+            {shouldShowAddActorModal && (
+                <AddActorModule onClose={() => setShouldShowAddActorModal(false)} />
+            )}
+        </React.Fragment>
     );
 };
 

@@ -49,7 +49,20 @@ const useMovieValidation = () => {
       return ['At least one director is required'];
     }
     let errorList: string[] = [];
+    const directorsCollection = new FirestoreService('directors');
     directors.forEach((director, ind) => {
+      const dirId = director?.directorId;
+      if (dirId && dirId.length === 20 && /^[a-zA-Z0-9]+$/.test(dirId)) {
+        directorsCollection.getDocumentById(dirId).then((doc: any) => {
+          console.log(doc);
+          if (!doc) {
+            errorList.push(`${ind}:directorId:Director ID does not exist`);
+          }
+          if (doc && doc?.name !== director.name) {
+            errorList.push(`${ind}:name:Director name does not match the ID`);
+          }
+        });
+      }
       if (!director.name) {
         errorList.push(`${ind}:name:Director name is required`);
       }
@@ -241,7 +254,21 @@ const useMovieValidation = () => {
     }
 
     let errorList: string[] = [];
+    const actorsCollection = new FirestoreService('actors');
+
     cast.forEach((actor, ind) => {
+      const actorId = actor?.actorId;
+      if (actorId && actorId.length === 20 && /^[a-zA-Z0-9]+$/.test(actorId)) {
+        actorsCollection.getDocumentById(actorId).then((doc: any) => {
+          if (!doc) {
+            errorList.push(`${ind}:actorId:Actor ID does not exist`);
+          }
+          console.log(doc);
+          if (doc && doc?.fullname !== actor.name) {
+            errorList.push(`${ind}:actorId:Actor name does not match the ID`);
+          }
+        });
+      }
       if (!actor.name || actor.name.length === 0) {
         errorList.push(`${ind}:name:Actor name is required`);
       }

@@ -1,5 +1,6 @@
 import { db } from '../../../firebaseConfig';
-import { collection, addDoc, getDocs, query, where, DocumentData } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where, DocumentData, onSnapshot, doc, getDoc } from 'firebase/firestore';
+
 
 class FirestoreService {
   private collectionName: string;
@@ -31,12 +32,39 @@ class FirestoreService {
   async getDocumentsByField(field: string, value: any): Promise<DocumentData[]> {
     const q = query(collection(db, this.collectionName), where(field, '==', value));
     const querySnapshot = await getDocs(q);
+    console.log(querySnapshot);
     const documents: DocumentData[] = [];
     querySnapshot.forEach((doc) => {
+      console.log(doc.data());
       documents.push({ id: doc.id, ...doc.data() });
     });
     return documents;
   }
+
+  async getDocumentById(id: string): Promise<DocumentData | null> {
+    const docRef = doc(db, this.collectionName, id);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap) {
+      return { id: docSnap.id, ...docSnap.data() };
+    } else {
+      console.log('No such document!');
+      return null;
+    }
+  }
+
+  async subscribeToDocumentById(id: string, callback: (data: DocumentData | null) => void): Promise<void> {
+    const q = query(collection(db, this.collectionName), where('id', '==', id));
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      if (!querySnapshot.empty) {
+        const doc = querySnapshot.docs[0];
+        callback({ id: doc.id, ...doc.data() });
+      } else {
+        callback(null);
+      }
+    });
+  }
+
 }
 
 export default FirestoreService;

@@ -8,9 +8,10 @@ import { FormInputData } from '@/types/inputs/FormInput.type';
 interface CastInputProps {
   cast: FormInputData<ActorPreview[]>;
   setCast: (cast: ActorPreview[]) => void;
+  setShowModal: (show: boolean) => void;
 }
 
-const CastInput: React.FC<CastInputProps> = ({ cast, setCast }) => {
+const CastInput: React.FC<CastInputProps> = ({ cast, setCast, setShowModal }) => {
   const handleActorChange = (index: number, value: string) => {
     const newCast = [...cast?.value];
     newCast[index].name = value;
@@ -28,6 +29,12 @@ const CastInput: React.FC<CastInputProps> = ({ cast, setCast }) => {
     value.split(", ").map((val: string) => { return newCast[index].characters.push(val) });
     setCast(newCast);
   };
+
+  const handleChangeActorId = (index: number, value: string) => {
+    const newCast = [...cast?.value];
+    newCast[index].actorId = value;
+    setCast(newCast);
+  }
 
   const handleAddCast = () => {
     setCast([...cast?.value, { name: '', characters: [], actorId: ''}]);
@@ -47,14 +54,22 @@ const CastInput: React.FC<CastInputProps> = ({ cast, setCast }) => {
     return characterErrors.length > 0 ? characterErrors.map(err => err.split(":")[2]).join(`\n`) : [];
   }
 
+  const getErrorsForActorId = (index: number) => {
+    const actorIdErrors = cast?.errors.filter(
+      (error) => error.split(":")[0] === index.toString() && error.split(":")[1] === 'actorId'
+    );
+    return actorIdErrors.length > 0 ? actorIdErrors.map(err => err.split(":")[2]).join(`\n`) : [];
+  }
+
   return (
     <Grid size={5}>
         <Grid container spacing={2}>
             {cast?.value.map((entry, index) => {
                 const nameErrorList = getErrorsForActorName(index);
                 const characterErrorList = getErrorsForCharacters(index);
+                const actorIdErrorList = getErrorsForActorId(index);
                 return (<React.Fragment key={index}>
-                <Grid size={4}>
+                <Grid size={3}>
                     <TextField
                     label={`Actor ${index + 1}`}
                     value={entry.name}
@@ -66,7 +81,7 @@ const CastInput: React.FC<CastInputProps> = ({ cast, setCast }) => {
                     sx={{ input: { color: 'white' }, label: { color: 'white' } }}
                     />
                 </Grid>
-                <Grid size={5}>
+                <Grid size={4}>
                     <TextField
                     label={`Characters ${index + 1}`}
                     value={entry.characters.forEach((val: string) => { return val + ", " })}
@@ -75,6 +90,18 @@ const CastInput: React.FC<CastInputProps> = ({ cast, setCast }) => {
                     required
                     error={!!(characterErrorList && characterErrorList.length > 0)}
                     helperText={characterErrorList}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    />
+                </Grid>
+                <Grid size={3}>
+                    <TextField
+                    label={`Actor ID ${index + 1}`}
+                    value={entry.actorId}
+                    onChange={(e) => handleChangeActorId(index, e.target.value)}
+                    fullWidth
+                    required
+                    error={!!(actorIdErrorList && actorIdErrorList.length > 0)}
+                    helperText={actorIdErrorList}
                     sx={{ input: { color: 'white' }, label: { color: 'white' } }}
                     />
                 </Grid>
@@ -91,6 +118,9 @@ const CastInput: React.FC<CastInputProps> = ({ cast, setCast }) => {
                 </Button>
             </Grid>
         </Grid>
+        <Button onClick={() => setShowModal(true)} variant="contained" color="primary">
+            Add Actor Modal
+        </Button>
     </Grid>
   );
 };
