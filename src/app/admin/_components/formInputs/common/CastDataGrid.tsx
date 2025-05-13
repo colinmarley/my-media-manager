@@ -1,16 +1,20 @@
 import React, { useState } from 'react';
-import { DataGrid, GridColDef, GridRowsProp } from '@mui/x-data-grid';
+import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { ActorPreview } from '@/types/collections/Common.type';
-import { Button, TextField, Box } from '@mui/material';
+import { Button, TextField, Box, Autocomplete } from '@mui/material';
 import Grid from '@mui/material/Grid2';
+import useFormStore from '@/store/useFormStore';
+import useModalControl from '@/hooks/useModalControl';
 
 interface CastDataGridProps {
   castList: ActorPreview[];
   onAddCastMember: (newMember: ActorPreview) => void;
-  setShowModal: (show: boolean) => void;
+  setShowModal: (show: boolean, callback?: () => void) => void;
 }
 
-const CastDataGrid: React.FC<CastDataGridProps> = ({ castList, onAddCastMember, setShowModal }) => {
+const CastDataGrid: React.FC<CastDataGridProps> = ({ castList, onAddCastMember }) => {
+  const { actorOptions, openAddActorModal } = useFormStore();
+
   const [newActor, setNewActor] = useState<ActorPreview>({ name: '', actorId: '', characters: [] });
 
   const columns: GridColDef[] = [
@@ -39,11 +43,21 @@ const CastDataGrid: React.FC<CastDataGridProps> = ({ castList, onAddCastMember, 
       <Box mt={2}>
         <Grid container spacing={2}>
           <Grid size={4}>
-            <TextField
-              label="Name"
-              value={newActor.name}
-              onChange={(e) => setNewActor({ ...newActor, name: e.target.value })}
-              fullWidth
+            <Autocomplete
+              options={actorOptions}
+              getOptionLabel={(option) => option.label || ''}
+              onChange={(event, value) => {
+                if (value) {
+                  if (value.id === 'new') {
+                    openAddActorModal();
+                  } else {
+                    setNewActor({ ...newActor, name: value.label, actorId: value.id });
+                  }
+                }
+              }}
+              renderInput={(params) => (
+                <TextField {...params} label="Name" fullWidth />
+              )}
             />
           </Grid>
           <Grid size={4}>

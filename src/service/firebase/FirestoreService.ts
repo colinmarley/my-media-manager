@@ -30,6 +30,7 @@ class FirestoreService {
   }
 
   async getDocumentsByField(field: string, value: any): Promise<DocumentData[]> {
+    // const docRef = collection(db, this.collectionName);
     const q = query(collection(db, this.collectionName), where(field, '==', value));
     const querySnapshot = await getDocs(q);
     console.log(querySnapshot);
@@ -51,18 +52,6 @@ class FirestoreService {
       console.log('No such document!');
       return null;
     }
-  }
-
-  async subscribeToDocumentById(id: string, callback: (data: DocumentData | null) => void): Promise<void> {
-    const q = query(collection(db, this.collectionName), where('id', '==', id));
-    const unsubscribe = onSnapshot(q, (querySnapshot) => {
-      if (!querySnapshot.empty) {
-        const doc = querySnapshot.docs[0];
-        callback({ id: doc.id, ...doc.data() });
-      } else {
-        callback(null);
-      }
-    });
   }
 
 }

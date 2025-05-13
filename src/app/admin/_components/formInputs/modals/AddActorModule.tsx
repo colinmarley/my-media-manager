@@ -2,12 +2,15 @@ import React, { useState } from 'react';
 import FirestoreService from '@/service/firebase/FirestoreService';
 import { ActorInitialEntry } from '@/types/collections/Actor.type';
 import { TextField, Button, Box, Modal, Typography } from '@mui/material';
+import useFormStore from '@/store/useFormStore';
 
 interface AddActorModuleProps {
   onClose: () => void;
 }
 
-const AddActorModule: React.FC<AddActorModuleProps> = ({ onClose }) => {
+const AddActorModule: React.FC<AddActorModuleProps> = () => {
+  const { closeAddActorModal } = useFormStore();
+
   const [formData, setFormData] = useState<ActorInitialEntry>({
     fullName: '',
     movieIds: [],
@@ -27,11 +30,11 @@ const AddActorModule: React.FC<AddActorModuleProps> = ({ onClose }) => {
     const firestoreService = new FirestoreService('actors');
     await firestoreService.addDocument(formData);
     alert('Actor added successfully!');
-    onClose();
+    closeAddActorModal();
   };
 
   return (
-    <Modal open onClose={onClose}>
+    <Modal open onClose={closeAddActorModal}>
       <Box
         sx={Styles.modalBox}
       >
@@ -75,7 +78,7 @@ const AddActorModule: React.FC<AddActorModuleProps> = ({ onClose }) => {
             margin="normal"
           />
           <Box sx={{ display: 'flex', justifyContent: 'space-between', mt: 2 }}>
-            <Button onClick={onClose} color="secondary">
+            <Button onClick={closeAddActorModal} color="secondary">
               Cancel
             </Button>
             <Button type="submit" variant="contained">

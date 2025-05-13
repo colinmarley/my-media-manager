@@ -25,6 +25,8 @@ import AddDirectorModule from './formInputs/modals/AddDirectorModule';
 import AddActorModule from './formInputs/modals/AddActorModule';
 import CastDataGrid from './formInputs/common/CastDataGrid';
 import { ActorPreview } from '@/types/collections/Common.type';
+import useModalControl from '@/hooks/useModalControl';
+import useFormStore from '@/store/useFormStore';
 
 
 interface ValidationErrors {
@@ -48,11 +50,15 @@ interface ValidationErrors {
 }
 
 const MovieForm: React.FC = () => {
-
-    // State for showing modals to add directors and actors
-    const [shouldShowAddDirectorModal, setShouldShowAddDirectorModal] = useState(false);
-    const [shouldShowAddActorModal, setShouldShowAddActorModal] = useState(false);
-
+    const {
+        shouldShowAddActorModal,
+        shouldShowAddDirectorModal,
+        openAddActorModal,
+        closeAddActorModal,
+        openAddDirectorModal,
+        closeAddDirectorModal,
+        refreshActorOptions
+    } = useFormStore();
 
     // Use the custom hook for managing movie data
     const {
@@ -81,6 +87,10 @@ const MovieForm: React.FC = () => {
 
     const movieService = new FirestoreService('movies');
 
+    useEffect(() => {
+        console.log("shouldShowAddDirectorModal: ", shouldShowAddDirectorModal);
+        console.log("shouldShowAddActorModal: ", shouldShowAddActorModal);
+    }, [shouldShowAddDirectorModal, shouldShowAddActorModal]);
 
     useEffect(() => {
 
@@ -162,6 +172,11 @@ const MovieForm: React.FC = () => {
     const handleAddCastMember = (newCastMember: ActorPreview) => {
         const updatedCast = [...cast.value, newCastMember];
         setCastValue(updatedCast);
+    }
+
+    const handleCloseActorModal = () => {
+        refreshActorOptions();
+        closeAddActorModal();
     }
 
     const handleResetFields = () => { clearAll(); };
@@ -308,7 +323,7 @@ const MovieForm: React.FC = () => {
                         <CastDataGrid
                             castList={cast?.value}
                             onAddCastMember={handleAddCastMember}
-                            setShowModal={setShouldShowAddActorModal} />
+                            setShowModal={openAddActorModal} />
                     </Grid>
                     <Grid size={12}>
                         <Divider
@@ -321,7 +336,7 @@ const MovieForm: React.FC = () => {
                         directors={directors}
                         handleDirectorChange={handleDirectorChange}
                         handleAddDirector={handleAddDirector}
-                        setShowModal={setShouldShowAddDirectorModal} />
+                        setShowModal={openAddDirectorModal} />
                     <Grid size={0}>
                         <Divider
                             orientation="vertical"
@@ -350,10 +365,10 @@ const MovieForm: React.FC = () => {
                 </Grid>
             </FormControl>
             {shouldShowAddDirectorModal && (
-                <AddDirectorModule onClose={() => setShouldShowAddDirectorModal(false)} />
+                <AddDirectorModule onClose={closeAddDirectorModal} />
             )}
             {shouldShowAddActorModal && (
-                <AddActorModule onClose={() => setShouldShowAddActorModal(false)} />
+                <AddActorModule onClose={handleCloseActorModal} />
             )}
         </React.Fragment>
     );
