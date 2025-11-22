@@ -53,6 +53,12 @@ const useAddMovie = () => {
     setDirectors({value, errors: validateDirectors(value)});
   }
 
+  const addDirector = (newDirector: MovieDirector) => {
+    // Add a new director to the list and validate
+    const updatedDirectors = [...directors.value, newDirector];
+    setDirectors({value: updatedDirectors, errors: validateDirectors(updatedDirectors)});
+  }
+
   const setGenresValue = (value: string[]) => {
     // Validate the Genres value and set value and errors accordingly
     setGenres({value, errors: validateGenres(value)});
@@ -163,7 +169,7 @@ const useAddMovie = () => {
     id, setId,
     title, setTitleValue,
     countries, setCountriesValue,
-    directors, setDirectorsValue,
+    directors, setDirectorsValue, addDirector,
     genres, setGenresValue,
     imageFiles, setImageFilesValue,
     languages, setLanguagesValue,

@@ -9,7 +9,7 @@ interface AddActorModuleProps {
 }
 
 const AddActorModule: React.FC<AddActorModuleProps> = () => {
-  const { closeAddActorModal } = useFormStore();
+  const { closeAddActorModal, refreshActorOptions } = useFormStore();
 
   const [formData, setFormData] = useState<ActorInitialEntry>({
     fullName: '',
@@ -29,7 +29,7 @@ const AddActorModule: React.FC<AddActorModuleProps> = () => {
     e.preventDefault();
     const firestoreService = new FirestoreService('actors');
     await firestoreService.addDocument(formData);
-    alert('Actor added successfully!');
+    refreshActorOptions();
     closeAddActorModal();
   };
 

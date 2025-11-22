@@ -25,8 +25,8 @@ import AddDirectorModule from './formInputs/modals/AddDirectorModule';
 import AddActorModule from './formInputs/modals/AddActorModule';
 import CastDataGrid from './formInputs/common/CastDataGrid';
 import { ActorPreview } from '@/types/collections/Common.type';
-import useModalControl from '@/hooks/useModalControl';
 import useFormStore from '@/store/useFormStore';
+import DirectorDataGrid from './formInputs/common/DirectorDataGrid';
 
 
 interface ValidationErrors {
@@ -57,7 +57,6 @@ const MovieForm: React.FC = () => {
         closeAddActorModal,
         openAddDirectorModal,
         closeAddDirectorModal,
-        refreshActorOptions
     } = useFormStore();
 
     // Use the custom hook for managing movie data
@@ -65,7 +64,7 @@ const MovieForm: React.FC = () => {
         // id, setId,
         title, setTitleValue,
         countries, setCountriesValue,
-        directors, setDirectorsValue,
+        directors, setDirectorsValue, addDirector,
         genres, setGenresValue,
         imageFiles, setImageFilesValue,
         languages, setLanguagesValue,
@@ -86,11 +85,6 @@ const MovieForm: React.FC = () => {
     } = useAddMovie();
 
     const movieService = new FirestoreService('movies');
-
-    useEffect(() => {
-        console.log("shouldShowAddDirectorModal: ", shouldShowAddDirectorModal);
-        console.log("shouldShowAddActorModal: ", shouldShowAddActorModal);
-    }, [shouldShowAddDirectorModal, shouldShowAddActorModal]);
 
     useEffect(() => {
 
@@ -175,7 +169,6 @@ const MovieForm: React.FC = () => {
     }
 
     const handleCloseActorModal = () => {
-        refreshActorOptions();
         closeAddActorModal();
     }
 
@@ -306,7 +299,7 @@ const MovieForm: React.FC = () => {
                         <Divider
                             sx={{color: "white"}}
                             variant="fullWidth">
-                            Crew Details
+                            Cast Details
                         </Divider>
                     </Grid>
                     {/* <CastInput
@@ -329,14 +322,12 @@ const MovieForm: React.FC = () => {
                         <Divider
                             sx={{color: "white"}}
                             variant="fullWidth">
-                            Director Details
+                            Crew Details
                         </Divider>
                     </Grid>
-                    <DirectorInput
-                        directors={directors}
-                        handleDirectorChange={handleDirectorChange}
-                        handleAddDirector={handleAddDirector}
-                        setShowModal={openAddDirectorModal} />
+                        <DirectorDataGrid
+                            directorList={directors?.value}
+                            onAddDirector={addDirector} />
                     <Grid size={0}>
                         <Divider
                             orientation="vertical"

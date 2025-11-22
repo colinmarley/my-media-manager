@@ -16,6 +16,7 @@ const useFormStore = create<FormStoreState>((set) => {
     const firestoreService = new FirestoreService('actors');
 
     const refreshActorOptions = async () => {
+        console.log('Refreshing actor options...');
         const actors = await firestoreService.getDocuments();
         set({
             actorOptions: [
@@ -27,6 +28,7 @@ const useFormStore = create<FormStoreState>((set) => {
 
     const closeAddActorModal = () => {
         set({ shouldShowAddActorModal: false });
+        console.log('Closed add actor modal');
         refreshActorOptions();
     };
 
