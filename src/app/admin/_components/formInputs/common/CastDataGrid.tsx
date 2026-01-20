@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { ActorPreview } from '@/types/collections/Common.type';
 import { Button, TextField, Box, Autocomplete } from '@mui/material';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 import useFormStore from '@/store/useFormStore';
 import CastInput from './CastInput';
 

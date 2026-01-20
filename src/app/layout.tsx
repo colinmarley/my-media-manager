@@ -41,6 +41,11 @@ export default function RootLayout({
                       Media
                     </Button>
                   </Link>
+                  <Link href="/admin/libraryBrowser" passHref>
+                    <Button variant="contained" color="primary" sx={Styles.headerButton}>
+                      Library Browser
+                    </Button>
+                  </Link>
                 </Box>
                 <Box sx={Styles.headerCenter}>
                   <Typography variant="h6" sx={Styles.headerTitle}>

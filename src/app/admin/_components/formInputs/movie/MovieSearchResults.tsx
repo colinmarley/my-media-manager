@@ -1,5 +1,5 @@
 import React from 'react';
-import { Grid, Typography, List, ListItem, ListItemButton, ListItemText } from '@mui/material';
+import { Typography, List, ListItem, ListItemButton, ListItemText, Grid } from '@mui/material';
 import { OmdbSearchResponse } from '@/types/OmdbResponse.type';
 
 interface MovieSearchResultsProps {
@@ -11,7 +11,7 @@ const MovieSearchResults: React.FC<MovieSearchResultsProps> = ({ omdbResults, ha
   return (
     <>
       {omdbResults.length > 0 && (
-        <Grid item xs={12}>
+        <Grid size={{ xs: 12 }}>
           <Typography variant="h6">Search Results:</Typography>
           <List>
             {omdbResults.map((result, index) => (

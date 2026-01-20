@@ -4,7 +4,7 @@ import FirestoreService from '../../../service/firebase/FirestoreService';
 import { FBCollection } from '../../../types/firebase/FBCollection.type';
 import { DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 import useCollectionValidation from '../../../utils/useCollectionValidation';
 import styles from '../_styles/MovieForm.module.css';
 import SubmitButton from '@/app/_components/SubmitButton';

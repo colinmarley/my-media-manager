@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Divider from '@mui/material/Divider';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 import FirestoreService from '../../../service/firebase/FirestoreService';
 import FormControl from '@mui/material/FormControl';
 import { FormTextField } from './formInputs/common/FormTextField';

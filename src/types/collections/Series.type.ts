@@ -1,6 +1,7 @@
 import { OmdbResponseFull } from "../OmdbResponse.type";
 import { SeriesDirector, SeasonEntry, ImageFile, ActorPreview } from "./Common.type";
 import { Release } from "./Release.type";
+import { MediaFileInfo, LibraryStatus } from "../library/LibraryTypes";
 
 export interface Series {
     id: string; // Unique identifier for the series
@@ -19,4 +20,11 @@ export interface Series {
     languages: string[]; // Original languages of the series
     notes?: string; // Additional notes about the series
     omdbData: OmdbResponseFull; // OMDB data for the series
+    
+    // Library Management Fields
+    libraryFiles?: MediaFileInfo[]; // Physical files associated with this series
+    folderPath?: string; // Library folder location
+    libraryStatus?: LibraryStatus; // Current status in library
+    lastVerified?: Date; // Last time files were verified
+    libraryNotes?: string; // Notes about library organization
 }

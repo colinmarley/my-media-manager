@@ -1,6 +1,6 @@
 import React from "react";
 import { Rating } from "@/types/OmdbResponse.type";
-import Grid from "@mui/material/Grid2";
+import Grid from "@mui/material/Grid";
 import { FormTextField } from "./common/FormTextField";
 import Button from "@mui/material/Button";
 import Divider from "@mui/material/Divider";

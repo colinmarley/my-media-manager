@@ -8,7 +8,7 @@ import { OmdbSearchResponse } from '@/types/OmdbResponse.type';
 import MediaInformation from './info/_components/MediaInformation';
 import useMediaSelector from '@/hooks/useMediaSelector';
 import { retrieveMediaDataById } from '@/service/omdb/OmdbService';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 
 const Page = () => {
   const [collection, setCollection] = useState<OmdbSearchResponse[]>([]);

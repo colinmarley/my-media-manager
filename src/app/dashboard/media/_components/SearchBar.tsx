@@ -3,7 +3,7 @@ import { useMediaSelectorContext } from '@/context/MediaSelectorContext';
 import Container from '@mui/material/Container';
 import TextField from '@mui/material/TextField';
 import Button from '@mui/material/Button';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 
 const SearchBar = () => {
   const { setSearchResults, searchQuery, setSearchQuery } = useMediaSelectorContext();

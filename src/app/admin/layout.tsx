@@ -36,6 +36,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         <Tab label="Discs" value="Disc" />
         <Tab label="Collection" value="Collection" />
         <Tab label="Image Manager" value="ImageManager" />
+        <Tab label="Library Browser" value="LibraryBrowser" />
       </Tabs>
       <Box sx={{ padding: 2 }}>
         {children}

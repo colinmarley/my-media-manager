@@ -1,5 +1,6 @@
 import { OmdbResponseFull } from "../OmdbResponse.type";
 import { MovieDirector, ImageFile, ReleasePreview, ActorPreview } from "./Common.type";
+import { MediaFileInfo, LibraryStatus } from "../library/LibraryTypes";
 
 export interface Movie {
     id: string; // Unique identifier for the movie
@@ -17,4 +18,11 @@ export interface Movie {
     cast: ActorPreview[]; // List of actors in the movie
     writers: string[]; // Names of writers credited in the movie
     omdbData: OmdbResponseFull; // OMDB data for the movie
+    
+    // Library Management Fields
+    libraryFiles?: MediaFileInfo[]; // Physical files associated with this movie
+    folderPath?: string; // Library folder location
+    libraryStatus?: LibraryStatus; // Current status in library
+    lastVerified?: Date; // Last time files were verified
+    libraryNotes?: string; // Notes about library organization
 }

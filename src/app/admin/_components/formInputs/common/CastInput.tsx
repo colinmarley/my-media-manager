@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Button, TextField, Box, Autocomplete } from '@mui/material';
-import Grid from '@mui/material/Grid2';
+import Grid from '@mui/material/Grid';
 import { ActorPreview } from '@/types/collections/Common.type';
 import useFormStore from '@/store/useFormStore';
 
