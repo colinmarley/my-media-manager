@@ -38,10 +38,15 @@ import {
   FolderOpen,
   CreateNewFolder,
   Save,
-  Undo
+  Undo,
+  ExpandMore,
+  ChevronRight,
+  InsertDriveFile,
+  Folder
 } from '@mui/icons-material';
 import { ScannedFile } from '../../../../service/library/LibraryBrowserService';
 import axios from 'axios';
+import { getPathSeparator } from '@/utils/fileUtiles';
 
 interface PendingChange {
   fileId: string;
@@ -57,6 +62,15 @@ interface FolderOption {
   isNew?: boolean;
 }
 
+interface TreeNode {
+  path: string;
+  name: string;
+  isFolder: boolean;
+  children: TreeNode[];
+  file?: ScannedFile;
+  level: number;
+}
+
 interface MediaAssignmentProps {
   files: ScannedFile[];
   scanId?: string;
@@ -70,6 +84,10 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  
+  // Tree view state
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [treeData, setTreeData] = useState<TreeNode[]>([]);
   
   // Dialog states
   const [renameDialog, setRenameDialog] = useState<{ open: boolean; file: ScannedFile | null }>({
@@ -92,6 +110,14 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
   useEffect(() => {
     loadFolders();
   }, [scanId, libraryPath]);
+
+  // Build tree structure when files change
+  useEffect(() => {
+    if (files.length > 0) {
+      const tree = buildTreeStructure(files);
+      setTreeData(tree);
+    }
+  }, [files]);
 
   const loadFolders = async () => {
     try {
@@ -171,7 +197,7 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
     
     // Convert all paths to FolderOption objects
     return Array.from(allPaths).map(path => {
-      const pathSeparator = path.includes('\\') ? '\\' : '/';
+      const pathSeparator = getPathSeparator(path);
       const existing = folders.find(f => f.path === path);
       
       return existing || {
@@ -187,7 +213,7 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
       // Extract unique folder paths from files as fallback
       const uniqueFolders = new Set<string>();
       files.forEach(file => {
-        const pathSeparator = file.path.includes('\\') ? '\\' : '/';
+        const pathSeparator = getPathSeparator(file.path);
         const lastSepIndex = file.path.lastIndexOf(pathSeparator);
         const folderPath = lastSepIndex !== -1 ? file.path.substring(0, lastSepIndex) : '';
         if (folderPath) {
@@ -196,7 +222,7 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
       });
 
       const folderOptions: FolderOption[] = Array.from(uniqueFolders).map(path => {
-        const pathSeparator = path.includes('\\') ? '\\' : '/';
+        const pathSeparator = getPathSeparator(path);
         return {
           id: path,
           path: path,
@@ -416,6 +442,275 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
     return change?.newFolderPath || getCurrentFolderPath(file);
   };
 
+  // Build hierarchical tree structure from flat file list
+  const buildTreeStructure = (files: ScannedFile[]): TreeNode[] => {
+    const tree: Map<string, TreeNode> = new Map();
+    const rootNodes: TreeNode[] = [];
+    
+    // First, determine the common root path
+    let commonRoot = '';
+    if (files.length > 0) {
+      const firstPath = files[0].path;
+      const pathSeparator = getPathSeparator(firstPath);
+      const parts = firstPath.split(pathSeparator).filter(Boolean);
+      
+      // Find common prefix across all files
+      for (let i = 0; i < parts.length; i++) {
+        const testPath = parts.slice(0, i + 1).join(pathSeparator);
+        const allMatch = files.every(f => f.path.startsWith(testPath));
+        if (allMatch) {
+          commonRoot = testPath;
+        } else {
+          break;
+        }
+      }
+    }
+    
+    // Process each file
+    files.forEach(file => {
+      const pathSeparator = getPathSeparator(file.path);
+      const relativePath = commonRoot ? file.path.substring(commonRoot.length).replace(/^[\\\/]/, '') : file.path;
+      const parts = relativePath.split(pathSeparator).filter(Boolean);
+      
+      // Create folder nodes for the path
+      let currentPath = commonRoot;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const part = parts[i];
+        const fullPath = currentPath ? `${currentPath}${pathSeparator}${part}` : part;
+        
+        if (!tree.has(fullPath)) {
+          const node: TreeNode = {
+            path: fullPath,
+            name: part,
+            isFolder: true,
+            children: [],
+            level: i
+          };
+          tree.set(fullPath, node);
+          
+          // Add to parent or root
+          if (i === 0) {
+            rootNodes.push(node);
+          } else {
+            const parentPath = currentPath;
+            const parentNode = tree.get(parentPath);
+            if (parentNode) {
+              parentNode.children.push(node);
+            }
+          }
+        }
+        
+        currentPath = fullPath;
+      }
+      
+      // Add the file node
+      const fileName = parts[parts.length - 1];
+      const fileNode: TreeNode = {
+        path: file.path,
+        name: fileName,
+        isFolder: false,
+        children: [],
+        file: file,
+        level: parts.length - 1
+      };
+      
+      if (parts.length === 1) {
+        // File at root level
+        rootNodes.push(fileNode);
+      } else {
+        // File in a folder
+        const folderPath = currentPath;
+        const folderNode = tree.get(folderPath);
+        if (folderNode) {
+          folderNode.children.push(fileNode);
+        }
+      }
+    });
+    
+    // Sort nodes: folders first, then alphabetically
+    const sortNodes = (nodes: TreeNode[]) => {
+      nodes.sort((a, b) => {
+        if (a.isFolder && !b.isFolder) return -1;
+        if (!a.isFolder && b.isFolder) return 1;
+        return a.name.localeCompare(b.name);
+      });
+      nodes.forEach(node => {
+        if (node.children.length > 0) {
+          sortNodes(node.children);
+        }
+      });
+    };
+    
+    sortNodes(rootNodes);
+    return rootNodes;
+  };
+
+  const toggleFolder = (path: string) => {
+    setExpandedFolders(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(path)) {
+        newSet.delete(path);
+      } else {
+        newSet.add(path);
+      }
+      return newSet;
+    });
+  };
+
+  const expandAll = () => {
+    const allFolderPaths = new Set<string>();
+    const collectFolders = (nodes: TreeNode[]) => {
+      nodes.forEach(node => {
+        if (node.isFolder) {
+          allFolderPaths.add(node.path);
+          collectFolders(node.children);
+        }
+      });
+    };
+    collectFolders(treeData);
+    setExpandedFolders(allFolderPaths);
+  };
+
+  const collapseAll = () => {
+    setExpandedFolders(new Set());
+  };
+
+  const renderTreeNode = (node: TreeNode, depth: number = 0): React.ReactNode => {
+    const isExpanded = expandedFolders.has(node.path);
+    const paddingLeft = depth * 32;
+
+    if (node.isFolder) {
+      return (
+        <React.Fragment key={node.path}>
+          <TableRow 
+            sx={{ 
+              bgcolor: 'rgba(61, 90, 254, 0.08)',
+              '&:hover': { bgcolor: 'rgba(61, 90, 254, 0.15)' },
+              cursor: 'pointer'
+            }}
+            onClick={() => toggleFolder(node.path)}
+          >
+            <TableCell colSpan={5} sx={{ pl: `${paddingLeft + 8}px` }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                {isExpanded ? <ExpandMore color="primary" /> : <ChevronRight color="primary" />}
+                <Folder color="primary" />
+                <Typography variant="body2" fontWeight={600} color="text.primary">
+                  {node.name}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  ({node.children.filter(c => !c.isFolder).length} files, {node.children.filter(c => c.isFolder).length} folders)
+                </Typography>
+              </Box>
+            </TableCell>
+          </TableRow>
+          {isExpanded && node.children.map(child => renderTreeNode(child, depth + 1))}
+        </React.Fragment>
+      );
+    } else if (node.file) {
+      const file = node.file;
+      const status = getFileStatus(file.id);
+      const changeDesc = getChangeDescription(file.id);
+      const currentFolder = getFolderForFile(file);
+
+      return (
+        <TableRow 
+          key={file.id}
+          sx={{
+            bgcolor: status === 'pending' ? 'rgba(255, 152, 0, 0.15)' : 'transparent',
+            '&:hover': { bgcolor: status === 'pending' ? 'rgba(255, 152, 0, 0.25)' : 'action.hover' }
+          }}
+        >
+          <TableCell sx={{ pl: `${paddingLeft + 8}px` }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <InsertDriveFile fontSize="small" color="action" />
+              <Box>
+                <Typography variant="body2" fontWeight={status === 'pending' ? 600 : 400}>
+                  {pendingChanges.get(file.id)?.newName || file.name}
+                </Typography>
+                {status === 'pending' && pendingChanges.get(file.id)?.newName && (
+                  <Typography variant="caption" color="text.secondary">
+                    Was: {file.name}
+                  </Typography>
+                )}
+              </Box>
+            </Box>
+          </TableCell>
+          
+          <TableCell>
+            <Typography variant="body2" sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
+              {getCurrentFolderPath(file)}
+            </Typography>
+          </TableCell>
+          
+          <TableCell>
+            <FormControl size="small" fullWidth>
+              <Select
+                value={currentFolder}
+                onChange={(e) => handleFolderChange(file.id, e.target.value)}
+                displayEmpty
+                MenuProps={{
+                  PaperProps: {
+                    style: {
+                      maxHeight: 400,
+                    },
+                  },
+                }}
+              >
+                {folders.map((folder) => (
+                  <MenuItem key={folder.id} value={folder.path}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <FolderOpen fontSize="small" color={folder.isNew ? 'success' : 'inherit'} />
+                      <Typography variant="body2">{folder.name}</Typography>
+                    </Box>
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </TableCell>
+          
+          <TableCell>
+            {status === 'pending' && (
+              <Chip 
+                label="Pending" 
+                size="small" 
+                color="warning"
+                icon={<Edit />}
+              />
+            )}
+          </TableCell>
+          
+          <TableCell align="right">
+            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+              <Tooltip title="Rename File">
+                <IconButton
+                  size="small"
+                  onClick={() => handleRenameClick(file)}
+                  color={pendingChanges.get(file.id)?.newName ? 'warning' : 'default'}
+                >
+                  <Edit fontSize="small" />
+                </IconButton>
+              </Tooltip>
+              
+              {status === 'pending' && (
+                <Tooltip title="Undo Changes">
+                  <IconButton
+                    size="small"
+                    onClick={() => handleRemoveChange(file.id)}
+                    color="error"
+                  >
+                    <Close fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              )}
+            </Stack>
+          </TableCell>
+        </TableRow>
+      );
+    }
+    
+    return null;
+  };
+
   return (
     <Box sx={{ p: 3 }}>
       {/* Header */}
@@ -443,6 +738,22 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
         </Box>
         
         <Stack direction="row" spacing={1}>
+          <Button
+            startIcon={<ExpandMore />}
+            onClick={expandAll}
+            variant="outlined"
+            size="small"
+          >
+            Expand All
+          </Button>
+          <Button
+            startIcon={<ChevronRight />}
+            onClick={collapseAll}
+            variant="outlined"
+            size="small"
+          >
+            Collapse All
+          </Button>
           <Button
             startIcon={<CreateNewFolder />}
             onClick={() => {
@@ -498,109 +809,15 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell width="40%">File Name</TableCell>
+              <TableCell width="40%">Name</TableCell>
               <TableCell width="30%">Current Path</TableCell>
-              <TableCell width="20%">Folder Location</TableCell>
+              <TableCell width="20%">Move To Folder</TableCell>
               <TableCell width="10%">Status</TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {files.map((file) => {
-              const status = getFileStatus(file.id);
-              const changeDesc = getChangeDescription(file.id);
-              const currentFolder = getFolderForFile(file);
-
-              return (
-                <TableRow 
-                  key={file.id}
-                  sx={{
-                    bgcolor: status === 'pending' ? 'warning.50' : 'transparent',
-                    '&:hover': { bgcolor: status === 'pending' ? 'warning.100' : 'action.hover' }
-                  }}
-                >
-                  <TableCell>
-                    <Typography variant="body2" fontWeight={status === 'pending' ? 600 : 400}>
-                      {pendingChanges.get(file.id)?.newName || file.name}
-                    </Typography>
-                    {status === 'pending' && pendingChanges.get(file.id)?.newName && (
-                      <Typography variant="caption" color="text.secondary">
-                        Was: {file.name}
-                      </Typography>
-                    )}
-                  </TableCell>
-                  
-                  <TableCell>
-                    <Typography variant="body2" sx={{ fontSize: '0.85rem', color: 'text.secondary' }}>
-                      {getCurrentFolderPath(file)}
-                    </Typography>
-                  </TableCell>
-                  
-                  <TableCell>
-                    <FormControl size="small" fullWidth>
-                      <Select
-                        value={currentFolder}
-                        onChange={(e) => handleFolderChange(file.id, e.target.value)}
-                        displayEmpty
-                        MenuProps={{
-                          PaperProps: {
-                            style: {
-                              maxHeight: 400,
-                            },
-                          },
-                        }}
-                      >
-                        {folders.map((folder) => (
-                          <MenuItem key={folder.id} value={folder.path}>
-                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                              <FolderOpen fontSize="small" color={folder.isNew ? 'success' : 'inherit'} />
-                              <Typography variant="body2">{folder.name}</Typography>
-                            </Box>
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                  </TableCell>
-                  
-                  <TableCell>
-                    {status === 'pending' && (
-                      <Chip 
-                        label="Pending" 
-                        size="small" 
-                        color="warning"
-                        icon={<Edit />}
-                      />
-                    )}
-                  </TableCell>
-                  
-                  <TableCell align="right">
-                    <Stack direction="row" spacing={0.5} justifyContent="flex-end">
-                      <Tooltip title="Rename File">
-                        <IconButton
-                          size="small"
-                          onClick={() => handleRenameClick(file)}
-                          color={pendingChanges.get(file.id)?.newName ? 'warning' : 'default'}
-                        >
-                          <Edit fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      
-                      {status === 'pending' && (
-                        <Tooltip title="Undo Changes">
-                          <IconButton
-                            size="small"
-                            onClick={() => handleRemoveChange(file.id)}
-                            color="error"
-                          >
-                            <Close fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                    </Stack>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
+            {treeData.map(node => renderTreeNode(node, 0))}
           </TableBody>
         </Table>
       </TableContainer>
