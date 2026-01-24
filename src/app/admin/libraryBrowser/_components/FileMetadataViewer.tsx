@@ -20,7 +20,7 @@ import {
 import {
   ExpandMore,
   Videocam,
-  AudioTrack,
+  Audiotrack,
   Subtitles,
   FolderOpen,
   HighQuality,
@@ -70,8 +70,8 @@ export default function FileMetadataViewer({ file, compact = false }: FileMetada
     return `${(bitrate / 1000000).toFixed(2)} Mbps`;
   };
 
-  const getResolutionIcon = (resolutionCategory: string | undefined) => {
-    switch (resolutionCategory) {
+  const getResolutionIcon = (resolutionLabel: string | undefined) => {
+    switch (resolutionLabel) {
       case '4K':
       case '8K':
         return <FourK fontSize="small" />;
@@ -89,12 +89,12 @@ export default function FileMetadataViewer({ file, compact = false }: FileMetada
     <Accordion defaultExpanded={!compact}>
       <AccordionSummary expandIcon={<ExpandMore />}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          {getResolutionIcon(video.resolutionCategory)}
+          {getResolutionIcon(video.resolutionLabel)}
           <Typography variant="subtitle1">Video Track</Typography>
-          {video.resolutionCategory && (
-            <Chip label={video.resolutionCategory} size="small" color="primary" />
+          {video.resolutionLabel && (
+            <Chip label={video.resolutionLabel} size="small" color="primary" />
           )}
-          {video.hdrFormat && (
+          {video.hdr && video.hdrFormat && (
             <Chip label={video.hdrFormat} size="small" color="secondary" />
           )}
           {video.is3D && (
@@ -104,48 +104,48 @@ export default function FileMetadataViewer({ file, compact = false }: FileMetada
       </AccordionSummary>
       <AccordionDetails>
         <Grid container spacing={2}>
-          <Grid item xs={6}>
+          <Grid size={6}>
             <Typography variant="caption" color="text.secondary">Codec</Typography>
             <Typography variant="body2">{video.codec || 'Unknown'}</Typography>
           </Grid>
-          <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary">Profile</Typography>
-            <Typography variant="body2">{video.codecProfile || 'N/A'}</Typography>
+          <Grid size={6}>
+            <Typography variant="caption" color="text.secondary">Container</Typography>
+            <Typography variant="body2">{video.containerFormat || 'N/A'}</Typography>
           </Grid>
-          <Grid item xs={6}>
+          <Grid size={6}>
             <Typography variant="caption" color="text.secondary">Resolution</Typography>
             <Typography variant="body2">{video.resolution || 'Unknown'}</Typography>
           </Grid>
-          <Grid item xs={6}>
+          <Grid size={6}>
             <Typography variant="caption" color="text.secondary">Aspect Ratio</Typography>
             <Typography variant="body2">{video.aspectRatio || 'N/A'}</Typography>
           </Grid>
-          <Grid item xs={6}>
+          <Grid size={6}>
             <Typography variant="caption" color="text.secondary">Frame Rate</Typography>
             <Typography variant="body2">
               {video.frameRate ? `${video.frameRate} fps` : 'Unknown'}
             </Typography>
           </Grid>
-          <Grid item xs={6}>
+          <Grid size={6}>
             <Typography variant="caption" color="text.secondary">Bitrate</Typography>
             <Typography variant="body2">{formatBitrate(video.bitrate)}</Typography>
           </Grid>
           {video.colorSpace && (
-            <Grid item xs={6}>
+            <Grid size={6}>
               <Typography variant="caption" color="text.secondary">Color Space</Typography>
               <Typography variant="body2">{video.colorSpace}</Typography>
             </Grid>
           )}
-          {video.hdrFormat && (
-            <Grid item xs={6}>
+          {video.hdr && video.hdrFormat && (
+            <Grid size={6}>
               <Typography variant="caption" color="text.secondary">HDR Format</Typography>
               <Typography variant="body2">{video.hdrFormat}</Typography>
             </Grid>
           )}
-          {video.scanType && (
-            <Grid item xs={6}>
-              <Typography variant="caption" color="text.secondary">Scan Type</Typography>
-              <Typography variant="body2">{video.scanType}</Typography>
+          {video.is3D && video.format3D && (
+            <Grid size={6}>
+              <Typography variant="caption" color="text.secondary">3D Format</Typography>
+              <Typography variant="body2">{video.format3D}</Typography>
             </Grid>
           )}
         </Grid>
@@ -157,7 +157,7 @@ export default function FileMetadataViewer({ file, compact = false }: FileMetada
     <Accordion>
       <AccordionSummary expandIcon={<ExpandMore />}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <AudioTrack fontSize="small" />
+          <Audiotrack fontSize="small" />
           <Typography variant="subtitle1">
             Audio Tracks ({audioTracks.length})
           </Typography>
@@ -169,7 +169,7 @@ export default function FileMetadataViewer({ file, compact = false }: FileMetada
             <Paper key={index} variant="outlined" sx={{ p: 2 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
                 <Typography variant="subtitle2">
-                  Track {track.trackId || index + 1}
+                  Track {track.index ?? index + 1}
                   {track.title && ` - ${track.title}`}
                 </Typography>
                 <Box sx={{ display: 'flex', gap: 0.5 }}>
@@ -178,28 +178,28 @@ export default function FileMetadataViewer({ file, compact = false }: FileMetada
                 </Box>
               </Box>
               <Grid container spacing={1}>
-                <Grid item xs={6}>
+                <Grid size={6}>
                   <Typography variant="caption" color="text.secondary">Codec</Typography>
                   <Typography variant="body2">{track.codec || 'Unknown'}</Typography>
                 </Grid>
-                <Grid item xs={6}>
+                <Grid size={6}>
                   <Typography variant="caption" color="text.secondary">Language</Typography>
                   <Typography variant="body2">
                     {track.languageName || track.language || 'Unknown'}
                   </Typography>
                 </Grid>
-                <Grid item xs={6}>
+                <Grid size={6}>
                   <Typography variant="caption" color="text.secondary">Channels</Typography>
                   <Typography variant="body2">
-                    {track.channelLayout || track.channels || 'Unknown'}
+                    {track.channelsLayout || track.channels || 'Unknown'}
                   </Typography>
                 </Grid>
-                <Grid item xs={6}>
+                <Grid size={6}>
                   <Typography variant="caption" color="text.secondary">Bitrate</Typography>
                   <Typography variant="body2">{formatBitrate(track.bitrate)}</Typography>
                 </Grid>
                 {track.sampleRate && (
-                  <Grid item xs={6}>
+                  <Grid size={6}>
                     <Typography variant="caption" color="text.secondary">Sample Rate</Typography>
                     <Typography variant="body2">{track.sampleRate} Hz</Typography>
                   </Grid>
@@ -260,34 +260,34 @@ export default function FileMetadataViewer({ file, compact = false }: FileMetada
       </AccordionSummary>
       <AccordionDetails>
         <Grid container spacing={2}>
-          <Grid item xs={12}>
+          <Grid size={12}>
             <Typography variant="caption" color="text.secondary">Path</Typography>
             <Typography variant="body2" sx={{ wordBreak: 'break-all' }}>
               {file.filePath}
             </Typography>
           </Grid>
-          <Grid item xs={6}>
+          <Grid size={6}>
             <Typography variant="caption" color="text.secondary">File Size</Typography>
-            <Typography variant="body2">{formatFileSize(file.fileSize)}</Typography>
+            <Typography variant="body2">{file.fileSizeFormatted || formatFileSize(file.fileSize)}</Typography>
           </Grid>
-          <Grid item xs={6}>
-            <Typography variant="caption" color="text.secondary">Container</Typography>
-            <Typography variant="body2">{file.containerFormat || 'Unknown'}</Typography>
+          <Grid size={6}>
+            <Typography variant="caption" color="text.secondary">Extension</Typography>
+            <Typography variant="body2">{file.fileExtension || 'Unknown'}</Typography>
           </Grid>
-          {file.duration && (
-            <Grid item xs={6}>
+          {file.videoMetadata?.duration && (
+            <Grid size={6}>
               <Typography variant="caption" color="text.secondary">Duration</Typography>
-              <Typography variant="body2">{formatDuration(file.duration)}</Typography>
+              <Typography variant="body2">{file.videoMetadata.durationFormatted || formatDuration(file.videoMetadata.duration * 1000)}</Typography>
             </Grid>
           )}
-          {file.overallBitrate && (
-            <Grid item xs={6}>
-              <Typography variant="caption" color="text.secondary">Overall Bitrate</Typography>
-              <Typography variant="body2">{formatBitrate(file.overallBitrate)}</Typography>
+          {file.videoMetadata?.bitrate && (
+            <Grid size={6}>
+              <Typography variant="caption" color="text.secondary">Video Bitrate</Typography>
+              <Typography variant="body2">{formatBitrate(file.videoMetadata.bitrate * 1000)}</Typography>
             </Grid>
           )}
           {file.checksum && (
-            <Grid item xs={12}>
+            <Grid size={12}>
               <Typography variant="caption" color="text.secondary">Checksum (SHA256)</Typography>
               <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.75rem' }}>
                 {file.checksum}

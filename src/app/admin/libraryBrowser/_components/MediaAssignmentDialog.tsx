@@ -37,6 +37,7 @@ import { MediaFile } from '@/types/library';
 import { Movie } from '@/types/collections/Movie.type';
 import { Series } from '@/types/collections/Series.type';
 import { Episode } from '@/types/collections/Episode.type';
+import { Season } from '@/types/collections/Season.type';
 import MediaOrganizationService from '@/service/library/MediaOrganizationService';
 
 interface MediaAssignmentDialogProps {
@@ -71,6 +72,7 @@ export default function MediaAssignmentDialog({
   const [searchResults, setSearchResults] = useState<(Movie | Series)[]>([]);
   const [selectedMedia, setSelectedMedia] = useState<Movie | Series | null>(null);
   const [selectedEpisode, setSelectedEpisode] = useState<Episode | null>(null);
+  const [selectedSeason, setSelectedSeason] = useState<Season | null>(null);
   const [version, setVersion] = useState('1080p');
   const [loading, setLoading] = useState(false);
   const [previewStructure, setPreviewStructure] = useState<any>(null);
@@ -99,6 +101,29 @@ export default function MediaAssignmentDialog({
     }
   };
 
+  // Fetch season when episode is selected
+  useEffect(() => {
+    const fetchSeason = async () => {
+      if (!selectedEpisode || !selectedEpisode.seasonId) {
+        setSelectedSeason(null);
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/seasons/${selectedEpisode.seasonId}`);
+        if (response.ok) {
+          const season = await response.json();
+          setSelectedSeason(season);
+        }
+      } catch (error) {
+        console.error('Failed to fetch season:', error);
+        setSelectedSeason(null);
+      }
+    };
+
+    fetchSeason();
+  }, [selectedEpisode]);
+
   // Generate preview when media is selected
   useEffect(() => {
     if (!selectedMedia || selectedFiles.length === 0) {
@@ -109,22 +134,23 @@ export default function MediaAssignmentDialog({
     const firstFile = selectedFiles[0];
     let structure;
 
-    if (mediaType === 'movie' && 'imdbId' in selectedMedia) {
+    if (mediaType === 'movie' && 'externalIds' in selectedMedia) {
       structure = orgService.generateMovieStructure(
         selectedMedia as Movie,
         firstFile,
         version
       );
-    } else if (mediaType === 'episode' && selectedEpisode) {
+    } else if (mediaType === 'episode' && selectedEpisode && selectedSeason) {
       structure = orgService.generateEpisodeStructure(
         selectedMedia as Series,
+        selectedSeason,
         selectedEpisode,
         firstFile
       );
     }
 
     setPreviewStructure(structure);
-  }, [selectedMedia, selectedEpisode, version, selectedFiles, mediaType]);
+  }, [selectedMedia, selectedEpisode, selectedSeason, version, selectedFiles, mediaType]);
 
   const handleAssign = async () => {
     if (!selectedMedia || selectedFiles.length === 0) return;
@@ -150,12 +176,18 @@ export default function MediaAssignmentDialog({
   };
 
   const getMediaTitle = (media: Movie | Series): string => {
-    if ('imdbId' in media) {
+    if ('externalIds' in media && media.externalIds) {
       const movie = media as Movie;
-      return `${movie.title} (${movie.releaseYear || 'Unknown'})`;
+      // Extract year from releaseDate format "DayAsNumber-Month-Year"
+      const year = movie.releaseDate ? movie.releaseDate.split('-')[2] : 
+                   movie.theatricalRelease?.date ? new Date(movie.theatricalRelease.date).getFullYear() : 'Unknown';
+      return `${movie.title} (${year})`;
     } else {
       const series = media as Series;
-      return `${series.title} (${series.firstAirYear || 'Unknown'})`;
+      // Extract first year from runningYears or seriesSummary
+      const year = series.runningYears?.[0] || 
+                   (series.seriesSummary?.firstAired ? new Date(series.seriesSummary.firstAired).getFullYear() : 'Unknown');
+      return `${series.title} (${year})`;
     }
   };
 
@@ -180,6 +212,7 @@ export default function MediaAssignmentDialog({
                 setMediaType(e.target.value as 'movie' | 'episode');
                 setSelectedMedia(null);
                 setSelectedEpisode(null);
+                setSelectedSeason(null);
                 setSearchResults([]);
               }}
             >
@@ -210,7 +243,12 @@ export default function MediaAssignmentDialog({
           <Autocomplete
             freeSolo
             options={searchResults}
-            getOptionLabel={getMediaTitle}
+            getOptionLabel={(option) => {
+              if (typeof option === 'string') {
+                return option;
+              }
+              return getMediaTitle(option);
+            }}
             loading={loading}
             onInputChange={(_, value) => {
               setSearchQuery(value);
@@ -341,7 +379,7 @@ export default function MediaAssignmentDialog({
         <Button
           onClick={handleAssign}
           variant="contained"
-          disabled={!selectedMedia || loading || (mediaType === 'episode' && !selectedEpisode)}
+          disabled={!selectedMedia || loading || (mediaType === 'episode' && (!selectedEpisode || !selectedSeason))}
           startIcon={loading && <CircularProgress size={20} />}
         >
           Assign Files

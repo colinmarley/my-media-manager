@@ -11,8 +11,18 @@
  *   ts-node src/scripts/migrate-to-new-structure.ts [--dry-run] [--verbose]
  */
 
-import { initializeApp, cert, getApps } from 'firebase-admin/app';
-import { getFirestore } from 'firebase-admin/firestore';
+import { db } from '../../firebaseConfig';
+import { 
+  collection, 
+  doc, 
+  getDocs, 
+  getDoc,
+  writeBatch,
+  updateDoc,
+  query,
+  where,
+  Timestamp
+} from 'firebase/firestore';
 import { v4 as uuidv4 } from 'uuid';
 
 interface MigrationStats {
@@ -26,7 +36,7 @@ interface MigrationStats {
 }
 
 class FrontendDataMigration {
-  private db: FirebaseFirestore.Firestore;
+  private db: typeof db;
   private dryRun: boolean;
   private verbose: boolean;
   private stats: MigrationStats;
@@ -44,12 +54,8 @@ class FrontendDataMigration {
       errors: []
     };
 
-    // Initialize Firebase Admin if not already initialized
-    if (!getApps().length) {
-      // Note: This requires GOOGLE_APPLICATION_CREDENTIALS env var to be set
-      initializeApp();
-    }
-    this.db = getFirestore();
+    // Use the existing client-side Firebase configuration
+    this.db = db;
   }
 
   private log(message: string, level: 'info' | 'warn' | 'error' = 'info') {
@@ -117,7 +123,7 @@ class FrontendDataMigration {
 
   private async migrateMovies(): Promise<void> {
     try {
-      const moviesSnapshot = await this.db.collection('movies').get();
+      const moviesSnapshot = await getDocs(collection(this.db, 'movies'));
       
       for (const movieDoc of moviesSnapshot.docs) {
         try {
@@ -170,7 +176,10 @@ class FrontendDataMigration {
           }
           
           if (Object.keys(updates).length > 0 && !this.dryRun) {
-            await this.db.collection('movies').doc(movieId).update(updates);
+            const movieRef = doc(this.db, 'movies', movieId);
+            const batch = writeBatch(this.db);
+            batch.update(movieRef, updates);
+            await batch.commit();
           }
           
           this.stats.moviesUpdated++;
@@ -189,7 +198,7 @@ class FrontendDataMigration {
 
   private async migrateSeries(): Promise<void> {
     try {
-      const seriesSnapshot = await this.db.collection('series').get();
+      const seriesSnapshot = await getDocs(collection(this.db, 'series'));
       
       for (const seriesDoc of seriesSnapshot.docs) {
         try {
@@ -227,7 +236,10 @@ class FrontendDataMigration {
             };
             
             if (!this.dryRun) {
-              await this.db.collection('seasons').doc(seasonId).set(seasonDoc);
+              const batch = writeBatch(this.db);
+              const seasonRef = doc(this.db, 'seasons', seasonId);
+              batch.set(seasonRef, seasonDoc);
+              await batch.commit();
             }
             
             this.stats.seasonsCreated++;
@@ -268,7 +280,10 @@ class FrontendDataMigration {
           }
           
           if (!this.dryRun) {
-            await this.db.collection('series').doc(seriesId).update(updates);
+            const batch = writeBatch(this.db);
+            const seriesRef = doc(this.db, 'series', seriesId);
+            batch.update(seriesRef, updates);
+            await batch.commit();
           }
           
           this.stats.seriesUpdated++;
@@ -287,7 +302,7 @@ class FrontendDataMigration {
 
   private async migrateEpisodes(): Promise<void> {
     try {
-      const episodesSnapshot = await this.db.collection('episodes').get();
+      const episodesSnapshot = await getDocs(collection(this.db, 'episodes'));
       
       for (const episodeDoc of episodesSnapshot.docs) {
         try {
@@ -308,8 +323,9 @@ class FrontendDataMigration {
             };
           }
           
-          if (!this.dryRun) {
-            await this.db.collection('episodes').doc(episodeDoc.id).update(updates);
+          if (Object.keys(updates).length > 0 && !this.dryRun) {
+            const episodeRef = doc(this.db, 'episodes', episodeDoc.id);
+            await updateDoc(episodeRef, updates);
           }
           
           this.stats.episodesUpdated++;
@@ -328,7 +344,7 @@ class FrontendDataMigration {
 
   private async createMediaFiles(): Promise<void> {
     try {
-      const moviesSnapshot = await this.db.collection('movies').get();
+      const moviesSnapshot = await getDocs(collection(this.db, 'movies'));
       
       for (const movieDoc of moviesSnapshot.docs) {
         const movie = movieDoc.data();
@@ -369,7 +385,10 @@ class FrontendDataMigration {
             };
             
             if (!this.dryRun) {
-              await this.db.collection('media_files').doc(fileId).set(fileDoc);
+              const batch = writeBatch(this.db);
+              const fileRef = doc(this.db, 'media_files', fileId);
+              batch.set(fileRef, fileDoc);
+              await batch.commit();
             }
             
             this.stats.mediaFilesCreated++;
@@ -389,10 +408,12 @@ class FrontendDataMigration {
 
   private async createMediaAssignments(): Promise<void> {
     try {
-      const filesSnapshot = await this.db.collection('media_files')
-        .where('isAssigned', '==', true)
-        .where('assignmentId', '==', null)
-        .get();
+      const filesQuery = query(
+        collection(this.db, 'media_files'),
+        where('isAssigned', '==', true),
+        where('assignmentId', '==', null)
+      );
+      const filesSnapshot = await getDocs(filesQuery);
       
       for (const fileDoc of filesSnapshot.docs) {
         try {
@@ -419,10 +440,18 @@ class FrontendDataMigration {
           };
           
           if (!this.dryRun) {
-            await this.db.collection('media_assignments').doc(assignmentId).set(assignmentDoc);
-            await this.db.collection('media_files').doc(fileDoc.id).update({
-              assignmentId: assignmentId
+            const batch = writeBatch(this.db);
+            const assignmentRef = doc(this.db, 'media_assignments', assignmentId);
+            batch.set(assignmentRef, assignmentDoc);
+            
+            const fileRef = doc(this.db, 'media_files', fileDoc.id);
+            batch.update(fileRef, {
+              assignmentId,
+              organizationStatus: 'pending',
+              updatedAt: new Date().toISOString()
             });
+            
+            await batch.commit();
           }
           
           this.stats.assignmentsCreated++;

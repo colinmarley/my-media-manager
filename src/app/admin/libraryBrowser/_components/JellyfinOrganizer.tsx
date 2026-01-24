@@ -57,6 +57,7 @@ export default function JellyfinOrganizer({
 }: JellyfinOrganizerProps) {
   const [organizing, setOrganizing] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [fileData, setFileData] = useState<any>(null);
   const [operations, setOperations] = useState<OperationStatus[]>([
     { step: 'Validate assignment', status: 'pending' },
     { step: 'Create Jellyfin folder structure', status: 'pending' },
@@ -67,6 +68,23 @@ export default function JellyfinOrganizer({
   const [error, setError] = useState<string | null>(null);
 
   const orgService = new MediaOrganizationService();
+
+  // Fetch file data when assignment changes
+  React.useEffect(() => {
+    const fetchFileData = async () => {
+      if (!assignment?.primaryFileId) return;
+      try {
+        const response = await fetch(`/api/files/${assignment.primaryFileId}`);
+        if (response.ok) {
+          const data = await response.json();
+          setFileData(data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch file data:', error);
+      }
+    };
+    fetchFileData();
+  }, [assignment]);
 
   const updateOperation = (index: number, status: OperationStatus['status'], message?: string) => {
     setOperations(prev => {
@@ -88,7 +106,7 @@ export default function JellyfinOrganizer({
       updateOperation(0, 'running');
       await new Promise(resolve => setTimeout(resolve, 500)); // Simulate async operation
       
-      if (!assignment.targetFolder || !assignment.fileId) {
+      if (!assignment.targetFolderStructure || !assignment.primaryFileId) {
         throw new Error('Invalid assignment: missing target folder or file ID');
       }
       
@@ -99,13 +117,15 @@ export default function JellyfinOrganizer({
       updateOperation(1, 'running');
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      const jellyfinFolder = await orgService.createJellyfinFolder({
-        folderPath: assignment.targetFolder.fullPath,
-        jellyfinName: assignment.targetFolder.jellyfinFolderName,
-        mediaType: assignment.mediaType,
-        mediaId: assignment.mediaId,
-        validation: { isCompliant: false },
-      });
+      // Fetch media data for Jellyfin folder creation
+      const mediaResponse = await fetch(`/api/${assignment.mediaType === 'movie' ? 'movies' : 'episodes'}/${assignment.mediaId}`);
+      if (!mediaResponse.ok) throw new Error('Failed to fetch media data');
+      const mediaData = await mediaResponse.json();
+      
+      const jellyfinFolder = await orgService.createJellyfinFolder(
+        assignment,
+        mediaData
+      );
       
       updateOperation(1, 'completed', `Folder ID: ${jellyfinFolder.id}`);
       setProgress(40);
@@ -114,14 +134,19 @@ export default function JellyfinOrganizer({
       updateOperation(2, 'running');
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // TODO: Call backend API to move files
+      // Get file details for move operation
+      const fileResponse = await fetch(`/api/files/${assignment.primaryFileId}`);
+      if (!fileResponse.ok) throw new Error('Failed to fetch file data');
+      const fileData = await fileResponse.json();
+      
+      // Call backend API to move files
       const moveResponse = await fetch('/api/files/move', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fileId: assignment.fileId,
-          sourcePath: assignment.sourceFile?.filePath,
-          targetPath: assignment.targetFolder.fullPath,
+          fileId: assignment.primaryFileId,
+          sourcePath: fileData.filePath,
+          targetPath: assignment.targetFolderStructure.fullPath,
         }),
       });
 
@@ -141,15 +166,16 @@ export default function JellyfinOrganizer({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          status: 'organized',
-          organizationHistory: [
-            ...(assignment.organizationHistory || []),
+          organizationStatus: 'completed',
+          organizationDate: new Date().toISOString(),
+          operations: [
+            ...assignment.operations,
             {
-              timestamp: new Date().toISOString(),
-              operation: 'organize',
-              sourcePath: assignment.sourceFile?.filePath,
-              targetPath: assignment.targetFolder.fullPath,
-              status: 'completed',
+              timestamp: new Date(),
+              operation: 'move_file',
+              sourcePath: fileData.filePath,
+              destinationPath: assignment.targetFolderStructure.fullPath,
+              status: 'success',
             },
           ],
         }),
@@ -162,10 +188,10 @@ export default function JellyfinOrganizer({
       updateOperation(4, 'running');
       await new Promise(resolve => setTimeout(resolve, 500));
       
-      const isValid = await orgService.validateJellyfinStructure(jellyfinFolder.id);
+      const validation = await orgService.validateJellyfinStructure(jellyfinFolder.id);
       
-      if (!isValid) {
-        updateOperation(4, 'failed', 'Validation failed - structure may not be fully compliant');
+      if (!validation.isValid) {
+        updateOperation(4, 'failed', `Validation failed - ${validation.errors.join(', ')}`);
       } else {
         updateOperation(4, 'completed', 'Structure is Jellyfin-compliant');
       }
@@ -252,13 +278,13 @@ export default function JellyfinOrganizer({
               <Box>
                 <Typography variant="caption" color="text.secondary">Source File</Typography>
                 <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                  {assignment.sourceFile?.fileName || 'Unknown'}
+                  {fileData?.fileName || 'Loading...'}
                 </Typography>
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary">Target Location</Typography>
                 <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                  {assignment.targetFolder?.fullPath || 'Unknown'}
+                  {assignment.targetFolderStructure?.fullPath || 'Unknown'}
                 </Typography>
               </Box>
             </Stack>
@@ -323,7 +349,7 @@ export default function JellyfinOrganizer({
         <Button
           onClick={handleOrganize}
           variant="contained"
-          disabled={organizing || !assignment.targetFolder}
+          disabled={organizing || !assignment?.targetFolderStructure}
           startIcon={<PlayArrow />}
         >
           {organizing ? 'Organizing...' : 'Start Organization'}
