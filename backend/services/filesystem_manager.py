@@ -14,10 +14,12 @@ from utils.exceptions import (
     FileOperationError
 )
 from utils.logging import log_file_operation, logger
+from services.media_metadata_extractor import MediaMetadataExtractor
 
 class FileSystemManager:
     def __init__(self):
         self.base_paths = settings.allowed_base_paths
+        self.metadata_extractor = MediaMetadataExtractor()
         self.supported_extensions = (
             settings.supported_video_extensions +
             settings.supported_audio_extensions +
@@ -305,12 +307,13 @@ class FileSystemManager:
             log_file_operation('bulk_move', f"{len(source_paths)} items", False, error=str(e))
             raise FileOperationError(f"Bulk move failed: {str(e)}")
     
-    def get_file_metadata(self, file_path: str, calculate_checksum: bool = None) -> Dict[str, Any]:
+    def get_file_metadata(self, file_path: str, calculate_checksum: bool = None, include_media_info: bool = True) -> Dict[str, Any]:
         """Get comprehensive file metadata
         
         Args:
             file_path: Path to the file
             calculate_checksum: Whether to calculate checksum (overrides settings)
+            include_media_info: Whether to extract media metadata (video/audio/subtitle info)
         """
         try:
             # Validate security
@@ -344,6 +347,19 @@ class FileSystemManager:
             )
             if should_calculate_checksum and os.path.isfile(file_path):
                 metadata['checksum'] = self.calculate_file_checksum(file_path)
+            
+            # Extract media metadata for video/audio files
+            if include_media_info and os.path.isfile(file_path):
+                try:
+                    media_metadata = self.metadata_extractor.extract_full_metadata(file_path)
+                    metadata['mediaMetadata'] = media_metadata
+                    logger.info("Media metadata extracted", path=file_path, 
+                               has_video=media_metadata.get('videoMetadata') is not None,
+                               audio_tracks=len(media_metadata.get('audioTracks', [])),
+                               subtitle_tracks=len(media_metadata.get('subtitleTracks', [])))
+                except Exception as e:
+                    logger.warning("Media metadata extraction failed", path=file_path, error=str(e))
+                    metadata['mediaMetadata'] = None
             
             return metadata
             
