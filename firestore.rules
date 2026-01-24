@@ -1,0 +1,129 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to check if user is admin
+    function isAdmin() {
+      return isAuthenticated() && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // ============================================
+    // NEW COLLECTIONS - Media Architecture v2
+    // ============================================
+    
+    // Media files - authenticated users can read/write
+    // Contains comprehensive file metadata (video codec, audio tracks, etc.)
+    match /media_files/{fileId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // Media assignments - links files to movies/episodes
+    // Tracks organization status and Jellyfin folder generation
+    match /media_assignments/{assignmentId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // Jellyfin folders - tracks created folder structures
+    // Used for validation and cleanup operations
+    match /jellyfin_folders/{folderId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================
+    // EXISTING COLLECTIONS - Movies & TV Shows
+    // ============================================
+    
+    // Movies - public read, authenticated write
+    match /movies/{movieId} {
+      allow read: if true;  // Public read for browsing
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // Series (TV Shows) - public read, authenticated write
+    match /series/{seriesId} {
+      allow read: if true;  // Public read for browsing
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // Seasons - now a standalone collection (extracted from series)
+    match /seasons/{seasonId} {
+      allow read: if true;  // Public read for browsing
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // Episodes - public read, authenticated write
+    match /episodes/{episodeId} {
+      allow read: if true;  // Public read for browsing
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // ============================================
+    // METADATA COLLECTIONS
+    // ============================================
+    
+    // Directors
+    match /directors/{directorId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+    
+    // Releases (physical media releases)
+    match /releases/{releaseId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+    
+    // Discs (Blu-ray, DVD, etc.)
+    match /discs/{discId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+    
+    // ============================================
+    // USER & ADMIN COLLECTIONS
+    // ============================================
+    
+    // Users - restricted access
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAuthenticated() && request.auth.uid == userId;
+      allow create: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+    
+    // Admin logs - admin only
+    match /admin_logs/{logId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+    
+    // System settings - admin only
+    match /system_settings/{settingId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}
