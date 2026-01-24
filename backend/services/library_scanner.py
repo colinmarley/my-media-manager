@@ -43,6 +43,7 @@ from uuid import uuid4
 
 from services.filesystem_manager import FileSystemManager
 from services.metadata_extractor import MetadataExtractor
+from services.media_metadata_extractor import MediaMetadataExtractor
 from services.firestore_service import FirestoreService
 from config.settings import settings
 from utils.exceptions import ScanOperationError
@@ -124,6 +125,7 @@ class LibraryScanner:
         """
         self.file_manager = file_manager
         self.metadata_extractor = metadata_extractor
+        self.media_metadata_extractor = MediaMetadataExtractor()  # Enhanced metadata extraction
         self.executor = ThreadPoolExecutor(max_workers=settings.scan_worker_threads)
         self.running_scans: Dict[str, ScanProgress] = {}  # Active and completed scans
         self.scan_callbacks: Dict[str, Callable] = {}  # Progress callbacks

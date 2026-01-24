@@ -30,6 +30,7 @@ from config.settings import settings
 from api.file_operations import router as file_router
 from api.library_operations import router as library_router
 from api.metadata_operations import router as metadata_router
+from api.media_operations import router as media_router
 from services.filesystem_manager import FileSystemManager
 from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
@@ -119,6 +120,7 @@ app.add_middleware(
 app.include_router(file_router, prefix="/api/files", tags=["File Operations"])
 app.include_router(library_router, prefix="/api/library", tags=["Library Operations"])
 app.include_router(metadata_router, prefix="/api/metadata", tags=["Metadata Operations"])
+app.include_router(media_router, prefix="/api/media", tags=["Media Operations"])
 
 @app.get("/")
 async def root():
