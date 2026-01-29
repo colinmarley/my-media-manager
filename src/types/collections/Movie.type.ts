@@ -58,6 +58,7 @@ export interface MovieCollection {
 export interface Movie {
     id: string; // Unique identifier for the movie
     title: string; // Original title of the movie
+    titleLower: string; // Lowercase title for efficient case-insensitive search
     countries: string[]; // Countries where the movie originated
     directors: MovieDirector[]; // List of directors involved in the movie
     genres: string[]; // Genres of the movie, must match predefined enums

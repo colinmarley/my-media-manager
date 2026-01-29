@@ -19,6 +19,7 @@ import ImageSearch from '../imageManager/_components/ImageSearch';
 import useSeriesValidation from '../../../utils/useSeriesValidation';
 import styles from '../_styles/Form.module.css';
 import SubmitButton from '@/app/_components/SubmitButton';
+import { prepareTitleForStorage } from '../../../utils/titleUtils';
 
 interface SeriesValidation {
   title: string | null;
@@ -172,7 +173,7 @@ const SeriesForm: React.FC = () => {
 
     const series: FBSeries = {
       id: '', // Firebase will generate the ID
-      title,
+      ...prepareTitleForStorage(title),
       countryOfOrigin,
       directors: directors.map(directorEntryToDirector),
       imageFiles,

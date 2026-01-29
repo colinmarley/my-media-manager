@@ -48,6 +48,7 @@ export interface SeriesExternalIds {
 export interface Series {
     id: string; // Unique identifier for the series
     title: string; // Original title of the series
+    titleLower: string; // Lowercase title for efficient case-insensitive search
     countries: string[]; // Countries where the series originated
     directors: SeriesDirector[]; // List of directors involved in the series
     imageFiles: ImageFile[]; // Images related to the series (e.g., posters, stills)

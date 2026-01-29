@@ -19,6 +19,7 @@ import ImageSearch from '../imageManager/_components/ImageSearch';
 import useSeasonValidation from '../../../utils/useSeasonValidation';
 import styles from '../_styles/Form.module.css';
 import SubmitButton from '@/app/_components/SubmitButton';
+import { prepareTitleForStorage } from '../../../utils/titleUtils';
 
 interface SeasonValidation {
   title: string | null;
@@ -182,7 +183,7 @@ const SeasonForm: React.FC = () => {
 
     const season: FBSeason = {
       id: '', // Firebase will generate the ID
-      title,
+      ...prepareTitleForStorage(title),
       seriesId,
       number,
       countryOfOrigin,

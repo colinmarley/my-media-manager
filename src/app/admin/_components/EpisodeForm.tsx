@@ -18,6 +18,7 @@ import ImageSearch from '../imageManager/_components/ImageSearch';
 import useEpisodeValidation from '../../../utils/useEpisodeValidation';
 import styles from '../_styles/Form.module.css';
 import SubmitButton from '@/app/_components/SubmitButton';
+import { prepareTitleForStorage } from '../../../utils/titleUtils';
 
 interface EpisodeValidation {
   title: string | null;
@@ -182,7 +183,7 @@ const EpisodeForm: React.FC = () => {
 
     const episode: FBEpisode = {
       id: '', // Firebase will generate the ID
-      title,
+      ...prepareTitleForStorage(title),
       seasonId,
       seriesId,
       episodeNumber,

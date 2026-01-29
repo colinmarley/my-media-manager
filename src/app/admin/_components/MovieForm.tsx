@@ -18,6 +18,7 @@ import WritersInput from './formInputs/WritersInput';
 import MovieTitleSearch from './formInputs/movie/MovieTitleSearch';
 import MovieDetailsInput from './formInputs/movie/MovieDetailsInput';
 import MovieLinkInput from './formInputs/movie/MovieLinkInput';
+import { prepareTitleForStorage } from '@/utils/titleUtils';
 import MovieOptionalInput from './formInputs/movie/MovieOptionalInput';
 import SubmitButton from '@/app/_components/SubmitButton';
 import useAddMovie from '@/hooks/newMedia/useAddMovie';
@@ -209,7 +210,7 @@ const MovieForm: React.FC = () => {
 
         const movieSubimission: Movie = {
             id: imdbId?.value || '',
-            title: title?.value || '',
+            ...prepareTitleForStorage(title?.value || ''),
             countries: countries?.value || [],
             directors: directors?.value || [],
             genres: genres?.value || [],
