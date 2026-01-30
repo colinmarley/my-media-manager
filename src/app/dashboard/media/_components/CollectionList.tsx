@@ -5,7 +5,9 @@ import Container from "@mui/material/Container";
 const CollectionList = ({ collection }: { collection: OmdbSearchResponse[] }) => {
   return (
     <Container sx={Styles.collectionListContainer}>
-      {collection.map((movie: OmdbSearchResponse) => (<MovieTile movieInfo={movie} />))}
+      {collection.map((movie: OmdbSearchResponse) => (
+        <MovieTile key={movie.imdbID} movieInfo={movie} />
+      ))}
     </Container>
   );
 };

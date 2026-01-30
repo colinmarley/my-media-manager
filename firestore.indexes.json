@@ -1,0 +1,61 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "scanned_directories",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "libraryPath",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "discoveredAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scanned_files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "libraryPath",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "discoveredAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scanned_files",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "scanId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "discoveredAt",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "scanned_directories",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "scanId",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "discoveredAt",
+          "order": "ASCENDING"
+        }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

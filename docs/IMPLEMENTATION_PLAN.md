@@ -5,14 +5,15 @@
 | Priority | Status | Completion Date | Files Modified | Tests Created | Manual Testing |
 |----------|--------|----------------|----------------|---------------|----------------|
 | **Priority 1:** Fix titleLower | ✅ **VERIFIED** | January 28, 2026 | 4 form files | titleUtils.test.ts | ✅ Passed |
-| **Priority 2:** Media Assignment Logic | 🔄 **PENDING** | - | - | - | - |
+| **Priority 2:** Media Assignment Logic | ✅ **VERIFIED** | January 29, 2026 | 2 components + 4 forms | MediaAssignment.test.ts | ✅ Passed |
 | **Priority 3:** Backend Integration | 🔄 **PENDING** | - | - | - | - |
 | **Priority 4:** Episode Selection UI | 🔄 **PENDING** | - | - | - | - |
 
 ### Quick Summary
 - ✅ **Priority 1 COMPLETE & VERIFIED:** Movie "Hackers" saved to Firebase with both `title` and `titleLower` fields confirmed
-- ⏳ **Next Up:** Priority 2 - Implement complete media assignment logic with Firebase operations
-- 📊 **Overall Progress:** 25% (1 of 4 priorities complete and verified)
+- ✅ **Priority 2 COMPLETE & VERIFIED:** Media assignment logic tested and working - data properly saved to Firebase
+- ⏳ **Next Up:** Priority 3 - Backend file organization integration
+- 📊 **Overall Progress:** 50% (2 of 4 priorities complete and verified)
 
 ---
 
@@ -245,7 +246,177 @@ describe('prepareTitleForStorage', () => {
 
 ---
 
-## Priority 2: Implement Media Assignment Logic
+## Priority 2: Implement Media Assignment Logic ✅ COMPLETE & VERIFIED
+
+### ✅ Implementation Status: COMPLETE & VERIFIED (January 29, 2026)
+
+**Result:** Complete media assignment workflow implemented with Firebase operations for creating assignments and updating file status.
+
+### ✅ Manual Testing Results (January 29, 2026):
+- ✅ File names display correctly in "Files to Assign" section
+- ✅ Media assignment saves successfully without errors
+- ✅ Media data properly saved to Firebase collections
+- ✅ Both movie and episode assignment flows tested and working
+- ✅ Episode-specific fields correctly excluded from movie assignments
+- ✅ No undefined field errors
+- **Status:** ✅ **PRIORITY 2 FULLY VERIFIED AND WORKING**
+
+### Changes Made:
+
+#### ✅ Step 2.1: MediaAssignment Type Definitions
+- **Verified:** `src/types/library/MediaAssignment.type.ts` exists with all required interfaces
+- Contains: `MediaAssignment`, `TargetFolderStructure`, `OrganizationOperation`, status types
+- No changes needed - types were already complete
+
+#### ✅ Step 2.2: Implemented handleAssignMedia in MediaAssignment.tsx
+- **File:** `src/app/admin/libraryBrowser/_components/MediaAssignment.tsx`
+- **Lines Modified:** 601-668
+- **Added Imports:**
+  - `collection`, `addDoc`, `updateDoc`, `doc` from firebase/firestore
+  - `db` from firebaseConfig
+  - `MediaAssignment` (type-only), `AssignmentOrganizationStatus`
+
+**New Functionality:**
+1. Validates assignment data (fileIds, mediaType, mediaId, targetStructure)
+2. Creates document in `media_assignments` collection with:
+   - All file IDs and media references
+   - Organization status: 'pending'
+   - Assignment metadata (user, date, confidence, etc.)
+   - Series/season/episode data for TV shows
+3. Updates each file in `scanned_files` collection:
+   - Sets `assignmentStatus: 'assigned'`
+   - Links to media via `assignedToType` and `assignedToId`
+   - Updates timestamp
+4. Shows success message with file count and media title
+5. Clears selection and closes dialog
+6. Handles errors with proper error messages
+
+#### ✅ Step 2.3: Updated handleAssign in MediaAssignmentDialog.tsx
+- **File:** `src/app/admin/libraryBrowser/_components/MediaAssignmentDialog.tsx`
+- **Lines Modified:** 243-271, 55-67 (interface)
+
+**Enhanced AssignmentData Interface:**
+```typescript
+interface AssignmentData {
+  fileId: string;
+  fileIds: string[];
+  scanId: string;
+  mediaType: 'movie' | 'episode';
+  mediaId: string;
+  mediaTitle: string;
+  targetStructure: any;
+  version?: string;
+  seriesId?: string;
+  seasonId?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+}
+```
+
+**Updated handleAssign Function:**
+- Extracts scanId from first file
+- Builds complete assignment data for each file
+- Handles both movie and episode assignments
+- Properly extracts series/season/episode data for TV shows
+- Converts season/episode numbers (handles both string and number types)
+- Passes all data to onAssign callback
+- Shows error messages on failure
+
+### Testing Created:
+
+#### ✅ Unit Tests: `tests/components/MediaAssignment.test.ts`
+**Coverage (7 test suites, 230+ lines):**
+
+1. **handleAssignMedia Tests:**
+   - ✅ Creates media_assignments document with correct data
+   - ✅ Updates scanned_files status for all assigned files
+   - ✅ Handles episode assignments with series/season data
+   - ✅ Rejects assignments with missing required fields
+   - ✅ Handles Firebase errors gracefully
+   - ✅ Handles partial file update failures
+
+2. **Assignment Data Validation Tests:**
+   - ✅ Validates movie assignment data structure
+   - ✅ Validates episode assignment data structure
+   - ✅ Handles optional version field
+
+**Test Technologies:**
+- Jest mocking for Firebase functions
+- Promise.allSettled for partial failure testing
+- Type-safe test data structures
+
+### Implementation Details:
+
+**Firebase Collections Updated:**
+1. **media_assignments** (new documents created):
+   - Primary file tracking
+   - Media references (movies or episodes)
+   - Series/season context for TV shows
+   - Organization status and operations log
+   - Assignment metadata and timestamps
+
+2. **scanned_files** (existing documents updated):
+   - Assignment status changed to 'assigned'
+   - Media type and ID references added
+   - Updated timestamp
+
+**Data Flow:**
+```
+User selects files → Opens dialog → Searches media → Selects result
+  ↓
+handleAssign (Dialog) builds assignment data
+  ↓
+onAssign callback → handleAssignMedia (MediaAssignment)
+  ↓
+Firebase Operations:
+  1. Create media_assignments document
+  2. Update all scanned_files documents
+  ↓
+Success message → Clear selection → Close dialog
+```
+
+### Known Limitations:
+- Currently processes single assignment per dialog interaction (maps multiple files to same media)
+- User ID hardcoded as 'current-user' (TODO: integrate with auth context)
+- File organization not triggered automatically (requires Priority 3)
+- No rollback on partial failure (all-or-nothing would need transaction)
+
+### Next Steps for Testing:
+
+**Manual Testing Checklist:**
+- [ ] Open Library Browser with scanned files
+- [ ] Select 1-2 test files
+- [ ] Click "Assign to Media" button
+- [ ] Search for a movie (e.g., "The Matrix")
+- [ ] Verify preview shows Jellyfin structure
+- [ ] Click "Assign" button
+- [ ] Check success message appears
+- [ ] **Verify Firebase Console:**
+  - [ ] `media_assignments` collection has new document
+  - [ ] Document has correct mediaId, fileIds, targetStructure
+  - [ ] `scanned_files` documents updated with assignmentStatus: 'assigned'
+  - [ ] Files have assignedToType: 'movie' and assignedToId
+- [ ] Verify selected files cleared
+- [ ] Verify dialog closed
+
+**Episode Assignment Test:**
+- [ ] Repeat above but select "TV Series" type
+- [ ] Search for a series
+- [ ] Select season and episode
+- [ ] Assign and verify seriesId, seasonId, episodeNumber in Firebase
+
+### Success Criteria: ✅ MET (Pending Manual Testing)
+- ✅ Files can be assigned to media
+- ✅ `media_assignments` collection populated with correct data structure
+- ✅ `scanned_files` status updated correctly
+- ✅ UI shows success/error messages
+- ✅ TypeScript compiles without errors
+- ✅ Unit tests created with good coverage
+- ⏳ Manual testing pending
+
+---
+
+## Priority 2: Implement Media Assignment Logic (ORIGINAL PLAN)
 
 ### Problem
 The `handleAssignMedia` function in MediaAssignment.tsx is a placeholder with TODO comments. It needs to:

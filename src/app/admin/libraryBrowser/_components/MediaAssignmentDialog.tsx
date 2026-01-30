@@ -26,12 +26,16 @@ import {
   CircularProgress,
   Paper,
   Divider,
+  InputAdornment,
+  IconButton,
 } from '@mui/material';
 import {
   Movie as MovieIcon,
   Tv as TvIcon,
   Folder,
   Check,
+  Search as SearchIcon,
+  CloudDownload,
 } from '@mui/icons-material';
 import { MediaFile } from '@/types/library';
 import { Movie } from '@/types/collections/Movie.type';
@@ -39,6 +43,7 @@ import { Series } from '@/types/collections/Series.type';
 import { Episode } from '@/types/collections/Episode.type';
 import { Season } from '@/types/collections/Season.type';
 import MediaOrganizationService from '@/service/library/MediaOrganizationService';
+import MediaAssignmentSearchService, { SearchResult } from '@/service/library/MediaAssignmentSearchService';
 
 interface MediaAssignmentDialogProps {
   open: boolean;
@@ -49,16 +54,17 @@ interface MediaAssignmentDialogProps {
 
 interface AssignmentData {
   fileId: string;
+  fileIds: string[];
+  scanId: string;
   mediaType: 'movie' | 'episode';
   mediaId: string;
+  mediaTitle: string;
+  targetStructure: any;
   version?: string;
-  targetStructure: {
-    libraryRoot: string;
-    mediaFolder: string;
-    fullPath: string;
-    jellyfinFolderName: string;
-    jellyfinFileName: string;
-  };
+  seriesId?: string;
+  seasonId?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
 }
 
 export default function MediaAssignmentDialog({
@@ -69,35 +75,110 @@ export default function MediaAssignmentDialog({
 }: MediaAssignmentDialogProps) {
   const [mediaType, setMediaType] = useState<'movie' | 'episode'>('movie');
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<(Movie | Series)[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null);
   const [selectedMedia, setSelectedMedia] = useState<Movie | Series | null>(null);
   const [selectedEpisode, setSelectedEpisode] = useState<Episode | null>(null);
   const [selectedSeason, setSelectedSeason] = useState<Season | null>(null);
   const [version, setVersion] = useState('1080p');
   const [loading, setLoading] = useState(false);
+  const [searching, setSearching] = useState(false);
   const [previewStructure, setPreviewStructure] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const orgService = new MediaOrganizationService();
 
-  // Search for movies or series
-  const handleSearch = async (query: string) => {
-    if (!query || query.length < 2) {
+  // Autocomplete search (Firebase only) - triggered as user types
+  const handleAutocompleteSearch = async (value: string) => {
+    if (!value || value.length < 2) {
       setSearchResults([]);
       return;
     }
 
-    setLoading(true);
+    setSearching(true);
     try {
-      // TODO: Replace with actual Firebase query
-      // This is a placeholder - you'll need to implement the actual search
-      const response = await fetch(`/api/${mediaType === 'movie' ? 'movies' : 'series'}/search?q=${query}`);
-      const results = await response.json();
+      const results = await MediaAssignmentSearchService.searchFirebase(
+        value,
+        mediaType === 'movie' ? 'movie' : 'series'
+      );
       setSearchResults(results);
     } catch (error) {
-      console.error('Search failed:', error);
-      setSearchResults([]);
+      console.error('Autocomplete search failed:', error);
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  // Button search (Firebase + OMDB) - triggered when user clicks search button
+  const handleOMDBSearch = async () => {
+    if (!searchQuery || searchQuery.length < 2) {
+      setError('Please enter at least 2 characters');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    try {
+      const results = await MediaAssignmentSearchService.combinedSearch(
+        searchQuery,
+        mediaType === 'movie' ? 'movie' : 'series'
+      );
+      setSearchResults(results);
+      
+      if (results.length === 0) {
+        setError('No results found. Try a different search term.');
+      }
+    } catch (error: any) {
+      console.error('OMDB search failed:', error);
+      setError(error.message || 'Search failed. Please try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Handle selection from autocomplete
+  const handleResultSelect = async (result: SearchResult | null) => {
+    setSelectedResult(result);
+    
+    if (!result) {
+      setSelectedMedia(null);
+      return;
+    }
+
+    // If it's from Firebase, use the data directly
+    if (result.source === 'firebase') {
+      setSelectedMedia(result.data as Movie | Series);
+    } 
+    // If it's from OMDB, we need to fetch full data and potentially save it
+    else if (result.source === 'omdb') {
+      setLoading(true);
+      try {
+        const fullData = await MediaAssignmentSearchService.getOMDBFullData(result.imdbId);
+        
+        // Save to Firebase
+        let firebaseId: string;
+        if (result.type === 'movie') {
+          firebaseId = await MediaAssignmentSearchService.saveMovieToFirebase(fullData);
+        } else {
+          firebaseId = await MediaAssignmentSearchService.saveSeriesToFirebase(fullData);
+        }
+        
+        // Fetch the newly created document
+        const savedResults = await MediaAssignmentSearchService.searchFirebase(
+          result.title,
+          result.type
+        );
+        const savedMedia = savedResults.find(r => r.id === firebaseId);
+        
+        if (savedMedia) {
+          setSelectedMedia(savedMedia.data as Movie | Series);
+        }
+      } catch (error: any) {
+        console.error('Error processing OMDB result:', error);
+        setError('Failed to save media data. Please try again.');
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -126,18 +207,26 @@ export default function MediaAssignmentDialog({
 
   // Generate preview when media is selected
   useEffect(() => {
-    if (!selectedMedia || selectedFiles.length === 0) {
+    if (!selectedMedia || typeof selectedMedia !== 'object' || selectedFiles.length === 0) {
       setPreviewStructure(null);
       return;
     }
 
-    const firstFile = selectedFiles[0];
+    const firstFile = selectedFiles[0] as any;
+    // Convert the file format for structure generation
+    const mediaFile: any = {
+      fileExtension: firstFile.extension?.startsWith('.') ? firstFile.extension : `.${firstFile.extension || ''}`,
+      folderPath: firstFile.path?.substring(0, firstFile.path.lastIndexOf('\\\\')) || firstFile.folderPath || '',
+      filePath: firstFile.path || firstFile.filePath || '',
+      fileName: firstFile.name || firstFile.fileName || ''
+    };
+    
     let structure;
 
     if (mediaType === 'movie' && 'externalIds' in selectedMedia) {
       structure = orgService.generateMovieStructure(
         selectedMedia as Movie,
-        firstFile,
+        mediaFile,
         version
       );
     } else if (mediaType === 'episode' && selectedEpisode && selectedSeason) {
@@ -145,7 +234,7 @@ export default function MediaAssignmentDialog({
         selectedMedia as Series,
         selectedSeason,
         selectedEpisode,
-        firstFile
+        mediaFile
       );
     }
 
@@ -158,37 +247,49 @@ export default function MediaAssignmentDialog({
 
     setLoading(true);
     try {
+      const firstFile = selectedFiles[0] as any;
+      // Get the current scanId (should be same for all files)
+      const scanId = firstFile.scanId;
+
       const assignments: AssignmentData[] = selectedFiles.map(file => ({
         fileId: file.id,
-        mediaType,
-        mediaId: mediaType === 'movie' ? selectedMedia.id : selectedEpisode!.id,
+        fileIds: [file.id],
+        scanId: scanId || '',
+        mediaType: mediaType,
+        mediaId: mediaType === 'episode' && selectedEpisode 
+          ? selectedEpisode.id 
+          : (selectedMedia.id || selectedMedia.externalIds?.imdbId || ''),
+        mediaTitle: mediaType === 'episode' && selectedEpisode
+          ? selectedEpisode.title 
+          : selectedMedia.title,
+        targetStructure: previewStructure!,
         version: mediaType === 'movie' ? version : undefined,
-        targetStructure: previewStructure,
+        seriesId: mediaType === 'episode' ? (selectedMedia.id || selectedMedia.externalIds?.imdbId) : undefined,
+        seasonId: selectedSeason?.id,
+        seasonNumber: selectedSeason?.number ? (typeof selectedSeason.number === 'string' ? parseInt(selectedSeason.number.replace(/\D/g, '')) || 0 : selectedSeason.number) : undefined,
+        episodeNumber: selectedEpisode?.episodeNumber ? (typeof selectedEpisode.episodeNumber === 'string' ? parseInt(selectedEpisode.episodeNumber) || 0 : selectedEpisode.episodeNumber) : undefined,
       }));
 
       await onAssign(assignments);
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Assignment failed:', error);
+      setError(error.message || 'Failed to assign media');
     } finally {
       setLoading(false);
     }
   };
 
-  const getMediaTitle = (media: Movie | Series): string => {
-    if ('externalIds' in media && media.externalIds) {
-      const movie = media as Movie;
-      // Extract year from releaseDate format "DayAsNumber-Month-Year"
-      const year = movie.releaseDate ? movie.releaseDate.split('-')[2] : 
-                   movie.theatricalRelease?.date ? new Date(movie.theatricalRelease.date).getFullYear() : 'Unknown';
-      return `${movie.title} (${year})`;
-    } else {
-      const series = media as Series;
-      // Extract first year from runningYears or seriesSummary
-      const year = series.runningYears?.[0] || 
-                   (series.seriesSummary?.firstAired ? new Date(series.seriesSummary.firstAired).getFullYear() : 'Unknown');
-      return `${series.title} (${year})`;
+  const getMediaTitle = (result: SearchResult): string => {
+    const source = result.source === 'firebase' ? '✓' : '⬇';
+    return `${source} ${result.title} (${result.year})`;
+  };
+
+  const getResultOptionLabel = (option: SearchResult | string): string => {
+    if (typeof option === 'string') {
+      return option;
     }
+    return getMediaTitle(option);
   };
 
   return (
@@ -202,6 +303,13 @@ export default function MediaAssignmentDialog({
 
       <DialogContent>
         <Stack spacing={3} sx={{ mt: 1 }}>
+          {/* Error Alert */}
+          {error && (
+            <Alert severity="error" onClose={() => setError(null)}>
+              {error}
+            </Alert>
+          )}
+
           {/* Media Type Selection */}
           <FormControl>
             <FormLabel>Media Type</FormLabel>
@@ -211,9 +319,11 @@ export default function MediaAssignmentDialog({
               onChange={(e) => {
                 setMediaType(e.target.value as 'movie' | 'episode');
                 setSelectedMedia(null);
+                setSelectedResult(null);
                 setSelectedEpisode(null);
                 setSelectedSeason(null);
                 setSearchResults([]);
+                setSearchQuery('');
               }}
             >
               <FormControlLabel
@@ -239,41 +349,87 @@ export default function MediaAssignmentDialog({
             </RadioGroup>
           </FormControl>
 
-          {/* Search */}
-          <Autocomplete
-            freeSolo
-            options={searchResults}
-            getOptionLabel={(option) => {
-              if (typeof option === 'string') {
-                return option;
-              }
-              return getMediaTitle(option);
-            }}
-            loading={loading}
-            onInputChange={(_, value) => {
-              setSearchQuery(value);
-              handleSearch(value);
-            }}
-            onChange={(_, value) => {
-              setSelectedMedia(value as Movie | Series);
-            }}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                label={`Search ${mediaType === 'movie' ? 'Movies' : 'TV Series'}`}
-                placeholder="Start typing to search..."
-                InputProps={{
-                  ...params.InputProps,
-                  endAdornment: (
-                    <>
-                      {loading && <CircularProgress size={20} />}
-                      {params.InputProps.endAdornment}
-                    </>
-                  ),
-                }}
-              />
-            )}
-          />
+          {/* Search with Autocomplete and Button */}
+          <Box>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              ✓ = In your collection | ⬇ = From OMDB (will be added)
+            </Typography>
+            <Autocomplete
+              freeSolo
+              options={searchResults}
+              value={selectedResult}
+              getOptionLabel={getResultOptionLabel}
+              loading={searching}
+              onInputChange={(_, value) => {
+                setSearchQuery(value);
+                handleAutocompleteSearch(value);
+              }}
+              onChange={(_, value) => {
+                if (value && typeof value === 'object') {
+                  handleResultSelect(value);
+                } else {
+                  handleResultSelect(null);
+                }
+              }}
+              renderOption={(props, option) => {
+                const { key, ...otherProps } = props;
+                return (
+                  <Box component="li" key={key} {...otherProps}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                      {option.source === 'firebase' ? (
+                        <Check color="success" fontSize="small" />
+                    ) : (
+                      <CloudDownload color="info" fontSize="small" />
+                    )}
+                    <Box sx={{ flexGrow: 1 }}>
+                      <Typography variant="body2">{option.title}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {option.year} • {option.source === 'firebase' ? 'Your Collection' : 'OMDB'}
+                      </Typography>
+                    </Box>
+                    {option.poster && option.poster !== 'N/A' && (
+                      <Box
+                        component="img"
+                        src={option.poster}
+                        sx={{ width: 40, height: 60, objectFit: 'cover', borderRadius: 0.5 }}
+                        onError={(e: any) => { e.target.style.display = 'none'; }}
+                      />
+                    )}
+                  </Box>
+                </Box>
+                );
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label={`Search ${mediaType === 'movie' ? 'Movies' : 'TV Series'}`}
+                  placeholder="Start typing or click search..."
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {searching && <CircularProgress size={20} />}
+                        {params.InputProps.endAdornment}
+                        <InputAdornment position="end">
+                          <IconButton
+                            onClick={handleOMDBSearch}
+                            disabled={loading || !searchQuery}
+                            color="primary"
+                            edge="end"
+                          >
+                            <SearchIcon />
+                          </IconButton>
+                        </InputAdornment>
+                      </>
+                    ),
+                  }}
+                />
+              )}
+            />
+            <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+              Type to search your collection, or click the search icon to search OMDB
+            </Typography>
+          </Box>
 
           {/* Episode Selection (for TV shows) */}
           {mediaType === 'episode' && selectedMedia && (
@@ -322,14 +478,14 @@ export default function MediaAssignmentDialog({
                 <Box>
                   <Typography variant="caption" color="text.secondary">Media Folder</Typography>
                   <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                    📁 {previewStructure.jellyfinFolderName}
+                    📁 {previewStructure.folderName}
                   </Typography>
                 </Box>
                 
                 <Box sx={{ pl: 2 }}>
                   <Typography variant="caption" color="text.secondary">File Name</Typography>
                   <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                    📄 {previewStructure.jellyfinFileName}
+                    📄 {previewStructure.fileName}
                   </Typography>
                 </Box>
                 

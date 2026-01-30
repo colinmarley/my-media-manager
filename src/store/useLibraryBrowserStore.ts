@@ -6,6 +6,7 @@ interface LibraryBrowserState {
   scannedFiles: ScannedFile[];
   scannedDirectories: ScannedDirectory[];
   scanResults: ScanResult[];
+  rootLibraryPath: string;
   currentPath: string;
   folderChildren: { files: ScannedFile[]; directories: ScannedDirectory[] } | null;
   rootFolders: ScannedDirectory[];
@@ -30,6 +31,7 @@ interface LibraryBrowserState {
   totalItems: number;
   
   // Actions
+  setRootLibraryPath: (path: string) => void;
   setCurrentPath: (path: string) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -77,6 +79,7 @@ const useLibraryBrowserStore = create<LibraryBrowserState>((set, get) => ({
   scannedFiles: [],
   scannedDirectories: [],
   scanResults: [],
+  rootLibraryPath: '',
   currentPath: '',
   folderChildren: null,
   rootFolders: [],
@@ -95,6 +98,7 @@ const useLibraryBrowserStore = create<LibraryBrowserState>((set, get) => ({
   totalItems: 0,
 
   // Basic setters
+  setRootLibraryPath: (path: string) => set({ rootLibraryPath: path }),
   setCurrentPath: (path: string) => set({ currentPath: path }),
   setLoading: (loading: boolean) => set({ loading }),
   setError: (error: string | null) => set({ error }),
@@ -113,11 +117,13 @@ const useLibraryBrowserStore = create<LibraryBrowserState>((set, get) => ({
     
     try {
       const result = await libraryBrowserService.getScannedFiles({
-        libraryPath: state.currentPath || undefined,
+        libraryPath: state.rootLibraryPath || undefined,
         scanId: state.scanIdFilter || undefined,
-        limit: state.itemsPerPage,
-        offset: (state.currentPage - 1) * state.itemsPerPage
+        limit: 10000,
+        offset: 0
       });
+      
+      console.log('Loaded scanned files:', result.files.length, 'files');
       
       set({ 
         scannedFiles: result.files,
@@ -138,11 +144,13 @@ const useLibraryBrowserStore = create<LibraryBrowserState>((set, get) => ({
     
     try {
       const result = await libraryBrowserService.getScannedDirectories({
-        libraryPath: state.currentPath || undefined,
+        libraryPath: state.rootLibraryPath || undefined,
         scanId: state.scanIdFilter || undefined,
-        limit: state.itemsPerPage,
-        offset: (state.currentPage - 1) * state.itemsPerPage
+        limit: 10000,
+        offset: 0
       });
+      
+      console.log('Loaded scanned directories:', result.directories.length, 'directories');
       
       set({ 
         scannedDirectories: result.directories,

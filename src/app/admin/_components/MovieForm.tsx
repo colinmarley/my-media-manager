@@ -224,6 +224,14 @@ const MovieForm: React.FC = () => {
             cast: cast?.value || [],
             writers: writers?.value || [],
             omdbData: omdbData?.value || {} as OmdbResponseFull,
+            externalIds: {
+                imdbId: imdbId?.value || omdbData?.value?.imdbID
+            },
+            contentRatings: omdbData?.value?.Rated ? [{
+                country: 'US',
+                rating: omdbData.value.Rated,
+                ratingSystem: 'MPAA'
+            }] : [],
         };
 
         console.log('Movie Submission:', movieSubimission);

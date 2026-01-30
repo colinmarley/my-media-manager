@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import TestLibraryScanner from './_components/TestLibraryScanner';
+import FolderBrowser from './_components/FolderBrowser';
 import {
   Box,
   Typography,
@@ -93,6 +94,7 @@ const LibraryManagementPage: React.FC = () => {
   const [settings, setSettings] = useState<LibrarySettings>(DEFAULT_LIBRARY_SETTINGS);
   const [showAddPathDialog, setShowAddPathDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [newPathForm, setNewPathForm] = useState({
     name: '',
     rootPath: '',
@@ -694,6 +696,17 @@ const LibraryManagementPage: React.FC = () => {
             placeholder="/path/to/media/library"
             value={newPathForm.rootPath}
             onChange={(e) => setNewPathForm(prev => ({ ...prev, rootPath: e.target.value }))}
+            InputProps={{
+              endAdornment: (
+                <Button
+                  size="small"
+                  onClick={() => setShowFolderBrowser(true)}
+                  startIcon={<FolderIcon />}
+                >
+                  Browse
+                </Button>
+              ),
+            }}
             sx={{ mb: 2 }}
           />
           <FormControl fullWidth variant="outlined">
@@ -766,6 +779,17 @@ const LibraryManagementPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Folder Browser Dialog */}
+      <FolderBrowser
+        open={showFolderBrowser}
+        onClose={() => setShowFolderBrowser(false)}
+        onSelect={(path) => {
+          setNewPathForm(prev => ({ ...prev, rootPath: path }));
+          setShowFolderBrowser(false);
+        }}
+        initialPath={newPathForm.rootPath}
+      />
 
       {/* Duplicate Report Dialog */}
       <Dialog 

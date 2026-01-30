@@ -32,7 +32,15 @@ import {
   ListItemButton,
   Divider,
   Switch,
-  FormControlLabel
+  FormControlLabel,
+  TableContainer,
+  Table,
+  TableHead,
+  TableBody,
+  TableRow,
+  TableCell,
+  Paper,
+  Checkbox
 } from '@mui/material';
 import {
   Folder,
@@ -49,7 +57,11 @@ import {
   FolderOpen,
   Description,
   SwapHoriz,
-  Assignment
+  Assignment,
+  ChevronRight,
+  InsertDriveFile,
+  ArrowBack,
+  Home
 } from '@mui/icons-material';
 import useLibraryBrowserStore from '../../../../store/useLibraryBrowserStore';
 import { ScannedFile, ScannedDirectory } from '../../../../service/library/LibraryBrowserService';
@@ -57,6 +69,16 @@ import MediaAssignment from './MediaAssignment';
 import LibraryBrowserService from '../../../../service/library/LibraryBrowserService';
 
 type LibraryItem = ScannedFile | ScannedDirectory;
+
+interface TreeNode {
+  path: string;
+  name: string;
+  isFolder: boolean;
+  children?: TreeNode[];
+  file?: ScannedFile;
+  directory?: ScannedDirectory;
+  level: number;
+}
 
 const libraryBrowserService = new LibraryBrowserService();
 
@@ -113,6 +135,7 @@ const LibraryBrowser: React.FC = () => {
   const {
     scannedFiles,
     scannedDirectories,
+    rootLibraryPath,
     currentPath,
     loading,
     error,
@@ -128,6 +151,7 @@ const LibraryBrowser: React.FC = () => {
     rootFolders,
     showFolderChildren,
     selectedFolderId,
+    setRootLibraryPath,
     setCurrentPath,
     setSearchQuery,
     setMediaTypeFilter,
@@ -153,6 +177,8 @@ const LibraryBrowser: React.FC = () => {
   
   const [showAssignment, setShowAssignment] = useState(false);
   const [allFilesForAssignment, setAllFilesForAssignment] = useState<ScannedFile[]>([]);
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
+  const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [renameDialog, setRenameDialog] = useState<{ open: boolean; itemId: string; currentName: string }>({
     open: false,
     itemId: '',
@@ -172,6 +198,15 @@ const LibraryBrowser: React.FC = () => {
       loadRootFolders(currentPath);
     }
   }, [currentPath, loadScannedFiles, loadScannedDirectories, loadRootFolders]);
+
+  useEffect(() => {
+    // Set rootLibraryPath from first scanned item if not already set
+    if (!rootLibraryPath && scannedFiles.length > 0) {
+      setRootLibraryPath(scannedFiles[0].libraryPath || '');
+    } else if (!rootLibraryPath && scannedDirectories.length > 0) {
+      setRootLibraryPath(scannedDirectories[0].libraryPath || '');
+    }
+  }, [scannedFiles, scannedDirectories, rootLibraryPath, setRootLibraryPath]);
 
   useEffect(() => {
     // Refresh when filters change
@@ -227,34 +262,139 @@ const LibraryBrowser: React.FC = () => {
   };
 
   const handleOpenAssignment = async () => {
-    // Load ALL files (not paginated) before opening MediaAssignment
+    // Load files from the current folder (and its subfolders)
     try {
       const result = await libraryBrowserService.getScannedFiles({
-        libraryPath: currentPath || undefined,
+        libraryPath: rootLibraryPath || undefined,
         scanId: scanIdFilter || undefined,
         limit: 10000, // Get all files
         offset: 0
       });
       
+      // Filter to only include files from current path (if any) and its subdirectories
+      let filesToAssign = result.files;
+      if (currentPath) {
+        const normalizedCurrent = currentPath.replace(/\\/g, '/');
+        filesToAssign = result.files.filter(file => {
+          const normalizedFilePath = file.path.replace(/\\/g, '/');
+          const fileParent = getParentDirectory(normalizedFilePath);
+          // Include files that are in currentPath or any of its subdirectories
+          return normalizedFilePath.startsWith(normalizedCurrent + '/') || fileParent === normalizedCurrent;
+        });
+      }
+      
+      console.log(`Opening MediaAssignment with ${filesToAssign.length} files from ${currentPath || 'root'}`);
+      
       // Store all files for MediaAssignment
-      setAllFilesForAssignment(result.files);
+      setAllFilesForAssignment(filesToAssign);
       setShowAssignment(true);
     } catch (error: any) {
       console.error('Failed to load all files:', error);
     }
   };
 
+  // Helper to get parent directory from a path
+  const getParentDirectory = (path: string): string => {
+    // Normalize path separators
+    const normalizedPath = path.replace(/\\/g, '/');
+    const parts = normalizedPath.split('/').filter(Boolean);
+    if (parts.length <= 1) return '';
+    
+    // Take all parts except the last one
+    const parentParts = parts.slice(0, -1);
+    
+    // For Windows paths (e.g., Y:/Media/...), don't prepend extra slash
+    // For Unix paths (e.g., /home/user/...), prepend slash
+    const isWindowsPath = parentParts[0] && parentParts[0].match(/^[A-Za-z]:$/);
+    return isWindowsPath ? parentParts.join('/') : '/' + parentParts.join('/');
+  };
+
+  // Helper to check if an item is a direct child of currentPath
+  const isDirectChild = (itemPath: string, itemLibraryPath?: string): boolean => {
+    // Normalize paths for comparison
+    const normalizedItem = itemPath.replace(/\\/g, '/');
+    const normalizedCurrent = currentPath ? currentPath.replace(/\\/g, '/') : '';
+    const normalizedRoot = (itemLibraryPath || rootLibraryPath).replace(/\\/g, '/');
+    
+    if (!normalizedCurrent) {
+      // At root - show items whose parent equals the library root
+      const parent = getParentDirectory(normalizedItem);
+      return parent === normalizedRoot;
+    }
+    
+    // Check if item's parent matches current path
+    const parent = getParentDirectory(normalizedItem);
+    return parent === normalizedCurrent;
+  };
+
   const filteredFiles = scannedFiles.filter(file => {
     const matchesSearch = !searchQuery || file.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesType = !mediaTypeFilter || file.media_type === mediaTypeFilter;
-    return matchesSearch && matchesType;
+    const isChild = isDirectChild(file.path, file.libraryPath);
+    return matchesSearch && matchesType && isChild;
   }).sort((a, b) => a.name.localeCompare(b.name));
 
   const filteredDirectories = scannedDirectories.filter(dir => {
     const matchesSearch = !searchQuery || dir.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesType = !mediaTypeFilter || dir.media_type === mediaTypeFilter;
-    return matchesSearch && matchesType;
+    const isChild = isDirectChild(dir.path, dir.libraryPath);
+    return matchesSearch && matchesType && isChild;
   }).sort((a, b) => a.name.localeCompare(b.name));
+
+  console.log('LibraryBrowser render:', {
+    scannedFiles: scannedFiles.length,
+    scannedDirectories: scannedDirectories.length,
+    filteredFiles: filteredFiles.length,
+    filteredDirectories: filteredDirectories.length,
+    rootLibraryPath,
+    currentPath
+  });
+
+  // Build tree structure from filtered files and directories
+  const buildTreeStructure = (): TreeNode[] => {
+    const root: TreeNode[] = [];
+    
+    // Add directories first
+    filteredDirectories.forEach(dir => {
+      root.push({
+        path: dir.path,
+        name: dir.name,
+        isFolder: true,
+        directory: dir,
+        level: 0,
+        children: []
+      });
+    });
+    
+    // Add files
+    filteredFiles.forEach(file => {
+      root.push({
+        path: file.path,
+        name: file.name,
+        isFolder: false,
+        file: file,
+        level: 0
+      });
+    });
+    
+    return root;
+  };
+
+  // Toggle folder expansion
+  const toggleFolder = (path: string) => {
+    const newExpanded = new Set(expandedFolders);
+    if (newExpanded.has(path)) {
+      newExpanded.delete(path);
+    } else {
+      newExpanded.add(path);
+    }
+    setExpandedFolders(newExpanded);
+  };
+
+  // Update tree data when files or directories change
+  useEffect(() => {
+    setTreeData(buildTreeStructure());
+  }, [scannedFiles, scannedDirectories, searchQuery, mediaTypeFilter]);
 
   // Sort items: folders first (by name), then files (by name)
   const allItems: LibraryItem[] = [...filteredDirectories, ...filteredFiles];
@@ -270,11 +410,132 @@ const LibraryBrowser: React.FC = () => {
       <MediaAssignment 
         files={filesToManage} 
         scanId={scanIdFilter} 
-        libraryPath={currentPath}
+        libraryPath={currentPath || rootLibraryPath}
         onBack={() => setShowAssignment(false)} 
       />
     );
   }
+
+  // Render tree node (folder or file)
+  const renderTreeNode = (node: TreeNode, depth: number = 0): React.ReactNode => {
+    const isExpanded = expandedFolders.has(node.path);
+    const paddingLeft = depth * 32;
+    const isSelected = selectedItems.includes(node.isFolder ? node.directory!.id : node.file!.id);
+
+    if (node.isFolder) {
+      const dir = node.directory!;
+      return (
+        <React.Fragment key={node.path}>
+          <TableRow 
+            sx={{ 
+              bgcolor: isSelected ? 'rgba(61, 90, 254, 0.15)' : 'rgba(61, 90, 254, 0.08)',
+              '&:hover': { bgcolor: 'rgba(61, 90, 254, 0.2)' },
+              cursor: 'pointer'
+            }}
+          >
+            <TableCell 
+              colSpan={5} 
+              sx={{ pl: `${paddingLeft + 8}px` }}
+              onClick={() => navigateToPath(dir.path)}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <ChevronRight color="primary" />
+                <Folder color="primary" />
+                <Typography variant="body2" fontWeight={600} color="text.primary">
+                  {node.name}
+                </Typography>
+                <Chip label={dir.media_type || 'unknown'} size="small" variant="outlined" sx={{ ml: 1 }} />
+              </Box>
+            </TableCell>
+            <TableCell>
+              <Box sx={{ display: 'flex', gap: 0.5 }}>
+                <Tooltip title="Select">
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleItemSelection(dir.id);
+                    }}
+                  >
+                    <Checkbox checked={isSelected} size="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Rename">
+                  <IconButton
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRename(dir.id, dir.name);
+                    }}
+                  >
+                    <Edit fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </Box>
+            </TableCell>
+          </TableRow>
+        </React.Fragment>
+      );
+    } else if (node.file) {
+      const file = node.file;
+      return (
+        <TableRow 
+          key={file.id}
+          sx={{
+            bgcolor: isSelected ? 'rgba(255, 152, 0, 0.15)' : 'transparent',
+            '&:hover': { bgcolor: isSelected ? 'rgba(255, 152, 0, 0.25)' : 'action.hover' },
+            cursor: 'pointer'
+          }}
+          onClick={() => toggleItemSelection(file.id)}
+        >
+          <TableCell sx={{ pl: `${paddingLeft + 8}px` }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <InsertDriveFile fontSize="small" color="action" />
+              <Typography variant="body2">{file.name}</Typography>
+            </Box>
+          </TableCell>
+          <TableCell>
+            <Chip label={file.extension} size="small" />
+          </TableCell>
+          <TableCell>
+            <Chip label={file.media_type || 'unknown'} size="small" variant="outlined" />
+          </TableCell>
+          <TableCell>
+            <Typography variant="caption" color="text.secondary">
+              {file.metadata?.size ? ((file.metadata.size / 1024 / 1024).toFixed(2) + ' MB') : 'N/A'}
+            </Typography>
+          </TableCell>
+          <TableCell>
+            <Box sx={{ display: 'flex', gap: 0.5 }}>
+              <Tooltip title="Select">
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleItemSelection(file.id);
+                  }}
+                >
+                  <Checkbox checked={isSelected} size="small" />
+                </IconButton>
+              </Tooltip>
+              <Tooltip title="Rename">
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRename(file.id, file.name);
+                  }}
+                >
+                  <Edit fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            </Box>
+          </TableCell>
+        </TableRow>
+      );
+    }
+    return null;
+  };
 
   return (
     <Box sx={{ p: 3 }}>
@@ -284,26 +545,58 @@ const LibraryBrowser: React.FC = () => {
           Library Browser
         </Typography>
         
-        {/* Breadcrumbs */}
-        <Box sx={{ mb: 2 }}>
-          <Button onClick={() => navigateToPath('')} size="small">
-            Root
-          </Button>
+        {/* Navigation */}
+        <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          {/* Back Button */}
           {currentPath && (
-            <>
-              {currentPath.split('/').filter(Boolean).map((segment, index, arr) => (
-                <React.Fragment key={index}>
-                  <Typography component="span" sx={{ mx: 1 }}>/</Typography>
-                  <Button
-                    onClick={() => navigateToPath(arr.slice(0, index + 1).join('/'))}
-                    size="small"
-                  >
-                    {segment}
-                  </Button>
-                </React.Fragment>
-              ))}
-            </>
+            <Button
+              onClick={goBack}
+              startIcon={<ArrowBack />}
+              variant="outlined"
+              size="small"
+            >
+              Back
+            </Button>
           )}
+          
+          {/* Breadcrumbs */}
+          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+            <Button 
+              onClick={() => navigateToPath('')} 
+              size="small"
+              startIcon={<Home />}
+              sx={{ minWidth: 'auto' }}
+            >
+              {rootLibraryPath ? rootLibraryPath.split(/[\\/]/).pop() || 'Library' : 'Root'}
+            </Button>
+            
+            {currentPath && (() => {
+              // Get the relative path from root to current
+              const normalizedCurrent = currentPath.replace(/\\/g, '/');
+              const normalizedRoot = rootLibraryPath.replace(/\\/g, '/');
+              const relativePath = normalizedCurrent.startsWith(normalizedRoot) 
+                ? normalizedCurrent.substring(normalizedRoot.length)
+                : normalizedCurrent;
+              
+              const pathSegments = relativePath.split('/').filter(Boolean);
+              
+              return pathSegments.map((segment, index) => {
+                const segmentPath = normalizedRoot + '/' + pathSegments.slice(0, index + 1).join('/');
+                return (
+                  <React.Fragment key={index}>
+                    <Typography component="span" sx={{ mx: 0.5, color: 'text.secondary' }}>/</Typography>
+                    <Button
+                      onClick={() => navigateToPath(segmentPath)}
+                      size="small"
+                      sx={{ minWidth: 'auto' }}
+                    >
+                      {segment}
+                    </Button>
+                  </React.Fragment>
+                );
+              });
+            })()}
+          </Box>
         </Box>
 
         {/* Error Display */}
@@ -429,168 +722,23 @@ const LibraryBrowser: React.FC = () => {
         <Typography>Loading...</Typography>
       ) : (
         <>
-          {/* Items Grid/List */}
-          <Grid container spacing={viewMode === 'grid' ? 2 : 1}>
-            {allItems.map((item) => {
-              const isDirectory = isScannedDirectory(item);
-              const isSelected = selectedItems.includes(item.id);
-              console.log('Rendering item:', item);
-              
-              return (
-                <Grid key={item.id} size={{ xs: 12, sm: viewMode === 'grid' ? 6 : 12, md: viewMode === 'grid' ? 4 : 12, lg: viewMode === 'grid' ? 3 : 12 }}>
-                  {/* Directory with expandable content */}
-                  {isDirectory && showFolderChildren ? (
-                    <Accordion 
-                      expanded={selectedFolderId === item.id}
-                      onChange={() => handleFolderExpand(item as ScannedDirectory)}
-                      sx={{
-                        backgroundColor: isSelected ? 'action.selected' : 'background.paper',
-                        border: isSelected ? 2 : 1,
-                        borderColor: isSelected ? 'primary.main' : 'divider',
-                      }}
-                    >
-                      <AccordionSummary expandIcon={<ExpandMore />}>
-                        <Box sx={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                          <Box sx={{ display: 'flex', alignItems: 'center', width: '100%' }}>
-                            <Folder sx={{ mr: 1, color: 'warning.main' }} />
-                            <Typography variant="body1" sx={{ flexGrow: 1, fontWeight: 500 }}>
-                              {item.path}
-                            </Typography>
-                            <Box sx={{ display: 'flex', gap: 0.5, mr: 1 }}>
-                              <IconButton
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleItemSelection(item.id);
-                                }}
-                              >
-                                {isSelected ? <FolderOpen /> : <Folder />}
-                              </IconButton>
-                              <Tooltip title="Rename">
-                                <IconButton
-                                  size="small"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    handleRename(item.id, item.name);
-                                  }}
-                                >
-                                  <Edit fontSize="small" />
-                                </IconButton>
-                              </Tooltip>
-                            </Box>
-                          </Box>
-                          <Typography variant="caption" color="text.secondary" sx={{ ml: 4, textAlign: 'left' }}>
-                            {getParentPath(item.path, item.libraryPath)}
-                          </Typography>
-                        </Box>
-                      </AccordionSummary>
-                      <AccordionDetails>
-                        {selectedFolderId === item.id && folderChildren && (
-                          <Box>
-                            <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                              Folder Contents ({folderChildren.files.length + folderChildren.directories.length} items)
-                            </Typography>
-                            <List dense>
-                              {/* Sort subdirectories by name */}
-                              {folderChildren.directories
-                                .sort((a, b) => a.name.localeCompare(b.name))
-                                .map((subDir) => (
-                                <ListItem key={subDir.id}>
-                                  <ListItemIcon>
-                                    <Folder color="warning" />
-                                  </ListItemIcon>
-                                  <ListItemText 
-                                    primary={subDir.name}
-                                    secondary={showFolderChildren ? subDir.path : undefined}
-                                  />
-                                </ListItem>
-                              ))}
-                              {/* Sort files by name */}
-                              {folderChildren.files
-                                .sort((a, b) => a.name.localeCompare(b.name))
-                                .map((file) => (
-                                <ListItem key={file.id}>
-                                  <ListItemIcon>
-                                    <Description color="info" />
-                                  </ListItemIcon>
-                                  <ListItemText 
-                                    primary={file.name}
-                                    secondary={showFolderChildren ? `${file.path} • ${file.extension} • ${file.media_type}` : `${file.extension} • ${file.media_type}`}
-                                  />
-                                </ListItem>
-                              ))}
-                            </List>
-                          </Box>
-                        )}
-                      </AccordionDetails>
-                    </Accordion>
-                  ) : (
-                    /* Regular card view */
-                    <Card
-                      sx={{
-                        cursor: 'pointer',
-                        backgroundColor: isSelected ? 'action.selected' : 'background.paper',
-                        border: isSelected ? 2 : 1,
-                        borderColor: isSelected ? 'primary.main' : 'divider',
-                        '&:hover': {
-                          backgroundColor: 'action.hover'
-                        }
-                      }}
-                      onClick={() => handleItemClick(item, isDirectory ? 'directory' : 'file')}
-                    >
-                      <CardContent sx={{ p: 2 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                          {isDirectory ? (
-                            <Folder sx={{ mr: 1, color: 'warning.main' }} />
-                          ) : (
-                            <MovieFilter sx={{ mr: 1, color: 'info.main' }} />
-                          )}
-                          
-                          <Typography variant="body1" sx={{ flexGrow: 1, fontWeight: 500 }}>
-                            {item.path}
-                          </Typography>
-                          
-                          <Box sx={{ display: 'flex', gap: 0.5 }}>
-                            <Tooltip title="Rename">
-                              <IconButton
-                                size="small"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleRename(item.id, item.name);
-                                }}
-                              >
-                                <Edit fontSize="small" />
-                              </IconButton>
-                            </Tooltip>
-                          </Box>
-                        </Box>
-                        
-                        {/* Item details */}
-                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 1 }}>
-                          <Chip
-                            label={item.media_type || 'unknown'}
-                            size="small"
-                            variant="outlined"
-                          />
-                          {isScannedFile(item) && (
-                            <Chip
-                              label={item.extension}
-                              size="small"
-                              variant="outlined"
-                            />
-                          )}
-                        </Box>
-                        
-                        <Typography variant="caption" color="text.secondary">
-                          {showFolderChildren && isDirectory ? getParentPath(item.path, item.libraryPath) : (item.media_type || 'unknown')}
-                        </Typography>
-                      </CardContent>
-                    </Card>
-                  )}
-                </Grid>
-              );
-            })}
-          </Grid>
+          {/* Items Tree View */}
+          <TableContainer component={Paper} sx={{ maxHeight: 'calc(100vh - 400px)' }}>
+            <Table stickyHeader>
+              <TableHead>
+                <TableRow>
+                  <TableCell>Name</TableCell>
+                  <TableCell width="120">Extension</TableCell>
+                  <TableCell width="120">Type</TableCell>
+                  <TableCell width="100">Size</TableCell>
+                  <TableCell width="150">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {treeData.map(node => renderTreeNode(node, 0))}
+              </TableBody>
+            </Table>
+          </TableContainer>
 
           {/* Pagination */}
           {totalPages > 1 && (

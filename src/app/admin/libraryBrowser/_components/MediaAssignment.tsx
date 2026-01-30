@@ -45,8 +45,13 @@ import {
   Folder
 } from '@mui/icons-material';
 import { ScannedFile } from '../../../../service/library/LibraryBrowserService';
+import MediaAssignmentDialog from './MediaAssignmentDialog';
 import axios from 'axios';
 import { getPathSeparator } from '@/utils/fileUtiles';
+import { collection, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { db } from '../../../../../firebaseConfig';
+import type { MediaAssignment } from '@/types/library/MediaAssignment.type';
+import { AssignmentOrganizationStatus } from '@/types/library/MediaAssignment.type';
 
 interface PendingChange {
   fileId: string;
@@ -101,6 +106,7 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
   const [newFolderName, setNewFolderName] = useState('');
   
   const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+  const [assignmentDialog, setAssignmentDialog] = useState(false);
 
   const API_BASE_URL = process.env.NODE_ENV === 'production'
     ? 'https://your-api-domain.com/api'
@@ -210,16 +216,22 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
 
   const extractFoldersFromFiles = () => {
     try {
+      console.log('Extracting folders from files:', files.length, 'files');
+      console.log('First file:', files[0]);
+      
       // Extract unique folder paths from files as fallback
       const uniqueFolders = new Set<string>();
       files.forEach(file => {
         const pathSeparator = getPathSeparator(file.path);
         const lastSepIndex = file.path.lastIndexOf(pathSeparator);
         const folderPath = lastSepIndex !== -1 ? file.path.substring(0, lastSepIndex) : '';
+        console.log('File:', file.name, 'Path:', file.path, 'Folder:', folderPath);
         if (folderPath) {
           uniqueFolders.add(folderPath);
         }
       });
+
+      console.log('Unique folders found:', Array.from(uniqueFolders));
 
       const folderOptions: FolderOption[] = Array.from(uniqueFolders).map(path => {
         const pathSeparator = getPathSeparator(path);
@@ -234,12 +246,17 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
       const foldersWithParents = addParentFolders(folderOptions);
       setFolders(foldersWithParents);
       
+      console.log('Total folders (with parents):', foldersWithParents.length);
+      
       if (foldersWithParents.length === 0) {
         setError('No folders found. Please ensure files have been scanned.');
       }
+      
+      setLoading(false); // Set loading to false after extraction
     } catch (err) {
       console.error('Error extracting folders from files:', err);
       setError('Failed to load available folders');
+      setLoading(false); // Set loading to false even on error
     }
   };
 
@@ -447,15 +464,17 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
     const tree: Map<string, TreeNode> = new Map();
     const rootNodes: TreeNode[] = [];
     
-    // First, determine the common root path
+    // First, determine the common root path (should be the folder containing all files)
     let commonRoot = '';
     if (files.length > 0) {
       const firstPath = files[0].path;
       const pathSeparator = getPathSeparator(firstPath);
       const parts = firstPath.split(pathSeparator).filter(Boolean);
       
-      // Find common prefix across all files
-      for (let i = 0; i < parts.length; i++) {
+      // Find common prefix across all files, but exclude the filename
+      // We want the common folder, not including the file itself
+      const maxDepth = parts.length - 1; // Don't include the filename
+      for (let i = 0; i < maxDepth; i++) {
         const testPath = parts.slice(0, i + 1).join(pathSeparator);
         const allMatch = files.every(f => f.path.startsWith(testPath));
         if (allMatch) {
@@ -464,6 +483,8 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
           break;
         }
       }
+      
+      console.log('buildTreeStructure - commonRoot:', commonRoot);
     }
     
     // Process each file
@@ -471,6 +492,10 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
       const pathSeparator = getPathSeparator(file.path);
       const relativePath = commonRoot ? file.path.substring(commonRoot.length).replace(/^[\\\/]/, '') : file.path;
       const parts = relativePath.split(pathSeparator).filter(Boolean);
+      
+      console.log('Processing file:', file.path);
+      console.log('  relativePath:', relativePath);
+      console.log('  parts:', parts);
       
       // Create folder nodes for the path
       let currentPath = commonRoot;
@@ -557,6 +582,105 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
     });
   };
 
+  const handleFileSelect = (fileId: string) => {
+    setSelectedFiles(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(fileId)) {
+        newSet.delete(fileId);
+      } else {
+        newSet.add(fileId);
+      }
+      return newSet;
+    });
+  };
+
+  const handleSelectAll = () => {
+    if (selectedFiles.size === files.length) {
+      setSelectedFiles(new Set());
+    } else {
+      setSelectedFiles(new Set(files.map(f => f.id)));
+    }
+  };
+
+  const handleAssignMedia = async (assignments: any[]) => {
+    try {
+      setLoading(true);
+      
+      if (assignments.length === 0) {
+        setError('No assignments to process');
+        return;
+      }
+
+      const assignment = assignments[0]; // For now, handling single assignment
+      
+      // Validate required fields
+      if (!assignment.fileIds || !assignment.mediaType || !assignment.mediaId || !assignment.targetStructure) {
+        setError('Invalid assignment data');
+        return;
+      }
+      
+      // 1. Create media_assignments document
+      const mediaAssignment: any = {
+        mediaFileIds: assignment.fileIds,
+        primaryFileId: assignment.fileIds[0],
+        mediaType: assignment.mediaType,
+        mediaId: assignment.mediaId,
+        isPreferredVersion: true,
+        targetFolderStructure: assignment.targetStructure,
+        organizationStatus: 'pending' as AssignmentOrganizationStatus,
+        operations: [],
+        assignedBy: 'current-user', // TODO: Get from auth context
+        assignedDate: new Date(),
+        confidence: 100,
+        isManualAssignment: true,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      
+      // Only include episode-specific fields if mediaType is 'episode'
+      if (assignment.mediaType === 'episode') {
+        mediaAssignment.seriesId = assignment.seriesId;
+        mediaAssignment.seasonId = assignment.seasonId;
+        mediaAssignment.seasonNumber = assignment.seasonNumber;
+        mediaAssignment.episodeNumber = assignment.episodeNumber;
+      }
+      
+      // Only include version if it's provided
+      if (assignment.version) {
+        mediaAssignment.version = assignment.version;
+      }
+
+      const assignmentRef = await addDoc(
+        collection(db, 'media_assignments'),
+        mediaAssignment
+      );
+      
+      // 2. Update scanned_files status
+      const updatePromises = assignment.fileIds.map((fileId: string) =>
+        updateDoc(doc(db, 'scanned_files', fileId), {
+          assignmentStatus: 'assigned',
+          assignedToType: assignment.mediaType,
+          assignedToId: assignment.mediaId,
+          updatedAt: new Date()
+        })
+      );
+      
+      await Promise.all(updatePromises);
+      
+      setSuccess(`Successfully assigned ${assignment.fileIds.length} file(s) to ${assignment.mediaTitle}`);
+      setSelectedFiles(new Set());
+      setAssignmentDialog(false);
+      
+      // Files will refresh on next scan or page reload
+      
+    } catch (err: any) {
+      console.error('Error assigning media:', err);
+      setError(`Failed to assign files: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const expandAll = () => {
     const allFolderPaths = new Set<string>();
     const collectFolders = (nodes: TreeNode[]) => {
@@ -590,6 +714,7 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
             }}
             onClick={() => toggleFolder(node.path)}
           >
+            <TableCell padding="checkbox" />
             <TableCell colSpan={5} sx={{ pl: `${paddingLeft + 8}px` }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 {isExpanded ? <ExpandMore color="primary" /> : <ChevronRight color="primary" />}
@@ -620,6 +745,13 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
             '&:hover': { bgcolor: status === 'pending' ? 'rgba(255, 152, 0, 0.25)' : 'action.hover' }
           }}
         >
+          <TableCell padding="checkbox">
+            <Checkbox
+              checked={selectedFiles.has(file.id)}
+              onChange={() => handleFileSelect(file.id)}
+              onClick={(e) => e.stopPropagation()}
+            />
+          </TableCell>
           <TableCell sx={{ pl: `${paddingLeft + 8}px` }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <InsertDriveFile fontSize="small" color="action" />
@@ -711,6 +843,14 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
     return null;
   };
 
+  console.log('MediaAssignment render:', {
+    filesCount: files.length,
+    foldersCount: folders.length,
+    treeDataCount: treeData.length,
+    loading,
+    error
+  });
+
   return (
     <Box sx={{ p: 3 }}>
       {/* Header */}
@@ -738,6 +878,16 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
         </Box>
         
         <Stack direction="row" spacing={1}>
+          {selectedFiles.size > 0 && (
+            <Button
+              startIcon={<Check />}
+              onClick={() => setAssignmentDialog(true)}
+              variant="contained"
+              color="primary"
+            >
+              Assign to Media ({selectedFiles.size})
+            </Button>
+          )}
           <Button
             startIcon={<ExpandMore />}
             onClick={expandAll}
@@ -809,8 +959,15 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell width="40%">Name</TableCell>
-              <TableCell width="30%">Current Path</TableCell>
+              <TableCell padding="checkbox">
+                <Checkbox
+                  checked={selectedFiles.size === files.length && files.length > 0}
+                  indeterminate={selectedFiles.size > 0 && selectedFiles.size < files.length}
+                  onChange={handleSelectAll}
+                />
+              </TableCell>
+              <TableCell width="35%">Name</TableCell>
+              <TableCell width="25%">Current Path</TableCell>
               <TableCell width="20%">Move To Folder</TableCell>
               <TableCell width="10%">Status</TableCell>
               <TableCell align="right">Actions</TableCell>
@@ -941,6 +1098,24 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Media Assignment Dialog */}
+      <MediaAssignmentDialog
+        open={assignmentDialog}
+        onClose={() => setAssignmentDialog(false)}
+        selectedFiles={files.filter(f => selectedFiles.has(f.id)).map(f => ({
+          id: f.id,
+          fileName: f.name,
+          name: f.name,
+          path: f.path,
+          extension: f.extension || '',
+          size: f.metadata?.size || 0,
+          scannedAt: f.discoveredAt || new Date(),
+          scanId: f.scanId,
+          libraryPath: f.libraryPath,
+        } as any))}
+        onAssign={handleAssignMedia}
+      />
     </Box>
   );
 };

@@ -38,3 +38,15 @@ next-env.d.ts
 .env
 ./package-lock.json
 /backend/media-db-*.json
+
+# firebase
+service-account-key.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.pyc
+*.pyo

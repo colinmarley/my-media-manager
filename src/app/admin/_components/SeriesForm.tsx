@@ -12,7 +12,7 @@ import ListItemText from '@mui/material/ListItemText';
 import ListItemButton from '@mui/material/ListItemButton';
 import FirestoreService from '../../../service/firebase/FirestoreService';
 import { FBSeries, Season, Episode } from '../../../types/firebase/FBSeries.type';
-import { Director, DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
+import { DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
 import { OmdbResponseFull, OmdbSearchResponse } from '../../../types/OmdbResponse.type';
 import { searchByText, retrieveMediaDataById } from '@/service/omdb/OmdbService';
 import ImageSearch from '../imageManager/_components/ImageSearch';
@@ -103,7 +103,7 @@ const SeriesForm: React.FC = () => {
   useEffect(() => {
     setTitle(omdbData?.Title || title);
     setCountryOfOrigin(omdbData?.Country || countryOfOrigin);
-    setDirectors(omdbData?.Director.split(',').map((director: string) => ({ name: director, title: '' })).concat(directors) || directors);
+    setDirectors(omdbData?.Director.split(',').map((director: string) => ({ fullName: director.trim(), title: '' })).concat(directors) || directors);
     if (omdbData?.Poster) { setImageFiles([...imageFiles, { fileName: omdbData?.Poster || '', fileSize: 0, resolution: '', format: '' }])};
     setLetterboxdLink(omdbData?.Website || letterboxdLink);
     setRunningDates(omdbData?.Released || runningDates);
@@ -120,7 +120,7 @@ const SeriesForm: React.FC = () => {
   };
 
   const handleAddDirector = () => {
-    setDirectors([...directors, { name: '', title: '' }]);
+    setDirectors([...directors, { fullName: '', title: '' }]);
   };
 
   const handleDirectorChange = (index: number, field: keyof DirectorEntry, value: string) => {
@@ -136,9 +136,9 @@ const SeriesForm: React.FC = () => {
     setOmdbResults([]); // Clear the search results after selection
   };
 
-  const directorEntryToDirector = (entry: DirectorEntry): Director => {
+  const directorEntryToDirector = (entry: DirectorEntry): any => {
     return {
-      name: entry.name,
+      fullName: entry.fullName,
       notes: '',
       portfolio: [],
       otherCollections: [],
@@ -191,6 +191,7 @@ const SeriesForm: React.FC = () => {
       genres,
       language,
       regionCode,
+      imdbID: omdbData?.imdbID || '',
     };
 
     const service = new FirestoreService('series');
@@ -236,8 +237,8 @@ const SeriesForm: React.FC = () => {
                 <Grid size={6}>
                   <FormTextField
                     label="Name"
-                    value={director.name}
-                    onChange={(e) => handleDirectorChange(index, 'name', e.target.value)}
+                    value={director.fullName}
+                    onChange={(e) => handleDirectorChange(index, 'fullName', e.target.value)}
                   />
                 </Grid>
                 <Grid size={6}>

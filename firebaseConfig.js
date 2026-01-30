@@ -24,7 +24,16 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 
-// Conditionally initialize analytics only on the client side
-export const analytics = typeof window !== "undefined" ? require("firebase/analytics").getAnalytics(app) : null;
+// Conditionally initialize analytics only on the client side with error handling
+let analyticsInstance = null;
+if (typeof window !== "undefined") {
+  try {
+    const { getAnalytics } = require("firebase/analytics");
+    analyticsInstance = getAnalytics(app);
+  } catch (error) {
+    console.warn("Analytics initialization failed (this is non-critical):", error.message);
+  }
+}
+export const analytics = analyticsInstance;
 
 export default app;
