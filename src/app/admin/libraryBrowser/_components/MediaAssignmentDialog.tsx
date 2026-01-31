@@ -36,6 +36,7 @@ import {
   Check,
   Search as SearchIcon,
   CloudDownload,
+  Close,
 } from '@mui/icons-material';
 import { MediaFile } from '@/types/library';
 import { Movie } from '@/types/collections/Movie.type';
@@ -44,6 +45,7 @@ import { Episode } from '@/types/collections/Episode.type';
 import { Season } from '@/types/collections/Season.type';
 import MediaOrganizationService from '@/service/library/MediaOrganizationService';
 import MediaAssignmentSearchService, { SearchResult } from '@/service/library/MediaAssignmentSearchService';
+import FolderBrowser from '../../library/_components/FolderBrowser';
 
 interface MediaAssignmentDialogProps {
   open: boolean;
@@ -61,6 +63,7 @@ interface AssignmentData {
   mediaTitle: string;
   targetStructure: any;
   version?: string;
+  organizeNow?: boolean;
   seriesId?: string;
   seasonId?: string;
   seasonNumber?: number;
@@ -81,6 +84,9 @@ export default function MediaAssignmentDialog({
   const [selectedEpisode, setSelectedEpisode] = useState<Episode | null>(null);
   const [selectedSeason, setSelectedSeason] = useState<Season | null>(null);
   const [version, setVersion] = useState('1080p');
+  const [organizeNow, setOrganizeNow] = useState(false);
+  const [destinationFolder, setDestinationFolder] = useState<string | null>(null);
+  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [previewStructure, setPreviewStructure] = useState<any>(null);
@@ -227,19 +233,21 @@ export default function MediaAssignmentDialog({
       structure = orgService.generateMovieStructure(
         selectedMedia as Movie,
         mediaFile,
-        version
+        version,
+        destinationFolder || undefined
       );
     } else if (mediaType === 'episode' && selectedEpisode && selectedSeason) {
       structure = orgService.generateEpisodeStructure(
         selectedMedia as Series,
         selectedSeason,
         selectedEpisode,
-        mediaFile
+        mediaFile,
+        destinationFolder || undefined
       );
     }
 
     setPreviewStructure(structure);
-  }, [selectedMedia, selectedEpisode, selectedSeason, version, selectedFiles, mediaType]);
+  }, [selectedMedia, selectedEpisode, selectedSeason, version, selectedFiles, mediaType, destinationFolder]);
 
   const handleAssign = async () => {
     if (!selectedMedia || selectedFiles.length === 0) return;
@@ -264,6 +272,7 @@ export default function MediaAssignmentDialog({
           : selectedMedia.title,
         targetStructure: previewStructure!,
         version: mediaType === 'movie' ? version : undefined,
+        organizeNow: organizeNow,
         seriesId: mediaType === 'episode' ? (selectedMedia.id || selectedMedia.externalIds?.imdbId) : undefined,
         seasonId: selectedSeason?.id,
         seasonNumber: selectedSeason?.number ? (typeof selectedSeason.number === 'string' ? parseInt(selectedSeason.number.replace(/\D/g, '')) || 0 : selectedSeason.number) : undefined,
@@ -457,6 +466,61 @@ export default function MediaAssignmentDialog({
             </FormControl>
           )}
 
+          {/* Organization Options */}
+          {selectedMedia && (
+            <>
+              {/* Destination Folder Selection */}
+              <Box>
+                <FormLabel>Destination Library Folder</FormLabel>
+                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1 }}>
+                  <Button
+                    variant="outlined"
+                    startIcon={<Folder />}
+                    onClick={() => setShowFolderBrowser(true)}
+                    fullWidth
+                  >
+                    {destinationFolder || 'Select Destination Folder'}
+                  </Button>
+                  {destinationFolder && (
+                    <IconButton
+                      size="small"
+                      onClick={() => setDestinationFolder(null)}
+                      color="error"
+                    >
+                      <Close />
+                    </IconButton>
+                  )}
+                </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                  Choose where media will be organized. If not selected, uses the file's current location.
+                </Typography>
+              </Box>
+
+              {/* Organize Now Option */}
+              <FormControl>
+                <FormControlLabel
+                  control={
+                    <Radio
+                      checked={organizeNow}
+                      onChange={(e) => setOrganizeNow(e.target.checked)}
+                      color="primary"
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant="body2">
+                        Organize files immediately
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        Moves files to Jellyfin folder structure after assignment. Backend must be running.
+                      </Typography>
+                    </Box>
+                  }
+                />
+              </FormControl>
+            </>
+          )}
+
           {/* Jellyfin Structure Preview */}
           {previewStructure && (
             <Paper variant="outlined" sx={{ p: 2, bgcolor: 'background.default' }}>
@@ -541,6 +605,17 @@ export default function MediaAssignmentDialog({
           Assign Files
         </Button>
       </DialogActions>
+
+      {/* Folder Browser Dialog */}
+      <FolderBrowser
+        open={showFolderBrowser}
+        onClose={() => setShowFolderBrowser(false)}
+        onSelect={(path) => {
+          setDestinationFolder(path);
+          setShowFolderBrowser(false);
+        }}
+        initialPath={destinationFolder || ''}
+      />
     </Dialog>
   );
 }

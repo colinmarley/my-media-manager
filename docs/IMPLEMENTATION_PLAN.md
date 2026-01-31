@@ -6,14 +6,15 @@
 |----------|--------|----------------|----------------|---------------|----------------|
 | **Priority 1:** Fix titleLower | ✅ **VERIFIED** | January 28, 2026 | 4 form files | titleUtils.test.ts | ✅ Passed |
 | **Priority 2:** Media Assignment Logic | ✅ **VERIFIED** | January 29, 2026 | 2 components + 4 forms | MediaAssignment.test.ts | ✅ Passed |
-| **Priority 3:** Backend Integration | 🔄 **PENDING** | - | - | - | - |
+| **Priority 3:** Backend Integration | ✅ **VERIFIED** | January 31, 2026 | 3 service files | - | ✅ Passed |
 | **Priority 4:** Episode Selection UI | 🔄 **PENDING** | - | - | - | - |
 
 ### Quick Summary
 - ✅ **Priority 1 COMPLETE & VERIFIED:** Movie "Hackers" saved to Firebase with both `title` and `titleLower` fields confirmed
 - ✅ **Priority 2 COMPLETE & VERIFIED:** Media assignment logic tested and working - data properly saved to Firebase
-- ⏳ **Next Up:** Priority 3 - Backend file organization integration
-- 📊 **Overall Progress:** 50% (2 of 4 priorities complete and verified)
+- ✅ **Priority 3 COMPLETE & VERIFIED:** Backend integration tested - files successfully assigned and moved to Jellyfin structure with custom destination folder selection
+- ⏳ **Next Up:** Priority 4 - Episode Selection UI
+- 📊 **Overall Progress:** 75% (3 of 4 priorities complete and verified)
 
 ---
 
@@ -405,14 +406,150 @@ Success message → Clear selection → Close dialog
 - [ ] Select season and episode
 - [ ] Assign and verify seriesId, seasonId, episodeNumber in Firebase
 
-### Success Criteria: ✅ MET (Pending Manual Testing)
+### Success Criteria: ✅ MET
 - ✅ Files can be assigned to media
 - ✅ `media_assignments` collection populated with correct data structure
 - ✅ `scanned_files` status updated correctly
 - ✅ UI shows success/error messages
 - ✅ TypeScript compiles without errors
 - ✅ Unit tests created with good coverage
-- ⏳ Manual testing pending
+- ✅ Manual testing confirmed working
+
+---
+
+## Priority 3: Backend File Organization Integration ✅ COMPLETED
+
+### ✅ Implementation Status: COMPLETE (January 29, 2026)
+
+**Result:** Backend integration fully implemented with health checks and optional immediate file organization.
+
+### Changes Made:
+
+#### ✅ Step 3.1: Verified Backend API Structure
+- Backend file: `backend/api/file_operations.py` 
+- Confirmed endpoints:
+  - `POST /folders/create` - Create folder structure ✅
+  - `POST /move` - Move files to new location ✅
+  - `GET /health` - Health check endpoint ✅
+- All endpoints use proper error handling and path security validation
+
+#### ✅ Step 3.2: Updated MediaOrganizationService.ts
+**File:** `src/service/library/MediaOrganizationService.ts`
+
+**Changes:**
+1. Fixed base URL to remove `/api` suffix (line 47):
+   - Before: `http://localhost:8082/api`
+   - After: `http://localhost:8082`
+
+2. Added `checkBackendHealth()` method (lines 52-62):
+   - Checks backend availability before operations
+   - 5 second timeout
+   - Returns boolean for health status
+
+3. Updated `organizeFiles()` method (lines 192-312):
+   - Added backend health check at start
+   - Fixed API endpoints: `/folders/create` and `/move`
+   - Changed from `media_files` to `scanned_files` collection
+   - Improved error handling with try-catch per file
+   - Added proper path building with Windows backslashes
+   - Updates `scanned_files` status after successful moves
+   - Creates `jellyfin_folders` documents
+   - Updates assignment status to 'completed' or 'failed'
+
+#### ✅ Step 3.3: Integrated into MediaAssignment Workflow
+**File:** `src/app/admin/libraryBrowser/_components/MediaAssignment.tsx`
+
+**Changes:**
+1. Added import (line 56): `import MediaOrganizationService from '@/service/library/MediaOrganizationService';`
+
+2. Enhanced `handleAssignMedia()` function (lines 670-686):
+   - Checks if `assignment.organizeNow` is true
+   - Creates MediaOrganizationService instance
+   - Calls `organizeFiles()` after assignment
+   - Shows appropriate success/error messages
+   - Prevents selection clearing on organization error
+
+#### ✅ Step 3.4: Added UI Option in MediaAssignmentDialog
+**File:** `src/app/admin/libraryBrowser/_components/MediaAssignmentDialog.tsx`
+
+**Changes:**
+1. Added state (line 85): `const [organizeNow, setOrganizeNow] = useState(false);`
+
+2. Updated AssignmentData interface (line 59): Added `organizeNow?: boolean;`
+
+3. Added checkbox UI (lines 464-485):
+   - Radio control for "Organize files immediately"
+   - Helper text explaining backend requirement
+   - Only shows when media is selected
+
+4. Included in assignment data (line 262): `organizeNow: organizeNow,`
+
+### How It Works:
+
+**Without "Organize Now":**
+1. User selects files → assigns to media
+2. Creates `media_assignments` with status 'pending'
+3. Updates `scanned_files` to 'assigned'
+4. Files remain in original location
+5. User can organize later manually
+
+**With "Organize Now" (checkbox checked):**
+1. User selects files → assigns to media → checks "Organize now"
+2. Creates `media_assignments` with status 'pending'
+3. Updates `scanned_files` to 'assigned'
+4. Backend health check runs
+5. Creates Jellyfin folder structure
+6. Moves files to new location
+7. Updates paths in `scanned_files`
+8. Creates `jellyfin_folders` document
+9. Updates assignment status to 'completed'
+
+### Backend Requirements:
+
+**To Use File Organization:**
+1. Python backend must be running: `python backend/start.py`
+2. Backend must be accessible on `http://localhost:8082`
+3. Health endpoint must return `{"status": "healthy"}`
+4. User must have write permissions to target library paths
+
+### Success Criteria: ✅ MET
+- ✅ Backend API endpoints verified and documented
+- ✅ MediaOrganizationService properly integrated with backend
+- ✅ Health check prevents operations when backend unavailable
+- ✅ Users can optionally organize files immediately
+- ✅ Users can select custom destination folders
+- ✅ UI shows clear feedback for organization success/failure
+- ✅ No TypeScript compilation errors
+- ✅ Manual testing verified - files successfully moved to Jellyfin structure
+
+### Manual Testing Results (January 31, 2026):
+
+**Test Scenario:** Movie file assignment with immediate organization and custom destination folder
+
+**Steps Performed:**
+1. ✅ Started Python backend on `http://localhost:8082`
+2. ✅ Selected scanned files in Library Browser
+3. ✅ Clicked "Assign to Media"
+4. ✅ Selected custom destination folder via folder browser
+5. ✅ Searched and selected a movie
+6. ✅ Checked "Organize files immediately"
+7. ✅ Clicked "Assign"
+
+**Results:**
+- ✅ Files physically moved to Jellyfin folder structure
+- ✅ Correct folder naming: `Movie Title (Year) [imdbid-tt1234567]`
+- ✅ Correct file naming with version: `Movie Title (Year) - 1080p.mkv`
+- ✅ Firebase `media_assignments` status: 'completed'
+- ✅ Firebase `scanned_files` paths updated to new location
+- ✅ Firebase `jellyfin_folders` document created with correct data
+- ✅ No undefined field errors
+- ✅ Custom destination folder used correctly
+
+**Bug Fixes During Testing:**
+1. Fixed API endpoint paths (added `/api/files` prefix)
+2. Fixed `seasonNumber` undefined error (conditional inclusion for episodes only)
+
+**Status:** ✅ **PRIORITY 3 FULLY VERIFIED AND WORKING**
 
 ---
 

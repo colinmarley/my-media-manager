@@ -43,7 +43,22 @@ class MediaOrganizationService {
   constructor() {
     this.baseUrl = process.env.NODE_ENV === 'production' 
       ? 'https://your-api-domain.com/api' 
-      : 'http://localhost:8082/api';
+      : 'http://localhost:8082';
+  }
+
+  /**
+   * Check if backend service is available and healthy
+   */
+  async checkBackendHealth(): Promise<boolean> {
+    try {
+      const response = await axios.get(`${this.baseUrl}/health`, {
+        timeout: 5000
+      });
+      return response.data.status === 'healthy';
+    } catch (error) {
+      console.error('Backend health check failed:', error);
+      return false;
+    }
   }
 
   /**
@@ -151,7 +166,6 @@ class MediaOrganizationService {
       folderType: isMovie ? 'movie' : 'series',
       mediaType: isMovie ? 'movie' : 'series',
       mediaId: assignment.mediaId,
-      seasonNumber: assignment.seasonNumber,
       mediaTitle: (mediaData as any).title,
       year: isMovie 
         ? new Date((mediaData as Movie).releaseDate).getFullYear()
@@ -173,6 +187,11 @@ class MediaOrganizationService {
       updatedAt: new Date()
     };
 
+    // Only add seasonNumber for episodes
+    if (!isMovie && assignment.seasonNumber !== undefined) {
+      (jellyfinFolder as any).seasonNumber = assignment.seasonNumber;
+    }
+
     const folderRef = await addDoc(collection(db, 'jellyfin_folders'), jellyfinFolder);
     return { id: folderRef.id, ...jellyfinFolder };
   }
@@ -182,6 +201,12 @@ class MediaOrganizationService {
    */
   async organizeFiles(assignmentId: string): Promise<OrganizationResult> {
     try {
+      // Check backend health before proceeding
+      const isHealthy = await this.checkBackendHealth();
+      if (!isHealthy) {
+        throw new Error('Backend service is not available. Please ensure the Python backend is running on http://localhost:8082');
+      }
+
       const assignmentDoc = await getDoc(doc(db, 'media_assignments', assignmentId));
       if (!assignmentDoc.exists()) {
         throw new Error('Assignment not found');
@@ -203,7 +228,7 @@ class MediaOrganizationService {
 
       try {
         // Step 1: Create folder structure
-        const createFolderResponse = await axios.post(`${this.baseUrl}/files/folders/create`, {
+        const createFolderResponse = await axios.post(`${this.baseUrl}/api/files/folders/create`, {
           parentPath: targetFolderStructure.libraryRoot,
           folderName: targetFolderStructure.mediaFolder
         });
@@ -221,44 +246,62 @@ class MediaOrganizationService {
 
         // Step 2: Move each file
         for (const fileId of mediaFileIds) {
-          const fileDoc = await getDoc(doc(db, 'media_files', fileId));
-          if (!fileDoc.exists()) continue;
+          try {
+            const fileDoc = await getDoc(doc(db, 'scanned_files', fileId));
+            if (!fileDoc.exists()) {
+              errors.push(`File not found: ${fileId}`);
+              continue;
+            }
 
-          const file = fileDoc.data() as MediaFile;
-          
-          const moveResponse = await axios.post(`${this.baseUrl}/files/move`, {
-            sourcePath: file.filePath,
-            destinationPath: targetFolderStructure.fullPath,
-            mergeContents: false
-          });
+            const file = fileDoc.data();
+            const sourcePath = file.path || file.filePath;
+            
+            // Build destination path properly
+            const destinationPath = `${targetFolderStructure.libraryRoot}\\${targetFolderStructure.mediaFolder}\\${targetFolderStructure.fileName}`;
+            
+            const moveResponse = await axios.post(`${this.baseUrl}/api/files/move`, {
+              sourcePath: sourcePath,
+              destinationPath: destinationPath,
+              mergeContents: false
+            });
 
-          if (moveResponse.data.success) {
-            filesMoved++;
+            if (moveResponse.data.success) {
+              filesMoved++;
+              operations.push({
+                timestamp: new Date(),
+                operation: 'move_file',
+                sourcePath: sourcePath,
+                destinationPath: destinationPath,
+                status: 'success'
+              });
+
+              // Update file path in scanned_files
+              await updateDoc(doc(db, 'scanned_files', fileId), {
+                path: destinationPath,
+                organizationStatus: 'completed',
+                updatedAt: new Date()
+              });
+            } else {
+              const errorMsg = moveResponse.data.error?.message || 'Unknown error';
+              errors.push(`Failed to move ${file.name}: ${errorMsg}`);
+              operations.push({
+                timestamp: new Date(),
+                operation: 'move_file',
+                sourcePath: sourcePath,
+                destinationPath: destinationPath,
+                status: 'failed',
+                errorMessage: errorMsg
+              });
+            }
+          } catch (fileError: any) {
+            errors.push(`Error processing file ${fileId}: ${fileError.message}`);
             operations.push({
               timestamp: new Date(),
               operation: 'move_file',
-              sourcePath: file.filePath,
-              destinationPath: targetFolderStructure.fullPath,
-              status: 'success'
-            });
-
-            // Update file path
-            await updateDoc(doc(db, 'media_files', fileId), {
-              filePath: targetFolderStructure.fullPath,
-              folderPath: targetFolderStructure.mediaFolder,
-              organizationStatus: 'completed',
-              needsOrganization: false,
-              updatedAt: new Date()
-            });
-          } else {
-            errors.push(`Failed to move ${file.fileName}`);
-            operations.push({
-              timestamp: new Date(),
-              operation: 'move_file',
-              sourcePath: file.filePath,
+              sourcePath: 'unknown',
               destinationPath: targetFolderStructure.fullPath,
               status: 'failed',
-              errorMessage: moveResponse.data.detail?.message || 'Unknown error'
+              errorMessage: fileError.message
             });
           }
         }

@@ -52,6 +52,7 @@ import { collection, addDoc, updateDoc, doc } from 'firebase/firestore';
 import { db } from '../../../../../firebaseConfig';
 import type { MediaAssignment } from '@/types/library/MediaAssignment.type';
 import { AssignmentOrganizationStatus } from '@/types/library/MediaAssignment.type';
+import MediaOrganizationService from '@/service/library/MediaOrganizationService';
 
 interface PendingChange {
   fileId: string;
@@ -667,7 +668,21 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
       
       await Promise.all(updatePromises);
       
-      setSuccess(`Successfully assigned ${assignment.fileIds.length} file(s) to ${assignment.mediaTitle}`);
+      // 3. Optional: Trigger file organization if requested
+      if (assignment.organizeNow) {
+        try {
+          const orgService = new MediaOrganizationService();
+          await orgService.organizeFiles(assignmentRef.id);
+          setSuccess(`Successfully assigned and organized ${assignment.fileIds.length} file(s) for ${assignment.mediaTitle}`);
+        } catch (orgError: any) {
+          console.error('Error organizing files:', orgError);
+          setError(`Files assigned but organization failed: ${orgError.message}. You can retry organization later.`);
+          return; // Don't clear selection on error
+        }
+      } else {
+        setSuccess(`Successfully assigned ${assignment.fileIds.length} file(s) to ${assignment.mediaTitle}`);
+      }
+      
       setSelectedFiles(new Set());
       setAssignmentDialog(false);
       
