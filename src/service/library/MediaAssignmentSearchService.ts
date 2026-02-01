@@ -10,6 +10,7 @@ import { Series } from '@/types/collections/Series.type';
 import { OmdbSearchResponse, OmdbResponseFull } from '@/types/OmdbResponse.type';
 import { searchByText, retrieveMediaDataById } from '../omdb/OmdbService';
 import { prepareMovieData, prepareSeriesData } from '@/utils/titleUtils';
+import SeriesDataService from './SeriesDataService';
 
 export interface SearchResult {
   id: string;
@@ -165,6 +166,7 @@ class MediaAssignmentSearchService {
 
   /**
    * Save OMDB result to Firebase as new series
+   * Also creates seasons and episodes from TMDB data
    */
   async saveSeriesToFirebase(omdbData: OmdbResponseFull): Promise<string> {
     try {
@@ -176,8 +178,24 @@ class MediaAssignmentSearchService {
 
       // Save to Firebase
       const docRef = await addDoc(collection(db, 'series'), preparedData);
+      const seriesId = docRef.id;
       
-      return docRef.id;
+      console.log(`Series saved with ID: ${seriesId}`);
+
+      // Create seasons and episodes from TMDB in background
+      // Don't wait for this to complete to avoid blocking the UI
+      SeriesDataService.createSeasonsAndEpisodes(
+        seriesId,
+        omdbData.Title,
+        omdbData.imdbID
+      ).then(result => {
+        console.log(`Background task complete: ${result.seasonsCreated} seasons, ${result.episodesCreated} episodes created`);
+      }).catch(error => {
+        console.error('Failed to create seasons/episodes:', error);
+        // Don't throw - series is already saved successfully
+      });
+      
+      return seriesId;
     } catch (error) {
       console.error('Error saving series to Firebase:', error);
       throw error;

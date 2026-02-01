@@ -46,6 +46,7 @@ import { Season } from '@/types/collections/Season.type';
 import MediaOrganizationService from '@/service/library/MediaOrganizationService';
 import MediaAssignmentSearchService, { SearchResult } from '@/service/library/MediaAssignmentSearchService';
 import FolderBrowser from '../../library/_components/FolderBrowser';
+import EpisodeSelector from './EpisodeSelector';
 
 interface MediaAssignmentDialogProps {
   open: boolean;
@@ -275,8 +276,8 @@ export default function MediaAssignmentDialog({
         organizeNow: organizeNow,
         seriesId: mediaType === 'episode' ? (selectedMedia.id || selectedMedia.externalIds?.imdbId) : undefined,
         seasonId: selectedSeason?.id,
-        seasonNumber: selectedSeason?.number ? (typeof selectedSeason.number === 'string' ? parseInt(selectedSeason.number.replace(/\D/g, '')) || 0 : selectedSeason.number) : undefined,
-        episodeNumber: selectedEpisode?.episodeNumber ? (typeof selectedEpisode.episodeNumber === 'string' ? parseInt(selectedEpisode.episodeNumber) || 0 : selectedEpisode.episodeNumber) : undefined,
+        seasonNumber: selectedSeason?.seasonNumber ?? undefined,
+        episodeNumber: selectedEpisode?.episodeNumber ?? undefined,
       }));
 
       await onAssign(assignments);
@@ -442,10 +443,14 @@ export default function MediaAssignmentDialog({
 
           {/* Episode Selection (for TV shows) */}
           {mediaType === 'episode' && selectedMedia && (
-            <Alert severity="info">
-              Episode selection will be added in the next update. 
-              For now, implement a season/episode picker here.
-            </Alert>
+            <EpisodeSelector
+              seriesId={selectedMedia.id || selectedMedia.externalIds?.imdbId || ''}
+              selectedEpisode={selectedEpisode}
+              onEpisodeSelect={(season, episode) => {
+                setSelectedSeason(season);
+                setSelectedEpisode(episode);
+              }}
+            />
           )}
 
           {/* Version Selection (for movies) */}
@@ -542,7 +547,7 @@ export default function MediaAssignmentDialog({
                 <Box>
                   <Typography variant="caption" color="text.secondary">Media Folder</Typography>
                   <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
-                    📁 {previewStructure.folderName}
+                    📁 {previewStructure.mediaFolder}
                   </Typography>
                 </Box>
                 

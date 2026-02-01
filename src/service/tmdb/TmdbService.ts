@@ -1,7 +1,7 @@
 import axios from 'axios';
 import TmdbAuthentication from './TmdbAuthentication';
 
-const TMDB_BASE_URL = process.env.NEXT_PUBLIC_TMDB_BASE_URL;
+const TMDB_BASE_URL = process.env.NEXT_PUBLIC_TMDB_BASE_URL?.replace(/\/$/, '') || 'https://api.themoviedb.org/3';
 const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 
 if (!TMDB_API_KEY) {
@@ -108,6 +108,86 @@ const TmdbService = {
       return response.data;
     } catch (error) {
       console.error('Error fetching upcoming movies:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Search for TV series by IMDb ID
+   * @param imdbId - The IMDb ID to search for
+   * @returns A promise resolving to the TV series details with TMDB ID
+   */
+  findTVSeriesByImdbId: async (imdbId: string) => {
+    try {
+      const response = await axios.get(`${TMDB_BASE_URL}/find/${imdbId}`, {
+        params: {
+          api_key: TMDB_API_KEY,
+          external_source: 'imdb_id',
+        },
+      });
+      return response.data.tv_results?.[0]; // Returns first TV result
+    } catch (error) {
+      console.error('Error finding TV series by IMDb ID:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get TV series details by TMDB ID
+   * @param seriesId - The TMDB series ID
+   * @returns A promise resolving to the series details
+   */
+  getTVSeriesDetails: async (seriesId: number) => {
+    try {
+      const response = await axios.get(`${TMDB_BASE_URL}/tv/${seriesId}`, {
+        params: {
+          api_key: TMDB_API_KEY,
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching TV series details:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get season details including episodes
+   * @param seriesId - The TMDB series ID
+   * @param seasonNumber - The season number
+   * @returns A promise resolving to the season details with episodes
+   */
+  getSeasonDetails: async (seriesId: number, seasonNumber: number) => {
+    try {
+      const response = await axios.get(`${TMDB_BASE_URL}/tv/${seriesId}/season/${seasonNumber}`, {
+        params: {
+          api_key: TMDB_API_KEY,
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error(`Error fetching season ${seasonNumber} details:`, error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get episode details
+   * @param seriesId - The TMDB series ID
+   * @param seasonNumber - The season number
+   * @param episodeNumber - The episode number
+   * @returns A promise resolving to the episode details
+   */
+  getEpisodeDetails: async (seriesId: number, seasonNumber: number, episodeNumber: number) => {
+    try {
+      const response = await axios.get(`${TMDB_BASE_URL}/tv/${seriesId}/season/${seasonNumber}/episode/${episodeNumber}`, {
+        params: {
+          api_key: TMDB_API_KEY,
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error(`Error fetching episode ${seasonNumber}x${episodeNumber} details:`, error);
       throw error;
     }
   },

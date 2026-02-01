@@ -323,13 +323,19 @@ class MediaOrganizationService {
         }
 
         // Step 4: Update assignment
-        await updateDoc(doc(db, 'media_assignments', assignmentId), {
+        const updateData: any = {
           organizationStatus: errors.length === 0 ? 'completed' : 'failed' as AssignmentOrganizationStatus,
           organizationDate: new Date(),
-          organizationError: errors.length > 0 ? errors.join('; ') : undefined,
           operations,
           updatedAt: new Date()
-        });
+        };
+        
+        // Only include organizationError if there are errors
+        if (errors.length > 0) {
+          updateData.organizationError = errors.join('; ');
+        }
+        
+        await updateDoc(doc(db, 'media_assignments', assignmentId), updateData);
 
         return {
           success: errors.length === 0,

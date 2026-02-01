@@ -7,14 +7,14 @@
 | **Priority 1:** Fix titleLower | ✅ **VERIFIED** | January 28, 2026 | 4 form files | titleUtils.test.ts | ✅ Passed |
 | **Priority 2:** Media Assignment Logic | ✅ **VERIFIED** | January 29, 2026 | 2 components + 4 forms | MediaAssignment.test.ts | ✅ Passed |
 | **Priority 3:** Backend Integration | ✅ **VERIFIED** | January 31, 2026 | 3 service files | - | ✅ Passed |
-| **Priority 4:** Episode Selection UI | 🔄 **PENDING** | - | - | - | - |
+| **Priority 4:** Episode Selection UI | ✅ **VERIFIED** | January 31, 2026 | 7 files + 2 indexes | - | ✅ Passed |
 
 ### Quick Summary
 - ✅ **Priority 1 COMPLETE & VERIFIED:** Movie "Hackers" saved to Firebase with both `title` and `titleLower` fields confirmed
 - ✅ **Priority 2 COMPLETE & VERIFIED:** Media assignment logic tested and working - data properly saved to Firebase
 - ✅ **Priority 3 COMPLETE & VERIFIED:** Backend integration tested - files successfully assigned and moved to Jellyfin structure with custom destination folder selection
-- ⏳ **Next Up:** Priority 4 - Episode Selection UI
-- 📊 **Overall Progress:** 75% (3 of 4 priorities complete and verified)
+- ✅ **Priority 4 COMPLETE & VERIFIED:** Episode selection UI with automatic season/episode creation from TMDB - tested with Firefly series
+- 📊 **Overall Progress:** 100% (4 of 4 priorities complete and verified)
 
 ---
 
@@ -1073,7 +1073,131 @@ def test_move_file():
 
 ---
 
-## Priority 4: Episode Selection UI
+## Priority 4: Episode Selection UI ✅ COMPLETED
+
+### ✅ Implementation Status: COMPLETE (January 31, 2026)
+
+**Result:** Full episode selection workflow implemented with automatic season/episode creation from TMDB data.
+
+### Changes Made:
+
+#### ✅ Step 4.1: Created EpisodeSelector Component
+- **File:** `src/app/admin/libraryBrowser/_components/EpisodeSelector.tsx` (NEW - 255 lines)
+- **Features:**
+  - Season dropdown with episode counts
+  - Responsive episode grid (6/4/3 columns)
+  - Visual selection feedback (CheckCircle/RadioButtonUnchecked icons)
+  - Auto-loads seasons from Firebase when series selected
+  - Auto-loads episodes when season selected
+  - Comprehensive error handling and loading states
+
+#### ✅ Step 4.2: Integrated into MediaAssignmentDialog
+- **File:** `src/app/admin/libraryBrowser/_components/MediaAssignmentDialog.tsx`
+- **Changes:**
+  - Added EpisodeSelector import
+  - Replaced placeholder Alert with EpisodeSelector component
+  - Fixed preview to show full folder structure (Series/Season/Episode)
+  - Fixed seasonNumber field mapping (was using .number, now uses .seasonNumber)
+  - Properly passes season and episode data to assignment
+
+#### ✅ Step 4.3: Created SeriesDataService for TMDB Integration
+- **File:** `src/service/library/SeriesDataService.ts` (NEW - 250 lines)
+- **Features:**
+  - `createSeasonsAndEpisodes()` - Main orchestration method
+  - `createSeasonDocument()` - Creates season docs with TMDB metadata
+  - `createEpisodeDocument()` - Creates episode docs with TMDB metadata
+  - Fetches data from TMDB API and maps to Firebase Season/Episode types
+  - Includes poster images and episode stills from TMDB
+  - Handles errors gracefully (continues if one season fails)
+  - Prevents undefined values in Firebase (all optional fields handled correctly)
+
+#### ✅ Step 4.4: Extended TmdbService for TV Series
+- **File:** `src/service/tmdb/TmdbService.ts`
+- **New Methods:**
+  - `findTVSeriesByImdbId()` - Convert IMDb ID to TMDB ID
+  - `getTVSeriesDetails()` - Get series info including season count
+  - `getSeasonDetails()` - Get season with all episodes
+  - `getEpisodeDetails()` - Get individual episode details
+  - Fixed TMDB_BASE_URL trailing slash issue (was causing 404 errors)
+
+#### ✅ Step 4.5: Updated MediaAssignmentSearchService
+- **File:** `src/service/library/MediaAssignmentSearchService.ts`
+- **Changes:**
+  - Modified `saveSeriesToFirebase()` to call SeriesDataService
+  - Creates seasons/episodes automatically in background after series saved
+  - Non-blocking to keep UI responsive
+
+#### ✅ Step 4.6: Fixed MediaOrganizationService
+- **File:** `src/service/library/MediaOrganizationService.ts`
+- **Changes:**
+  - Fixed organizationError undefined issue (conditional field inclusion)
+  - Only includes error field when errors actually exist
+
+#### ✅ Step 4.7: Added Firebase Composite Indexes
+- **File:** `firestore.indexes.json`
+- **Indexes Added:**
+  - seasons: seriesId + seasonNumber + __name__ (ASCENDING)
+  - episodes: seasonId + episodeNumber (ASCENDING)
+- **Purpose:** Required for EpisodeSelector queries to work efficiently
+
+### Testing Results:
+
+#### ✅ Manual Testing (January 31, 2026):
+
+**Test Case: Firefly Series Assignment**
+1. ✅ Searched for "Firefly" TV series via OMDB
+2. ✅ Selected series - automatically saved to Firebase
+3. ✅ Background task fetched TMDB data using IMDb ID
+4. ✅ Created 1 season with 14 episodes automatically
+5. ✅ EpisodeSelector loaded season and episodes successfully
+6. ✅ Selected Season 1, Episode 1
+7. ✅ Preview showed correct structure: `Firefly (2002)/Season 01/Firefly (2002) S01E01.mkv`
+8. ✅ File assigned and organized successfully
+9. ✅ media_assignments document created with correct seasonNumber and episodeNumber
+
+**Bugs Fixed During Testing:**
+- ✅ TMDB API 404 error (double slash in URL) - Fixed by trimming trailing slash from base URL
+- ✅ Firebase undefined field errors - Fixed by conditionally including optional fields
+- ✅ Missing createdAt/updatedAt timestamps - Added to Season and Episode documents
+- ✅ ImageFile type mismatch - Updated to use correct structure (fileName, fileSize, format, resolution)
+- ✅ seasonNumber mapping issue - Fixed to use .seasonNumber instead of .number
+- ✅ organizationError undefined - Fixed to only include when errors exist
+
+**Data Created:**
+- Series document: Firefly with OMDB metadata
+- 1 Season document with TMDB poster and metadata
+- 14 Episode documents with TMDB stills and air dates
+- All documents have proper timestamps and default values
+
+### Success Criteria: ✅ MET
+- ✅ Users can select episodes for TV series
+- ✅ Season/episode data loads correctly from Firebase
+- ✅ Seasons and episodes automatically created from TMDB when series saved
+- ✅ Assignment includes episode information (seasonId, seasonNumber, episodeNumber)
+- ✅ UI is intuitive and responsive with loading states
+- ✅ Firebase composite indexes configured for efficient queries
+- ✅ Preview shows complete folder structure (Series/Season/Episode)
+- ✅ File organization creates proper Jellyfin structure
+
+### Files Modified:
+1. `src/app/admin/libraryBrowser/_components/EpisodeSelector.tsx` (NEW)
+2. `src/app/admin/libraryBrowser/_components/MediaAssignmentDialog.tsx`
+3. `src/service/library/SeriesDataService.ts` (NEW)
+4. `src/service/library/MediaAssignmentSearchService.ts`
+5. `src/service/library/MediaOrganizationService.ts`
+6. `src/service/tmdb/TmdbService.ts`
+7. `firestore.indexes.json`
+
+### Technical Highlights:
+- **Automatic Data Population:** When a series is selected from OMDB, the system automatically fetches all seasons and episodes from TMDB and populates Firebase
+- **Background Processing:** Season/episode creation runs in background to keep UI responsive
+- **Error Resilience:** Handles missing data gracefully with default values and continues if individual seasons fail
+- **Type Safety:** All TMDB data properly mapped to Firebase Season/Episode types with no undefined values
+- **Image Integration:** Automatically includes TMDB posters and episode stills in Firebase documents
+
+---
+
+## Priority 4: Episode Selection UI (ORIGINAL PLAN)
 
 ### Problem
 When assigning files to TV series, users need to select specific episodes. Currently shows a placeholder Alert.
