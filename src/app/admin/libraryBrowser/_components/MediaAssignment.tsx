@@ -595,6 +595,51 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
     });
   };
 
+  const handleFolderSelect = (node: TreeNode) => {
+    // Get all file IDs in this folder and subfolders
+    const fileIds = getAllFileIdsInNode(node);
+    
+    setSelectedFiles(prev => {
+      const newSet = new Set(prev);
+      // Check if all files are selected
+      const allSelected = fileIds.every(id => newSet.has(id));
+      
+      if (allSelected) {
+        // Deselect all files in folder
+        fileIds.forEach(id => newSet.delete(id));
+      } else {
+        // Select all files in folder
+        fileIds.forEach(id => newSet.add(id));
+      }
+      return newSet;
+    });
+  };
+
+  const getAllFileIdsInNode = (node: TreeNode): string[] => {
+    const fileIds: string[] = [];
+    
+    const collectFiles = (n: TreeNode) => {
+      if (n.file) {
+        fileIds.push(n.file.id);
+      }
+      n.children.forEach(child => collectFiles(child));
+    };
+    
+    collectFiles(node);
+    return fileIds;
+  };
+
+  const isFolderSelected = (node: TreeNode): { checked: boolean; indeterminate: boolean } => {
+    const fileIds = getAllFileIdsInNode(node);
+    if (fileIds.length === 0) return { checked: false, indeterminate: false };
+    
+    const selectedCount = fileIds.filter(id => selectedFiles.has(id)).length;
+    
+    if (selectedCount === 0) return { checked: false, indeterminate: false };
+    if (selectedCount === fileIds.length) return { checked: true, indeterminate: false };
+    return { checked: false, indeterminate: true };
+  };
+
   const handleSelectAll = () => {
     if (selectedFiles.size === files.length) {
       setSelectedFiles(new Set());
@@ -612,81 +657,100 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
         return;
       }
 
-      const assignment = assignments[0]; // For now, handling single assignment
-      
-      // Validate required fields
-      if (!assignment.fileIds || !assignment.mediaType || !assignment.mediaId || !assignment.targetStructure) {
-        setError('Invalid assignment data');
-        return;
-      }
-      
-      // 1. Create media_assignments document
-      const mediaAssignment: any = {
-        mediaFileIds: assignment.fileIds,
-        primaryFileId: assignment.fileIds[0],
-        mediaType: assignment.mediaType,
-        mediaId: assignment.mediaId,
-        isPreferredVersion: true,
-        targetFolderStructure: assignment.targetStructure,
-        organizationStatus: 'pending' as AssignmentOrganizationStatus,
-        operations: [],
-        assignedBy: 'current-user', // TODO: Get from auth context
-        assignedDate: new Date(),
-        confidence: 100,
-        isManualAssignment: true,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-      
-      // Only include episode-specific fields if mediaType is 'episode'
-      if (assignment.mediaType === 'episode') {
-        mediaAssignment.seriesId = assignment.seriesId;
-        mediaAssignment.seasonId = assignment.seasonId;
-        mediaAssignment.seasonNumber = assignment.seasonNumber;
-        mediaAssignment.episodeNumber = assignment.episodeNumber;
-      }
-      
-      // Only include version if it's provided
-      if (assignment.version) {
-        mediaAssignment.version = assignment.version;
+      let successCount = 0;
+      let errorCount = 0;
+      let organizationErrors: string[] = [];
+
+      // Process all assignments
+      for (const assignment of assignments) {
+        try {
+          // Validate required fields
+          if (!assignment.fileIds || !assignment.mediaType || !assignment.mediaId || !assignment.targetStructure) {
+            console.error('Invalid assignment data:', assignment);
+            errorCount++;
+            continue;
+          }
+          
+          // 1. Create media_assignments document
+          const mediaAssignment: any = {
+            mediaFileIds: assignment.fileIds,
+            primaryFileId: assignment.fileIds[0],
+            mediaType: assignment.mediaType,
+            mediaId: assignment.mediaId,
+            isPreferredVersion: true,
+            targetFolderStructure: assignment.targetStructure,
+            organizationStatus: 'pending' as AssignmentOrganizationStatus,
+            operations: [],
+            assignedBy: 'current-user', // TODO: Get from auth context
+            assignedDate: new Date(),
+            confidence: 100,
+            isManualAssignment: true,
+            createdAt: new Date(),
+            updatedAt: new Date()
+          };
+          
+          // Only include episode-specific fields if mediaType is 'episode'
+          if (assignment.mediaType === 'episode') {
+            mediaAssignment.seriesId = assignment.seriesId;
+            mediaAssignment.seasonId = assignment.seasonId;
+            mediaAssignment.seasonNumber = assignment.seasonNumber;
+            mediaAssignment.episodeNumber = assignment.episodeNumber;
+          }
+          
+          // Only include version if it's provided
+          if (assignment.version) {
+            mediaAssignment.version = assignment.version;
+          }
+
+          const assignmentRef = await addDoc(
+            collection(db, 'media_assignments'),
+            mediaAssignment
+          );
+          
+          // 2. Update scanned_files status
+          const updatePromises = assignment.fileIds.map((fileId: string) =>
+            updateDoc(doc(db, 'scanned_files', fileId), {
+              assignmentStatus: 'assigned',
+              assignedToType: assignment.mediaType,
+              assignedToId: assignment.mediaId,
+              updatedAt: new Date()
+            })
+          );
+          
+          await Promise.all(updatePromises);
+          
+          // 3. Optional: Trigger file organization if requested
+          if (assignment.organizeNow) {
+            try {
+              const orgService = new MediaOrganizationService();
+              await orgService.organizeFiles(assignmentRef.id);
+            } catch (orgError: any) {
+              console.error('Error organizing files:', orgError);
+              organizationErrors.push(`${assignment.mediaTitle}: ${orgError.message}`);
+            }
+          }
+
+          successCount++;
+        } catch (assignError: any) {
+          console.error('Error processing assignment:', assignError);
+          errorCount++;
+        }
       }
 
-      const assignmentRef = await addDoc(
-        collection(db, 'media_assignments'),
-        mediaAssignment
-      );
-      
-      // 2. Update scanned_files status
-      const updatePromises = assignment.fileIds.map((fileId: string) =>
-        updateDoc(doc(db, 'scanned_files', fileId), {
-          assignmentStatus: 'assigned',
-          assignedToType: assignment.mediaType,
-          assignedToId: assignment.mediaId,
-          updatedAt: new Date()
-        })
-      );
-      
-      await Promise.all(updatePromises);
-      
-      // 3. Optional: Trigger file organization if requested
-      if (assignment.organizeNow) {
-        try {
-          const orgService = new MediaOrganizationService();
-          await orgService.organizeFiles(assignmentRef.id);
-          setSuccess(`Successfully assigned and organized ${assignment.fileIds.length} file(s) for ${assignment.mediaTitle}`);
-        } catch (orgError: any) {
-          console.error('Error organizing files:', orgError);
-          setError(`Files assigned but organization failed: ${orgError.message}. You can retry organization later.`);
-          return; // Don't clear selection on error
+      // Show appropriate success/error messages
+      if (successCount > 0 && errorCount === 0) {
+        if (organizationErrors.length > 0) {
+          setError(`${successCount} file(s) assigned but organization failed:\n${organizationErrors.join('\n')}`);
+        } else {
+          setSuccess(`Successfully assigned ${successCount} file(s)${assignments[0].organizeNow ? ' and organized' : ''}`);
+          setSelectedFiles(new Set());
+          setAssignmentDialog(false);
         }
+      } else if (successCount > 0 && errorCount > 0) {
+        setError(`Assigned ${successCount} file(s), but ${errorCount} failed`);
       } else {
-        setSuccess(`Successfully assigned ${assignment.fileIds.length} file(s) to ${assignment.mediaTitle}`);
+        setError(`Failed to assign all ${errorCount} file(s)`);
       }
-      
-      setSelectedFiles(new Set());
-      setAssignmentDialog(false);
-      
-      // Files will refresh on next scan or page reload
       
     } catch (err: any) {
       console.error('Error assigning media:', err);
@@ -719,6 +783,8 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
     const paddingLeft = depth * 32;
 
     if (node.isFolder) {
+      const { checked, indeterminate } = isFolderSelected(node);
+      
       return (
         <React.Fragment key={node.path}>
           <TableRow 
@@ -727,10 +793,23 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
               '&:hover': { bgcolor: 'rgba(61, 90, 254, 0.15)' },
               cursor: 'pointer'
             }}
-            onClick={() => toggleFolder(node.path)}
           >
-            <TableCell padding="checkbox" />
-            <TableCell colSpan={5} sx={{ pl: `${paddingLeft + 8}px` }}>
+            <TableCell padding="checkbox">
+              <Checkbox
+                checked={checked}
+                indeterminate={indeterminate}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  handleFolderSelect(node);
+                }}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </TableCell>
+            <TableCell 
+              colSpan={5} 
+              sx={{ pl: `${paddingLeft + 8}px` }}
+              onClick={() => toggleFolder(node.path)}
+            >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 {isExpanded ? <ExpandMore color="primary" /> : <ChevronRight color="primary" />}
                 <Folder color="primary" />
@@ -1118,17 +1197,34 @@ const MediaAssignment: React.FC<MediaAssignmentProps> = ({ files, scanId, librar
       <MediaAssignmentDialog
         open={assignmentDialog}
         onClose={() => setAssignmentDialog(false)}
-        selectedFiles={files.filter(f => selectedFiles.has(f.id)).map(f => ({
-          id: f.id,
-          fileName: f.name,
-          name: f.name,
-          path: f.path,
-          extension: f.extension || '',
-          size: f.metadata?.size || 0,
-          scannedAt: f.discoveredAt || new Date(),
-          scanId: f.scanId,
-          libraryPath: f.libraryPath,
-        } as any))}
+        selectedFiles={files.filter(f => selectedFiles.has(f.id)).map(f => {
+          // Ensure extension starts with a dot
+          const extension = f.extension?.startsWith('.') ? f.extension : `.${f.extension || ''}`;
+          
+          return {
+            id: f.id,
+            fileName: f.name,
+            fileExtension: extension,
+            filePath: f.path,
+            folderPath: f.path?.substring(0, f.path.lastIndexOf('\\')) || '',
+            scanId: f.scanId,
+            libraryPathId: f.libraryPath || '',
+            // Additional required MediaFile properties with defaults
+            relativePath: '',
+            fileSize: f.metadata?.size || 0,
+            fileSizeFormatted: '',
+            checksum: '',
+            createdDate: new Date(),
+            modifiedDate: new Date(f.metadata?.modified_time || new Date()),
+            lastScannedDate: f.discoveredAt,
+            isAvailable: true,
+            detectedMediaType: 'unknown',
+            confidence: 0,
+            audioTracks: [],
+            subtitleTracks: [],
+            assignmentStatus: 'unassigned',
+          } as any;
+        })}
         onAssign={handleAssignMedia}
       />
     </Box>

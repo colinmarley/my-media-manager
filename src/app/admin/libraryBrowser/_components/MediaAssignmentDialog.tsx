@@ -47,6 +47,7 @@ import MediaOrganizationService from '@/service/library/MediaOrganizationService
 import MediaAssignmentSearchService, { SearchResult } from '@/service/library/MediaAssignmentSearchService';
 import FolderBrowser from '../../library/_components/FolderBrowser';
 import EpisodeSelector from './EpisodeSelector';
+import EpisodeMatchingInterface from './EpisodeMatchingInterface';
 
 interface MediaAssignmentDialogProps {
   open: boolean;
@@ -71,6 +72,11 @@ interface AssignmentData {
   episodeNumber?: number;
 }
 
+interface FileEpisodeMapping {
+  fileId: string;
+  episodeId: string | null;
+}
+
 export default function MediaAssignmentDialog({
   open,
   onClose,
@@ -92,6 +98,9 @@ export default function MediaAssignmentDialog({
   const [searching, setSearching] = useState(false);
   const [previewStructure, setPreviewStructure] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
+  const [fileEpisodeMappings, setFileEpisodeMappings] = useState<Map<string, string>>(new Map());
+  const [availableEpisodes, setAvailableEpisodes] = useState<Episode[]>([]);
+  const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
 
   const orgService = new MediaOrganizationService();
 
@@ -252,33 +261,88 @@ export default function MediaAssignmentDialog({
 
   const handleAssign = async () => {
     if (!selectedMedia || selectedFiles.length === 0) return;
-    if (mediaType === 'episode' && !selectedEpisode) return;
+    if (mediaType === 'episode') {
+      // For episodes, check if we have multi-file assignment mode
+      if (selectedFiles.length > 1) {
+        // Validate all files have episode mappings
+        const unmappedFiles = selectedFiles.filter(f => !fileEpisodeMappings.has(f.id));
+        if (unmappedFiles.length > 0) {
+          setError(`${unmappedFiles.length} file(s) not mapped to episodes`);
+          return;
+        }
+      } else if (!selectedEpisode) {
+        return;
+      }
+    }
 
     setLoading(true);
     try {
       const firstFile = selectedFiles[0] as any;
-      // Get the current scanId (should be same for all files)
       const scanId = firstFile.scanId;
 
-      const assignments: AssignmentData[] = selectedFiles.map(file => ({
-        fileId: file.id,
-        fileIds: [file.id],
-        scanId: scanId || '',
-        mediaType: mediaType,
-        mediaId: mediaType === 'episode' && selectedEpisode 
-          ? selectedEpisode.id 
-          : (selectedMedia.id || selectedMedia.externalIds?.imdbId || ''),
-        mediaTitle: mediaType === 'episode' && selectedEpisode
-          ? selectedEpisode.title 
-          : selectedMedia.title,
-        targetStructure: previewStructure!,
-        version: mediaType === 'movie' ? version : undefined,
-        organizeNow: organizeNow,
-        seriesId: mediaType === 'episode' ? (selectedMedia.id || selectedMedia.externalIds?.imdbId) : undefined,
-        seasonId: selectedSeason?.id,
-        seasonNumber: selectedSeason?.seasonNumber ?? undefined,
-        episodeNumber: selectedEpisode?.episodeNumber ?? undefined,
-      }));
+      let assignments: AssignmentData[];
+
+      if (mediaType === 'episode' && selectedFiles.length > 1) {
+        // Multi-episode assignment using mappings
+        assignments = await Promise.all(
+          selectedFiles.map(async (file) => {
+            const episodeId = fileEpisodeMappings.get(file.id);
+            const episode = availableEpisodes.find(e => e.id === episodeId);
+            if (!episode) throw new Error(`Episode not found for file ${file.fileName}`);
+
+            const fileData: any = {
+              fileExtension: file.fileExtension?.startsWith('.') ? file.fileExtension : `.${file.fileExtension || ''}`,
+              folderPath: file.folderPath || '',
+              filePath: file.filePath || '',
+              fileName: file.fileName || ''
+            };
+
+            const structure = orgService.generateEpisodeStructure(
+              selectedMedia as Series,
+              selectedSeason!,
+              episode,
+              fileData,
+              destinationFolder || undefined
+            );
+
+            return {
+              fileId: file.id,
+              fileIds: [file.id],
+              scanId: scanId || '',
+              mediaType: 'episode' as const,
+              mediaId: episode.id,
+              mediaTitle: episode.title,
+              targetStructure: structure,
+              organizeNow: organizeNow,
+              seriesId: selectedMedia.id || selectedMedia.externalIds?.imdbId,
+              seasonId: selectedSeason?.id,
+              seasonNumber: selectedSeason?.seasonNumber ?? undefined,
+              episodeNumber: episode.episodeNumber ?? undefined,
+            };
+          })
+        );
+      } else {
+        // Single file or movie assignment
+        assignments = selectedFiles.map(file => ({
+          fileId: file.id,
+          fileIds: [file.id],
+          scanId: scanId || '',
+          mediaType: mediaType,
+          mediaId: mediaType === 'episode' && selectedEpisode 
+            ? selectedEpisode.id 
+            : (selectedMedia.id || selectedMedia.externalIds?.imdbId || ''),
+          mediaTitle: mediaType === 'episode' && selectedEpisode
+            ? selectedEpisode.title 
+            : selectedMedia.title,
+          targetStructure: previewStructure!,
+          version: mediaType === 'movie' ? version : undefined,
+          organizeNow: organizeNow,
+          seriesId: mediaType === 'episode' ? (selectedMedia.id || selectedMedia.externalIds?.imdbId) : undefined,
+          seasonId: selectedSeason?.id,
+          seasonNumber: selectedSeason?.seasonNumber ?? undefined,
+          episodeNumber: selectedEpisode?.episodeNumber ?? undefined,
+        }));
+      }
 
       await onAssign(assignments);
       onClose();
@@ -300,6 +364,66 @@ export default function MediaAssignmentDialog({
       return option;
     }
     return getMediaTitle(option);
+  };
+
+  // Auto-match files to episodes based on filename patterns
+  const autoMatchFiles = (episodes: Episode[]) => {
+    if (selectedFiles.length === 0 || episodes.length === 0) return;
+
+    const newMappings = new Map<string, string>();
+    
+    selectedFiles.forEach(file => {
+      const fileName = file.fileName.toLowerCase();
+      
+      // Try to extract episode number from filename
+      // Common patterns: E01, e01, episode 01, ep01, 01, s01e01, etc.
+      const episodePatterns = [
+        /[se](\d{1,2})e(\d{1,2})/i,  // S01E01
+        /episode[_\s-]*(\d{1,2})/i,   // episode 01
+        /ep[_\s-]*(\d{1,2})/i,        // ep01
+        /e(\d{1,2})/i,                // e01
+        /[\s.-](\d{1,2})[\s.-]/,      // .01. or -01-
+      ];
+
+      let episodeNum: number | null = null;
+      
+      for (const pattern of episodePatterns) {
+        const match = fileName.match(pattern);
+        if (match) {
+          // Get the episode number (might be in second group for S01E01 pattern)
+          episodeNum = parseInt(match[2] || match[1], 10);
+          break;
+        }
+      }
+
+      // Find matching episode
+      if (episodeNum !== null) {
+        const matchingEpisode = episodes.find(ep => ep.episodeNumber === episodeNum);
+        if (matchingEpisode) {
+          newMappings.set(file.id, matchingEpisode.id);
+        }
+      }
+    });
+
+    setFileEpisodeMappings(newMappings);
+  };
+
+  // Map file to episode (drag and drop or manual selection)
+  const mapFileToEpisode = (fileId: string, episodeId: string | null) => {
+    setFileEpisodeMappings(prev => {
+      const newMap = new Map(prev);
+      if (episodeId === null) {
+        newMap.delete(fileId);
+      } else {
+        newMap.set(fileId, episodeId);
+      }
+      return newMap;
+    });
+  };
+
+  // Clear all mappings
+  const clearAllMappings = () => {
+    setFileEpisodeMappings(new Map());
   };
 
   return (
@@ -443,14 +567,38 @@ export default function MediaAssignmentDialog({
 
           {/* Episode Selection (for TV shows) */}
           {mediaType === 'episode' && selectedMedia && (
-            <EpisodeSelector
-              seriesId={selectedMedia.id || selectedMedia.externalIds?.imdbId || ''}
-              selectedEpisode={selectedEpisode}
-              onEpisodeSelect={(season, episode) => {
-                setSelectedSeason(season);
-                setSelectedEpisode(episode);
-              }}
-            />
+            <>
+              {selectedFiles.length === 1 ? (
+                // Single file mode - use original EpisodeSelector
+                <EpisodeSelector
+                  seriesId={selectedMedia.id || selectedMedia.externalIds?.imdbId || ''}
+                  selectedEpisode={selectedEpisode}
+                  onEpisodeSelect={(season, episode) => {
+                    setSelectedSeason(season);
+                    setSelectedEpisode(episode);
+                    setAvailableEpisodes([episode]);
+                  }}
+                />
+              ) : (
+                // Multi-file mode - show matching interface
+                <EpisodeMatchingInterface
+                  seriesId={selectedMedia.id || selectedMedia.externalIds?.imdbId || ''}
+                  selectedFiles={selectedFiles}
+                  fileEpisodeMappings={fileEpisodeMappings}
+                  onMappingsChange={(mappings, episodes, season) => {
+                    setFileEpisodeMappings(mappings);
+                    setAvailableEpisodes(episodes);
+                    setSelectedSeason(season);
+                  }}
+                  onAutoMatch={autoMatchFiles}
+                  onClearAll={clearAllMappings}
+                  draggedFileId={draggedFileId}
+                  onDragStart={setDraggedFileId}
+                  onDragEnd={() => setDraggedFileId(null)}
+                  onMapFile={mapFileToEpisode}
+                />
+              )}
+            </>
           )}
 
           {/* Version Selection (for movies) */}
@@ -604,7 +752,12 @@ export default function MediaAssignmentDialog({
         <Button
           onClick={handleAssign}
           variant="contained"
-          disabled={!selectedMedia || loading || (mediaType === 'episode' && (!selectedEpisode || !selectedSeason))}
+          disabled={
+            !selectedMedia || 
+            loading || 
+            (mediaType === 'episode' && selectedFiles.length === 1 && (!selectedEpisode || !selectedSeason)) ||
+            (mediaType === 'episode' && selectedFiles.length > 1 && (fileEpisodeMappings.size !== selectedFiles.length || !selectedSeason))
+          }
           startIcon={loading && <CircularProgress size={20} />}
         >
           Assign Files
