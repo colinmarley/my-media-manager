@@ -60,6 +60,9 @@ class LibrarySettings(BaseSettings):
     firebase_project_id: str = "media-db-cc511"
     firebase_credentials_path: str = ""  # Empty for default credentials
     
+    # External API settings
+    omdb_api_key: str = ""  # Set via environment variable MEDIA_LIBRARY_OMDB_API_KEY
+    
     class Config:
         env_file = ".env"
         env_prefix = "MEDIA_LIBRARY_"

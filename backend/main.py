@@ -32,8 +32,11 @@ from api.library_operations import router as library_router
 from api.metadata_operations import router as metadata_router
 from api.media_operations import router as media_router
 from api.file_browser import router as file_browser_router
+from api.ingress_operations import router as ingress_router
 from services.filesystem_manager import FileSystemManager
 from services.file_watcher_service import FileWatcherService
+from services.ingress_queue_service import IngressQueueService
+from services.auto_matcher_service import AutoMatcherService
 from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
 from services.task_manager import AsyncTaskManager
@@ -45,6 +48,8 @@ metadata_extractor = None
 library_scanner = None
 task_manager = None
 file_watcher_service = None
+ingress_queue_service = None
+auto_matcher_service = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -71,7 +76,7 @@ async def lifespan(app: FastAPI):
         Control to the running application
     """
     # Startup
-    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service
+    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service, ingress_queue_service, auto_matcher_service
     
     logger.info("Starting Media Library Backend")
     
@@ -80,7 +85,12 @@ async def lifespan(app: FastAPI):
     metadata_extractor = MetadataExtractor()
     library_scanner = LibraryScanner(file_manager, metadata_extractor)
     task_manager = AsyncTaskManager(max_workers=settings.scan_worker_threads)
-    file_watcher_service = FileWatcherService(file_manager=file_manager)
+    auto_matcher_service = AutoMatcherService(omdb_api_key=settings.omdb_api_key)
+    ingress_queue_service = IngressQueueService()
+    file_watcher_service = FileWatcherService(
+        file_manager=file_manager,
+        queue_callback=ingress_queue_service.add_from_watcher,
+    )
     
     # Store services in app state for dependency injection in routes
     app.state.file_manager = file_manager
@@ -88,6 +98,8 @@ async def lifespan(app: FastAPI):
     app.state.library_scanner = library_scanner
     app.state.task_manager = task_manager
     app.state.file_watcher_service = file_watcher_service
+    app.state.ingress_queue_service = ingress_queue_service
+    app.state.auto_matcher_service = auto_matcher_service
     
     logger.info("Services initialized successfully")
     
@@ -130,6 +142,7 @@ app.include_router(file_browser_router, tags=["File Browser"])
 app.include_router(library_router, prefix="/api/library", tags=["Library Operations"])
 app.include_router(metadata_router, prefix="/api/metadata", tags=["Metadata Operations"])
 app.include_router(media_router, prefix="/api/media", tags=["Media Operations"])
+app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
 
 @app.get("/")
 async def root():
@@ -166,6 +179,8 @@ async def health_check():
             "library_scanner": app.state.library_scanner is not None,
             "task_manager": app.state.task_manager is not None,
             "file_watcher_service": app.state.file_watcher_service is not None,
+            "ingress_queue_service": app.state.ingress_queue_service is not None,
+            "auto_matcher_service": app.state.auto_matcher_service is not None,
         }
     }
 
