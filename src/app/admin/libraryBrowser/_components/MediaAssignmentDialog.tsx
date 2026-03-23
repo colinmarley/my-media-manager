@@ -125,7 +125,6 @@ export default function MediaAssignmentDialog({
     }
   };
 
-  // Button search (Firebase + OMDB) - triggered when user clicks search button
   const handleOMDBSearch = async () => {
     if (!searchQuery || searchQuery.length < 2) {
       setError('Please enter at least 2 characters');

@@ -37,6 +37,13 @@ class LibrarySettings(BaseSettings):
     metadata_extraction_timeout: int = 30
     max_concurrent_scans: int = 2
     scan_worker_threads: int = 4
+
+    # Ingress watcher settings
+    ingress_file_stability_wait_seconds: int = 10
+    ingress_debounce_seconds: int = 5
+    ingress_stability_poll_interval_seconds: int = 2
+    ingress_use_polling_watcher: bool = False
+    ingress_watch_recursive: bool = True
     
     # Security settings
     enable_file_integrity_checks: bool = False  # Disabled for performance during scanning

@@ -33,6 +33,7 @@ from api.metadata_operations import router as metadata_router
 from api.media_operations import router as media_router
 from api.file_browser import router as file_browser_router
 from services.filesystem_manager import FileSystemManager
+from services.file_watcher_service import FileWatcherService
 from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
 from services.task_manager import AsyncTaskManager
@@ -43,6 +44,7 @@ file_manager = None
 metadata_extractor = None
 library_scanner = None
 task_manager = None
+file_watcher_service = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -69,7 +71,7 @@ async def lifespan(app: FastAPI):
         Control to the running application
     """
     # Startup
-    global file_manager, metadata_extractor, library_scanner, task_manager
+    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service
     
     logger.info("Starting Media Library Backend")
     
@@ -78,12 +80,14 @@ async def lifespan(app: FastAPI):
     metadata_extractor = MetadataExtractor()
     library_scanner = LibraryScanner(file_manager, metadata_extractor)
     task_manager = AsyncTaskManager(max_workers=settings.scan_worker_threads)
+    file_watcher_service = FileWatcherService(file_manager=file_manager)
     
     # Store services in app state for dependency injection in routes
     app.state.file_manager = file_manager
     app.state.metadata_extractor = metadata_extractor
     app.state.library_scanner = library_scanner
     app.state.task_manager = task_manager
+    app.state.file_watcher_service = file_watcher_service
     
     logger.info("Services initialized successfully")
     
@@ -99,6 +103,9 @@ async def lifespan(app: FastAPI):
     # Cleanup task manager and remove all task records
     if task_manager:
         task_manager.cleanup_old_tasks(max_age_hours=0)  # Clean all
+
+    if file_watcher_service and file_watcher_service.is_running:
+        file_watcher_service.stop_watching()
 
 # Create FastAPI application instance with OpenAPI documentation
 app = FastAPI(
@@ -157,7 +164,8 @@ async def health_check():
             "file_manager": app.state.file_manager is not None,
             "metadata_extractor": app.state.metadata_extractor is not None,
             "library_scanner": app.state.library_scanner is not None,
-            "task_manager": app.state.task_manager is not None
+            "task_manager": app.state.task_manager is not None,
+            "file_watcher_service": app.state.file_watcher_service is not None,
         }
     }
 
