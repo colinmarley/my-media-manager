@@ -123,7 +123,7 @@ async def get_ingress_queue_items(
 async def process_next_ingress_item(req: Request):
     queue_service = req.app.state.ingress_queue_service
 
-    queue_item = queue_service.process_next_item()
+    queue_item = await queue_service.process_next_item()
     return {
         "success": True,
         "data": {
@@ -138,7 +138,7 @@ async def process_next_ingress_item(req: Request):
 async def retry_ingress_item(payload: QueueRetryRequest, req: Request):
     queue_service = req.app.state.ingress_queue_service
 
-    queue_item = queue_service.retry_item(payload.itemId)
+    queue_item = await queue_service.retry_item(payload.itemId)
     if queue_item is None:
         raise HTTPException(status_code=404, detail={
             "type": "NotFoundError",
@@ -157,7 +157,7 @@ async def retry_ingress_item(payload: QueueRetryRequest, req: Request):
 async def mark_ingress_item_complete(payload: QueueRetryRequest, req: Request):
     queue_service = req.app.state.ingress_queue_service
 
-    queue_item = queue_service.mark_complete(payload.itemId)
+    queue_item = await queue_service.mark_complete(payload.itemId)
     if queue_item is None:
         raise HTTPException(status_code=404, detail={
             "type": "NotFoundError",
@@ -176,7 +176,7 @@ async def mark_ingress_item_complete(payload: QueueRetryRequest, req: Request):
 async def mark_ingress_item_failed(payload: QueueFailRequest, req: Request):
     queue_service = req.app.state.ingress_queue_service
 
-    queue_item = queue_service.mark_failed(payload.itemId, payload.reason)
+    queue_item = await queue_service.mark_failed(payload.itemId, payload.reason)
     if queue_item is None:
         raise HTTPException(status_code=404, detail={
             "type": "NotFoundError",

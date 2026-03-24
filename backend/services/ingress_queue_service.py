@@ -41,6 +41,8 @@ class IngressQueueItem:
     confidence_score: Optional[int] = None
     assignment_id: Optional[str] = None
     parsed_info: Optional[Dict[str, Any]] = None
+    best_match: Optional[Dict[str, Any]] = None
+    match_candidates: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -49,8 +51,19 @@ class IngressQueueItem:
 class IngressQueueService:
     """In-memory queue and processing coordinator for ingress files."""
 
-    def __init__(self, parser: Optional[FilenameParser] = None):
+    def __init__(
+        self,
+        parser: Optional[FilenameParser] = None,
+        auto_matcher_service: Optional[Any] = None,
+        firestore_service: Optional[Any] = None,
+        assignment_orchestrator: Optional[Any] = None,
+        auto_assign_threshold: int = 80,
+    ):
         self.parser = parser or FilenameParser()
+        self.auto_matcher_service = auto_matcher_service
+        self.firestore_service = firestore_service
+        self.assignment_orchestrator = assignment_orchestrator
+        self.auto_assign_threshold = max(0, min(auto_assign_threshold, 100))
         self.lock = threading.RLock()
 
         self.items_by_id: Dict[str, IngressQueueItem] = {}
@@ -94,7 +107,7 @@ class IngressQueueService:
         )
         return queue_item
 
-    def process_next_item(self) -> Optional[IngressQueueItem]:
+    async def process_next_item(self) -> Optional[IngressQueueItem]:
         """Process the next pending item and update status."""
         with self.lock:
             candidate = self._get_next_pending_item()
@@ -108,26 +121,53 @@ class IngressQueueService:
         start_time = time.time()
         try:
             parsed_info = self.parser.parse_filename(candidate.file_name).to_dict()
-            confidence_score = self._calculate_confidence(parsed_info)
+            match_result = self._run_matcher(parsed_info)
+            best_match = match_result.get("best_match") if match_result else None
+
+            confidence_score = None
+            if best_match and isinstance(best_match, dict):
+                confidence_score = best_match.get("confidence_score")
+
+            if confidence_score is None:
+                confidence_score = self._calculate_confidence(parsed_info)
 
             with self.lock:
                 candidate.parsed_info = parsed_info
                 candidate.confidence_score = confidence_score
+                candidate.best_match = best_match
+                candidate.match_candidates = (
+                    match_result.get("candidates", []) if match_result else []
+                )
                 candidate.status = (
-                    QUEUE_AUTO_ASSIGNED if confidence_score >= 80 else QUEUE_NEEDS_REVIEW
+                    QUEUE_AUTO_ASSIGNED
+                    if confidence_score >= self.auto_assign_threshold
+                    else QUEUE_NEEDS_REVIEW
                 )
                 candidate.processed_at = time.time()
 
+            if candidate.status == QUEUE_AUTO_ASSIGNED and self.assignment_orchestrator:
+                assignment_id = await self._attempt_auto_assignment(candidate)
+                with self.lock:
+                    candidate.assignment_id = assignment_id
+
+            await self._persist_queue_item(candidate)
+
+            history_item = {
+                "item_id": candidate.id,
+                "file_path": candidate.file_path,
+                "status": candidate.status,
+                "confidence_score": confidence_score,
+                "assignment_id": candidate.assignment_id,
+                "duration_ms": int((time.time() - start_time) * 1000),
+                "processed_at": candidate.processed_at,
+            }
+
+            with self.lock:
                 self.processing_history.append(
-                    {
-                        "item_id": candidate.id,
-                        "file_path": candidate.file_path,
-                        "status": candidate.status,
-                        "confidence_score": confidence_score,
-                        "duration_ms": int((time.time() - start_time) * 1000),
-                        "processed_at": candidate.processed_at,
-                    }
+                    history_item
                 )
+
+            await self._persist_processing_history(history_item)
 
             return candidate
         except Exception as exc:
@@ -135,16 +175,24 @@ class IngressQueueService:
                 candidate.status = QUEUE_FAILED
                 candidate.last_error = str(exc)
                 candidate.processed_at = time.time()
+
+            await self._persist_queue_item(candidate)
+
+            history_item = {
+                "item_id": candidate.id,
+                "file_path": candidate.file_path,
+                "status": QUEUE_FAILED,
+                "error": str(exc),
+                "duration_ms": int((time.time() - start_time) * 1000),
+                "processed_at": candidate.processed_at,
+            }
+
+            with self.lock:
                 self.processing_history.append(
-                    {
-                        "item_id": candidate.id,
-                        "file_path": candidate.file_path,
-                        "status": QUEUE_FAILED,
-                        "error": str(exc),
-                        "duration_ms": int((time.time() - start_time) * 1000),
-                        "processed_at": candidate.processed_at,
-                    }
+                    history_item
                 )
+
+            await self._persist_processing_history(history_item)
 
             logger.error(
                 "Ingress queue item processing failed",
@@ -154,7 +202,7 @@ class IngressQueueService:
             )
             return candidate
 
-    def retry_item(self, item_id: str) -> Optional[IngressQueueItem]:
+    async def retry_item(self, item_id: str) -> Optional[IngressQueueItem]:
         """Retry a failed queue item by placing it back into pending state."""
         with self.lock:
             item = self.items_by_id.get(item_id)
@@ -163,9 +211,11 @@ class IngressQueueService:
 
             item.status = QUEUE_PENDING
             item.last_error = None
-            return item
 
-    def mark_complete(self, item_id: str) -> Optional[IngressQueueItem]:
+        await self._persist_queue_item(item)
+        return item
+
+    async def mark_complete(self, item_id: str) -> Optional[IngressQueueItem]:
         """Mark an item as fully completed after organization."""
         with self.lock:
             item = self.items_by_id.get(item_id)
@@ -174,9 +224,11 @@ class IngressQueueService:
 
             item.status = QUEUE_COMPLETED
             item.processed_at = time.time()
-            return item
 
-    def mark_failed(self, item_id: str, reason: str) -> Optional[IngressQueueItem]:
+        await self._persist_queue_item(item)
+        return item
+
+    async def mark_failed(self, item_id: str, reason: str) -> Optional[IngressQueueItem]:
         """Mark an item as failed with a reason."""
         with self.lock:
             item = self.items_by_id.get(item_id)
@@ -186,7 +238,21 @@ class IngressQueueService:
             item.status = QUEUE_FAILED
             item.last_error = reason
             item.processed_at = time.time()
-            return item
+
+        await self._persist_queue_item(item)
+
+        history_item = {
+            "item_id": item.id,
+            "file_path": item.file_path,
+            "status": QUEUE_FAILED,
+            "error": reason,
+            "processed_at": item.processed_at,
+        }
+        with self.lock:
+            self.processing_history.append(history_item)
+
+        await self._persist_processing_history(history_item)
+        return item
 
     def get_item(self, item_id: str) -> Optional[Dict[str, Any]]:
         with self.lock:
@@ -275,3 +341,47 @@ class IngressQueueService:
             score += 5
 
         return max(0, min(score, 100))
+
+    def _run_matcher(self, parsed_info: Dict[str, Any]) -> Dict[str, Any]:
+        if self.auto_matcher_service is None:
+            return {"status": "matcher_unavailable", "candidates": [], "best_match": None}
+
+        try:
+            return self.auto_matcher_service.search_and_match(parsed_info)
+        except Exception as exc:
+            logger.error("Auto-matcher failed", error=str(exc))
+            return {"status": "matcher_failed", "candidates": [], "best_match": None}
+
+    async def _attempt_auto_assignment(self, item: IngressQueueItem) -> Optional[str]:
+        try:
+            return await self.assignment_orchestrator.auto_assign(item.to_dict())
+        except Exception as exc:
+            logger.error(
+                "Auto-assignment failed",
+                item_id=item.id,
+                file_path=item.file_path,
+                error=str(exc),
+            )
+            return None
+
+    async def _persist_queue_item(self, item: IngressQueueItem) -> None:
+        if self.firestore_service is None:
+            return
+
+        try:
+            await self.firestore_service.save_ingress_queue_item(item.to_dict())
+        except Exception as exc:
+            logger.warning(
+                "Failed to persist ingress queue item",
+                item_id=item.id,
+                error=str(exc),
+            )
+
+    async def _persist_processing_history(self, history_item: Dict[str, Any]) -> None:
+        if self.firestore_service is None:
+            return
+
+        try:
+            await self.firestore_service.save_ingress_processing_history(history_item)
+        except Exception as exc:
+            logger.warning("Failed to persist processing history", error=str(exc))

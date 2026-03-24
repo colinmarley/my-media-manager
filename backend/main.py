@@ -37,6 +37,8 @@ from services.filesystem_manager import FileSystemManager
 from services.file_watcher_service import FileWatcherService
 from services.ingress_queue_service import IngressQueueService
 from services.auto_matcher_service import AutoMatcherService
+from services.assignment_orchestrator import AssignmentOrchestrator
+from services.firestore_service import FirestoreService
 from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
 from services.task_manager import AsyncTaskManager
@@ -50,6 +52,8 @@ task_manager = None
 file_watcher_service = None
 ingress_queue_service = None
 auto_matcher_service = None
+firestore_service = None
+assignment_orchestrator = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -76,7 +80,7 @@ async def lifespan(app: FastAPI):
         Control to the running application
     """
     # Startup
-    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service, ingress_queue_service, auto_matcher_service
+    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service, ingress_queue_service, auto_matcher_service, firestore_service, assignment_orchestrator
     
     logger.info("Starting Media Library Backend")
     
@@ -85,8 +89,17 @@ async def lifespan(app: FastAPI):
     metadata_extractor = MetadataExtractor()
     library_scanner = LibraryScanner(file_manager, metadata_extractor)
     task_manager = AsyncTaskManager(max_workers=settings.scan_worker_threads)
+    firestore_service = FirestoreService(settings.firebase_project_id)
+    await firestore_service.initialize()
     auto_matcher_service = AutoMatcherService(omdb_api_key=settings.omdb_api_key)
-    ingress_queue_service = IngressQueueService()
+    assignment_orchestrator = AssignmentOrchestrator(
+        firestore_service=firestore_service,
+    )
+    ingress_queue_service = IngressQueueService(
+        auto_matcher_service=auto_matcher_service,
+        firestore_service=firestore_service,
+        assignment_orchestrator=assignment_orchestrator,
+    )
     file_watcher_service = FileWatcherService(
         file_manager=file_manager,
         queue_callback=ingress_queue_service.add_from_watcher,
@@ -100,6 +113,8 @@ async def lifespan(app: FastAPI):
     app.state.file_watcher_service = file_watcher_service
     app.state.ingress_queue_service = ingress_queue_service
     app.state.auto_matcher_service = auto_matcher_service
+    app.state.firestore_service = firestore_service
+    app.state.assignment_orchestrator = assignment_orchestrator
     
     logger.info("Services initialized successfully")
     
@@ -181,6 +196,8 @@ async def health_check():
             "file_watcher_service": app.state.file_watcher_service is not None,
             "ingress_queue_service": app.state.ingress_queue_service is not None,
             "auto_matcher_service": app.state.auto_matcher_service is not None,
+            "firestore_service": app.state.firestore_service is not None,
+            "assignment_orchestrator": app.state.assignment_orchestrator is not None,
         }
     }
 

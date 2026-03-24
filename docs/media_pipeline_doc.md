@@ -247,14 +247,14 @@ omdb_api_key: str = ""  # Set via MEDIA_LIBRARY_OMDB_API_KEY env var
 3. Queue service adds to ingress_queue with status `pending`
 4. `/api/ingress/queue/process-next` parses filename and runs auto-matcher
 5. OMDB search returns matches, confidence calculated
-6. Item marked `auto_assigned` if confidence >= 80, else `needs_review`
-7. Results persisted to Firestore `ingress_queue` collection
+6. High-confidence items are auto-assigned via assignment orchestrator
+7. Queue + processing history are persisted to Firestore collections
+8. Item marked `auto_assigned` if confidence >= 80, else `needs_review`
 
 ## Remaining Work
 
 - Integrate real OMDB API key from environment
-- Add automatic Firestore persistence during queue processing
-- Implement assignment + organization to Jellyfin paths
+- Implement final organization to Jellyfin destination paths
 - Add frontend for reviewing low-confidence items
 - Implement batch processing and retry logic at API level
 

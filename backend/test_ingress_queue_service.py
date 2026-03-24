@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import unittest
+import asyncio
 from dataclasses import dataclass
 
 from services.ingress_queue_service import (
@@ -24,9 +25,49 @@ class MockQueuedIngressFile:
     last_event_type: str
 
 
+class MockAutoMatcher:
+    def search_and_match(self, parsed_info):
+        return {
+            "status": "success",
+            "found": True,
+            "candidates": [
+                {
+                    "title": "The Matrix",
+                    "media_type": "movie",
+                    "imdb_id": "tt0133093",
+                    "confidence_score": 92,
+                }
+            ],
+            "best_match": {
+                "title": "The Matrix",
+                "media_type": "movie",
+                "imdb_id": "tt0133093",
+                "confidence_score": 92,
+            },
+        }
+
+
+class MockAssignmentOrchestrator:
+    async def auto_assign(self, queue_item):
+        return "assignment-123"
+
+
 class IngressQueueServiceTests(unittest.TestCase):
     def setUp(self):
         self.service = IngressQueueService()
+
+    def test_process_next_item_uses_matcher_and_assignment(self):
+        service = IngressQueueService(
+            auto_matcher_service=MockAutoMatcher(),
+            assignment_orchestrator=MockAssignmentOrchestrator(),
+        )
+        service.add_from_watcher(self._build_item("The.Matrix.1999.1080p.mkv"))
+
+        processed = asyncio.run(service.process_next_item())
+
+        self.assertEqual(processed.confidence_score, 92)
+        self.assertEqual(processed.status, QUEUE_AUTO_ASSIGNED)
+        self.assertEqual(processed.assignment_id, "assignment-123")
 
     def _build_item(self, file_name: str) -> MockQueuedIngressFile:
         return MockQueuedIngressFile(
@@ -48,7 +89,7 @@ class IngressQueueServiceTests(unittest.TestCase):
 
     def test_process_next_item_movie_auto_assigned(self):
         self.service.add_from_watcher(self._build_item("The.Matrix.1999.1080p.mkv"))
-        processed = self.service.process_next_item()
+        processed = asyncio.run(self.service.process_next_item())
 
         self.assertIsNotNone(processed)
         self.assertIn(processed.status, [QUEUE_AUTO_ASSIGNED, QUEUE_NEEDS_REVIEW])
@@ -57,13 +98,13 @@ class IngressQueueServiceTests(unittest.TestCase):
     def test_retry_and_marking_states(self):
         queue_item = self.service.add_from_watcher(self._build_item("clip.mkv"))
 
-        failed = self.service.mark_failed(queue_item.id, "test failure")
+        failed = asyncio.run(self.service.mark_failed(queue_item.id, "test failure"))
         self.assertEqual(failed.status, QUEUE_FAILED)
 
-        retried = self.service.retry_item(queue_item.id)
+        retried = asyncio.run(self.service.retry_item(queue_item.id))
         self.assertEqual(retried.status, QUEUE_PENDING)
 
-        completed = self.service.mark_complete(queue_item.id)
+        completed = asyncio.run(self.service.mark_complete(queue_item.id))
         self.assertEqual(completed.status, QUEUE_COMPLETED)
 
 
