@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { auth } from '../../firebaseConfig';
+import { auth, firebaseConfigError } from '../../firebaseConfig';
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
 
 interface AuthState {
@@ -24,6 +24,9 @@ const useAuthenticationStore = create<AuthState>((set: (arg0: { user?: any; load
   login: async (email: string, password: string) => {
     set({ loading: true, error: null });
     try {
+      if (!auth) {
+        throw new Error(firebaseConfigError || 'Firebase auth is not configured');
+      }
       await signInWithEmailAndPassword(auth, email, password);
       console.log(auth.currentUser);
       console.log(auth);
@@ -38,6 +41,9 @@ const useAuthenticationStore = create<AuthState>((set: (arg0: { user?: any; load
   register: async (email, password) => {
     set({ loading: true, error: null });
     try {
+      if (!auth) {
+        throw new Error(firebaseConfigError || 'Firebase auth is not configured');
+      }
       await createUserWithEmailAndPassword(auth, email, password);
       set({ user: auth.currentUser });
     } catch (error: any) {
@@ -49,6 +55,9 @@ const useAuthenticationStore = create<AuthState>((set: (arg0: { user?: any; load
   logout: async () => {
     set({ loading: true, error: null });
     try {
+      if (!auth) {
+        throw new Error(firebaseConfigError || 'Firebase auth is not configured');
+      }
       await signOut(auth);
       set({ user: null });
     } catch (error: any) {
@@ -59,9 +68,11 @@ const useAuthenticationStore = create<AuthState>((set: (arg0: { user?: any; load
   },
 }));
 
-// Initialize auth state listener
-onAuthStateChanged(auth, (user) => {
-  useAuthenticationStore.getState().setUser(user);
-});
+// Initialize auth state listener only when Firebase auth is configured
+if (auth) {
+  onAuthStateChanged(auth, (user) => {
+    useAuthenticationStore.getState().setUser(user);
+  });
+}
 
 export default useAuthenticationStore;

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { ReactNode } from 'react';
-import { useRouter, usePathname } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { Tabs, Tab, Box } from '@mui/material';
 import useAdminStore from '@/store/useAdminStore';
 
@@ -10,12 +10,33 @@ interface AdminLayoutProps {
 }
 
 const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
-  const router = useRouter();
-  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { selectedType, setSelectedType } = useAdminStore();
 
+  React.useEffect(() => {
+    const requestedView = searchParams.get('view');
+    if (!requestedView) {
+      return;
+    }
+
+    const validViews = new Set([
+      'Movie',
+      'Release',
+      'Series',
+      'Season',
+      'Episode',
+      'Disc',
+      'Collection',
+      'ImageManager',
+      'LibraryBrowser',
+    ]);
+
+    if (validViews.has(requestedView) && requestedView !== selectedType) {
+      setSelectedType(requestedView);
+    }
+  }, [searchParams, selectedType, setSelectedType]);
+
   const handleChange = (event: React.ChangeEvent<{}>, newValue: string) => {
-    // router.push(newValue);
     setSelectedType(newValue);
   };
 
@@ -26,7 +47,9 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
         onChange={handleChange}
         indicatorColor="primary"
         textColor="primary"
-        centered
+        variant="scrollable"
+        scrollButtons="auto"
+        allowScrollButtonsMobile
       >
         <Tab label="Movies" value="Movie" />
         <Tab label="Release" value="Release" />

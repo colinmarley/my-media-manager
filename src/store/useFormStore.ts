@@ -16,24 +16,26 @@ const useFormStore = create<FormStoreState>((set) => {
     const firestoreService = new FirestoreService('actors');
 
     const refreshActorOptions = async () => {
-        console.log('Refreshing actor options...');
-        const actors = await firestoreService.getDocuments();
-        set({
-            actorOptions: [
-                ...actors.map((actor) => ({ label: actor.fullName, id: actor.id })),
-                { label: '+ New Actor to Collection', id: 'new' },
-            ],
-        });
+        try {
+            const actors = await firestoreService.getDocuments();
+            set({
+                actorOptions: [
+                    ...actors.map((actor) => ({ label: actor.fullName, id: actor.id })),
+                    { label: '+ New Actor to Collection', id: 'new' },
+                ],
+            });
+        } catch (error) {
+            console.warn('Unable to load actor options (non-critical):', error);
+            set({
+                actorOptions: [{ label: '+ New Actor to Collection', id: 'new' }],
+            });
+        }
     };
 
     const closeAddActorModal = () => {
         set({ shouldShowAddActorModal: false });
-        console.log('Closed add actor modal');
-        refreshActorOptions();
+        void refreshActorOptions();
     };
-
-    // Initialize actorOptions on store creation
-    refreshActorOptions();
 
     return {
         shouldShowAddActorModal: false,

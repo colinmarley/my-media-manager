@@ -1,6 +1,14 @@
 import axios from 'axios';
 import { collection, query, where, limit, getDocs, orderBy, startAfter, DocumentSnapshot } from 'firebase/firestore';
 import { db } from '../../../firebaseConfig';
+import { firebaseConfigError } from '../../../firebaseConfig';
+
+const getFirestoreDb = () => {
+  if (!db) {
+    throw new Error(firebaseConfigError || 'Firebase Firestore is not configured');
+  }
+  return db;
+};
 
 export interface ScannedFile {
   id: string;
@@ -89,9 +97,11 @@ class LibraryBrowserService {
     offset?: number;
   }): Promise<{ files: ScannedFile[]; count: number; offset: number; limit: number }> {
     try {
+      const firestoreDb = getFirestoreDb();
+
       // Create base query
       let q = query(
-        collection(db, 'scanned_files'),
+        collection(firestoreDb, 'scanned_files'),
         orderBy('discoveredAt', 'desc'),
         limit(params?.limit || 100)
       );
@@ -132,9 +142,11 @@ class LibraryBrowserService {
     offset?: number;
   }): Promise<{ directories: ScannedDirectory[]; count: number; offset: number; limit: number }> {
     try {
+      const firestoreDb = getFirestoreDb();
+
       // Create base query
       let q = query(
-        collection(db, 'scanned_directories'),
+        collection(firestoreDb, 'scanned_directories'),
         orderBy('discoveredAt', 'desc'),
         limit(params?.limit || 100)
       );
@@ -290,9 +302,11 @@ class LibraryBrowserService {
    */
   async getFolderChildren(folderPath: string): Promise<{ files: ScannedFile[]; directories: ScannedDirectory[] }> {
     try {
+      const firestoreDb = getFirestoreDb();
+
       // Get files in this folder
       const filesQuery = query(
-        collection(db, 'scanned_files'),
+        collection(firestoreDb, 'scanned_files'),
         where('path', '>=', folderPath),
         where('path', '<', folderPath + '\uffff'),
         orderBy('path', 'asc')
@@ -300,7 +314,7 @@ class LibraryBrowserService {
 
       // Get directories in this folder
       const dirsQuery = query(
-        collection(db, 'scanned_directories'),
+        collection(firestoreDb, 'scanned_directories'),
         where('path', '>=', folderPath),
         where('path', '<', folderPath + '\uffff'),
         orderBy('path', 'asc')
@@ -441,13 +455,15 @@ class LibraryBrowserService {
    */
   async getRootFolders(libraryPath: string): Promise<ScannedDirectory[]> {
     try {
+      const firestoreDb = getFirestoreDb();
+
       const query = {
         libraryPath,
         // Only get direct children of the library path
         parentPath: libraryPath
       };
 
-      const dirsQuery = collection(db, 'scanned_directories');
+      const dirsQuery = collection(firestoreDb, 'scanned_directories');
       const snapshot = await getDocs(dirsQuery);
 
       const allDirs: ScannedDirectory[] = snapshot.docs.map(doc => ({

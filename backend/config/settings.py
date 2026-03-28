@@ -1,5 +1,6 @@
 import os
 from typing import List
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 
 class LibrarySettings(BaseSettings):
@@ -44,6 +45,14 @@ class LibrarySettings(BaseSettings):
     ingress_stability_poll_interval_seconds: int = 2
     ingress_use_polling_watcher: bool = False
     ingress_watch_recursive: bool = True
+    ingress_default_paths: List[str] = [
+        "/data/media/encoded"
+    ]
+    ingress_auto_process_enabled: bool = True
+    ingress_auto_process_interval_seconds: int = 2
+    ingress_auto_assign_threshold: int = 80
+    ingress_auto_organize_enabled: bool = True
+    ingress_auto_start_watcher: bool = False
     
     # Security settings
     enable_file_integrity_checks: bool = False  # Disabled for performance during scanning
@@ -55,6 +64,12 @@ class LibrarySettings(BaseSettings):
     
     # Temporary directory
     temp_directory: str = "/tmp/media_manager"
+
+    # File organization destination mount
+    jellyfin_dest_base: str = Field(
+        default="/mnt/beelink-media",
+        validation_alias=AliasChoices("JELLYFIN_DEST_BASE", "MEDIA_LIBRARY_JELLYFIN_DEST_BASE"),
+    )
     
     # Firebase settings
     firebase_project_id: str = "media-db-cc511"
@@ -62,6 +77,7 @@ class LibrarySettings(BaseSettings):
     
     # External API settings
     omdb_api_key: str = ""  # Set via environment variable MEDIA_LIBRARY_OMDB_API_KEY
+    tmdb_api_key: str = ""  # Set via environment variable MEDIA_LIBRARY_TMDB_API_KEY
     
     class Config:
         env_file = ".env"

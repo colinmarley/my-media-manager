@@ -1,11 +1,14 @@
 import axios from 'axios';
 
-const TMDB_BASE_URL = process.env.NEXT_PUBLIC_TMDB_BASE_URL;
+const TMDB_BASE_URL = process.env.NEXT_PUBLIC_TMDB_BASE_URL?.replace(/\/$/, '') || 'https://api.themoviedb.org/3';
 const TMDB_API_KEY = process.env.NEXT_PUBLIC_TMDB_API_KEY;
 
-if (!TMDB_API_KEY) {
-  throw new Error('TMDB_API_KEY is not defined in the environment variables.');
-}
+const getTmdbApiKey = (): string => {
+  if (!TMDB_API_KEY || TMDB_API_KEY.includes('your_')) {
+    throw new Error('TMDB is not configured. Set NEXT_PUBLIC_TMDB_API_KEY in .env.local and restart Next.js.');
+  }
+  return TMDB_API_KEY;
+};
 
 class TmdbAuthentication {
   private requestToken: string | null = null;
@@ -17,9 +20,10 @@ class TmdbAuthentication {
    */
   async createRequestToken(): Promise<string> {
     try {
+      const apiKey = getTmdbApiKey();
       const response = await axios.get(`${TMDB_BASE_URL}/authentication/token/new`, {
         params: {
-          api_key: TMDB_API_KEY,
+          api_key: apiKey,
         },
       });
       this.requestToken = response.data.request_token;
@@ -55,11 +59,12 @@ class TmdbAuthentication {
       throw new Error('Request token is not available. Call createRequestToken first.');
     }
     try {
+      const apiKey = getTmdbApiKey();
       const response = await axios.post(`${TMDB_BASE_URL}/authentication/session/new`, {
         request_token: this.requestToken,
       }, {
         params: {
-          api_key: TMDB_API_KEY,
+          api_key: apiKey,
         },
       });
       this.sessionId = response.data.session_id;

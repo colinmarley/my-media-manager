@@ -24,13 +24,15 @@ Version: 1.0.0
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+import asyncio
+import os
 import uvicorn
 
 from config.settings import settings
 from api.file_operations import router as file_router
 from api.library_operations import router as library_router
 from api.metadata_operations import router as metadata_router
-from api.media_operations import router as media_router
+from api.media_operations import router as media_router, initialize_organization_services
 from api.file_browser import router as file_browser_router
 from api.ingress_operations import router as ingress_router
 from services.filesystem_manager import FileSystemManager
@@ -38,6 +40,7 @@ from services.file_watcher_service import FileWatcherService
 from services.ingress_queue_service import IngressQueueService
 from services.auto_matcher_service import AutoMatcherService
 from services.assignment_orchestrator import AssignmentOrchestrator
+from services.file_organization_service import FileOrganizationService
 from services.firestore_service import FirestoreService
 from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
@@ -54,6 +57,35 @@ ingress_queue_service = None
 auto_matcher_service = None
 firestore_service = None
 assignment_orchestrator = None
+ingress_auto_processor_task = None
+
+
+async def run_ingress_auto_processor(app: FastAPI):
+    """Continuously process pending ingress queue items while watcher is running."""
+    interval_seconds = max(1, settings.ingress_auto_process_interval_seconds)
+
+    while True:
+        try:
+            watcher_service = app.state.file_watcher_service
+            queue_service = app.state.ingress_queue_service
+
+            if (
+                watcher_service
+                and queue_service
+                and watcher_service.is_running
+            ):
+                processed = await queue_service.process_next_item()
+                if processed is not None:
+                    await asyncio.sleep(0.1)
+                    continue
+
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            logger.info("Ingress auto processor task cancelled")
+            raise
+        except Exception as exc:
+            logger.error("Ingress auto processor loop failed", error=str(exc))
+            await asyncio.sleep(interval_seconds)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -80,7 +112,7 @@ async def lifespan(app: FastAPI):
         Control to the running application
     """
     # Startup
-    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service, ingress_queue_service, auto_matcher_service, firestore_service, assignment_orchestrator
+    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service, ingress_queue_service, auto_matcher_service, firestore_service, assignment_orchestrator, ingress_auto_processor_task
     
     logger.info("Starting Media Library Backend")
     
@@ -91,20 +123,83 @@ async def lifespan(app: FastAPI):
     task_manager = AsyncTaskManager(max_workers=settings.scan_worker_threads)
     firestore_service = FirestoreService(settings.firebase_project_id)
     await firestore_service.initialize()
-    auto_matcher_service = AutoMatcherService(omdb_api_key=settings.omdb_api_key)
+    auto_matcher_service = AutoMatcherService(
+        omdb_api_key=settings.omdb_api_key,
+        tmdb_api_key=settings.tmdb_api_key,
+    )
+    file_organization_service = FileOrganizationService(
+        filesystem_manager=file_manager,
+        firestore_service=firestore_service,
+        jellyfin_dest_base=settings.jellyfin_dest_base,
+    )
     assignment_orchestrator = AssignmentOrchestrator(
         firestore_service=firestore_service,
+        file_organization_service=file_organization_service,
+        auto_organize_enabled=settings.ingress_auto_organize_enabled,
     )
     ingress_queue_service = IngressQueueService(
         auto_matcher_service=auto_matcher_service,
         firestore_service=firestore_service,
         assignment_orchestrator=assignment_orchestrator,
+        auto_assign_threshold=settings.ingress_auto_assign_threshold,
     )
+
+    # Build runtime config from settings, then override with any persisted Firestore config
+    ingress_runtime_config: dict = {
+        "defaultIngressPaths": settings.ingress_default_paths,
+        "autoProcessEnabled": settings.ingress_auto_process_enabled,
+        "autoProcessIntervalSeconds": settings.ingress_auto_process_interval_seconds,
+        "autoAssignThreshold": settings.ingress_auto_assign_threshold,
+        "autoOrganizeEnabled": settings.ingress_auto_organize_enabled,
+        "fileStabilityWaitSeconds": settings.ingress_file_stability_wait_seconds,
+        "debounceSeconds": settings.ingress_debounce_seconds,
+    }
+    try:
+        saved_config = await firestore_service.get_ingress_config()
+        if saved_config:
+            ingress_runtime_config.update(saved_config)
+            ingress_queue_service.auto_assign_threshold = max(
+                0, min(ingress_runtime_config.get("autoAssignThreshold", settings.ingress_auto_assign_threshold), 100)
+            )
+            logger.info("Loaded persisted ingress config from Firestore")
+    except Exception as exc:
+        logger.warning("Could not load persisted ingress config", error=str(exc))
+
+    # Startup health checks
+    for ingress_path in ingress_runtime_config.get("defaultIngressPaths", []):
+        if os.path.exists(ingress_path):
+            logger.info("Ingress path accessible", path=ingress_path)
+        else:
+            logger.warning("Ingress path does not exist - watcher will fail to start", path=ingress_path)
+
+    dest_base = settings.jellyfin_dest_base
+    if os.path.exists(dest_base):
+        logger.info("Destination mount accessible", path=dest_base)
+    else:
+        logger.warning("Destination mount not found - file organization will fail", path=dest_base)
+    
+    # Initialize Phase 4 services for file organization
+    initialize_organization_services(firestore_service)
+    
     file_watcher_service = FileWatcherService(
         file_manager=file_manager,
         queue_callback=ingress_queue_service.add_from_watcher,
     )
-    
+
+    if settings.ingress_auto_start_watcher and settings.ingress_default_paths:
+        try:
+            file_watcher_service.start_watching(settings.ingress_default_paths)
+            logger.info(
+                "Ingress watcher auto-started",
+                paths=settings.ingress_default_paths,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Ingress watcher auto-start failed",
+                paths=settings.ingress_default_paths,
+                error=str(exc),
+            )
+
     # Store services in app state for dependency injection in routes
     app.state.file_manager = file_manager
     app.state.metadata_extractor = metadata_extractor
@@ -115,6 +210,13 @@ async def lifespan(app: FastAPI):
     app.state.auto_matcher_service = auto_matcher_service
     app.state.firestore_service = firestore_service
     app.state.assignment_orchestrator = assignment_orchestrator
+    app.state.ingress_runtime_config = ingress_runtime_config
+
+    if settings.ingress_auto_process_enabled:
+        ingress_auto_processor_task = asyncio.create_task(
+            run_ingress_auto_processor(app)
+        )
+        app.state.ingress_auto_processor_task = ingress_auto_processor_task
     
     logger.info("Services initialized successfully")
     
@@ -134,6 +236,13 @@ async def lifespan(app: FastAPI):
     if file_watcher_service and file_watcher_service.is_running:
         file_watcher_service.stop_watching()
 
+    if ingress_auto_processor_task:
+        ingress_auto_processor_task.cancel()
+        try:
+            await ingress_auto_processor_task
+        except asyncio.CancelledError:
+            pass
+
 # Create FastAPI application instance with OpenAPI documentation
 app = FastAPI(
     title="Media Library Management API",
@@ -145,7 +254,14 @@ app = FastAPI(
 # Configure CORS middleware to allow frontend communication
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],  # Frontend URLs (dev ports)
+    # Local development origins: localhost and LAN-hosted frontend URLs.
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3001",
+    ],
+    allow_origin_regex=r"^https?://192\.168\.\d+\.\d+(?::\d+)?$",
     allow_credentials=True,  # Allow cookies and authentication headers
     allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
     allow_headers=["*"],  # Allow all headers

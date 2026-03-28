@@ -15,15 +15,22 @@ from utils.logging import logger
 class AssignmentOrchestrator:
     """Coordinates automatic assignment creation for matched ingress items."""
 
-    def __init__(self, firestore_service: Optional[Any] = None):
+    def __init__(
+        self,
+        firestore_service: Optional[Any] = None,
+        file_organization_service: Optional[Any] = None,
+        auto_organize_enabled: bool = True,
+    ):
         self.firestore_service = firestore_service
+        self.file_organization_service = file_organization_service
+        self.auto_organize_enabled = auto_organize_enabled
 
-    async def auto_assign(self, queue_item: Dict[str, Any]) -> Optional[str]:
+    async def auto_assign(self, queue_item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Create an automatic assignment for a queue item when confidence is high.
 
         Returns:
-            assignment_id if assignment was created, otherwise None
+            Assignment result payload if assignment was created, otherwise None
         """
         if not self.firestore_service:
             return None
@@ -36,13 +43,18 @@ class AssignmentOrchestrator:
         if not imdb_id:
             return None
 
-        media_type = best_match.get("media_type") or "movie"
+        parsed_info = queue_item.get("parsed_info") or {}
+        parsed_media_type = parsed_info.get("media_type")
+        media_type = "movie" if parsed_media_type == "movie" else "episode"
         resolved_media = self._find_existing_media(media_type=media_type, imdb_id=imdb_id)
 
         assignment_id = str(uuid.uuid4())
         assignment_doc = {
             "id": assignment_id,
             "status": "auto_assigned",
+            "mediaType": media_type,
+            "mediaId": resolved_media.get("id") if resolved_media else imdb_id,
+            "organizationStatus": "pending",
             "dateAssigned": datetime.utcnow().isoformat(),
             "source": "ingress_pipeline",
             "confidenceScore": queue_item.get("confidence_score"),
@@ -69,6 +81,12 @@ class AssignmentOrchestrator:
             "updatedAt": datetime.utcnow().isoformat(),
         }
 
+        if media_type == "episode":
+            assignment_doc["seasonNumber"] = parsed_info.get("season")
+            assignment_doc["episodeNumber"] = parsed_info.get("episode")
+
+        media_payload = self._build_media_payload(best_match, parsed_info, media_type)
+
         try:
             self.firestore_service.db.collection("media_assignments").document(
                 assignment_id
@@ -79,7 +97,32 @@ class AssignmentOrchestrator:
                 queue_item_id=queue_item.get("id"),
                 imdb_id=imdb_id,
             )
-            return assignment_id
+
+            organization_result = None
+            if self.auto_organize_enabled and self.file_organization_service is not None:
+                organization_result = await self.file_organization_service.organize_assignment(
+                    assignment_doc,
+                    media_payload,
+                )
+
+                self.firestore_service.db.collection("media_assignments").document(
+                    assignment_id
+                ).update(
+                    {
+                        "organizationStatus": (
+                            "completed" if organization_result.get("success") else "failed"
+                        ),
+                        "organizationResult": organization_result,
+                        "isOrganized": bool(organization_result.get("success")),
+                        "updatedAt": datetime.utcnow().isoformat(),
+                    }
+                )
+
+            return {
+                "assignment_id": assignment_id,
+                "organized": bool(organization_result and organization_result.get("success")),
+                "organization_result": organization_result,
+            }
         except Exception as exc:
             logger.error(
                 "Failed to create auto-assignment",
@@ -87,6 +130,26 @@ class AssignmentOrchestrator:
                 error=str(exc),
             )
             return None
+
+    def _build_media_payload(
+        self,
+        best_match: Dict[str, Any],
+        parsed_info: Dict[str, Any],
+        media_type: str,
+    ) -> Dict[str, Any]:
+        if media_type == "movie":
+            return {
+                "title": best_match.get("title") or parsed_info.get("title"),
+                "year": best_match.get("year") or parsed_info.get("year"),
+                "imdbId": best_match.get("imdb_id") or best_match.get("media_id"),
+            }
+
+        return {
+            "title": parsed_info.get("title"),
+            "seriesTitle": best_match.get("title") or parsed_info.get("title"),
+            "year": best_match.get("year") or parsed_info.get("year"),
+            "imdbId": best_match.get("imdb_id") or best_match.get("media_id"),
+        }
 
     def _find_existing_media(self, media_type: str, imdb_id: str) -> Optional[Dict[str, Any]]:
         """Best-effort lookup of existing movie/series by imdb id."""

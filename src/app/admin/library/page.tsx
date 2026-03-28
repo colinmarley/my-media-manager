@@ -54,6 +54,10 @@ import { firestoreScanService, ScanResultData } from '../../../service/library/F
 import { firebaseLibraryService } from '../../../service/library/FirebaseLibraryService';
 import { useFirebaseLibraryPaths } from '../../../hooks/library/useFirebaseLibraryPaths';
 import useAuthenticationStore from '../../../store/useAuthenticationStore';
+import {
+  JELLYFIN_ROOT_STORAGE_KEY,
+  LIBRARY_SETTINGS_STORAGE_KEY,
+} from '../../../constants/librarySettings';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -95,11 +99,13 @@ const LibraryManagementPage: React.FC = () => {
   const [showAddPathDialog, setShowAddPathDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const [folderBrowserMode, setFolderBrowserMode] = useState<'libraryPath' | 'jellyfinRoot'>('libraryPath');
   const [newPathForm, setNewPathForm] = useState({
     name: '',
     rootPath: '',
     mediaType: 'mixed' as 'mixed' | 'movies' | 'series'
   });
+  const [jellyfinRootPath, setJellyfinRootPath] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<number>(0);
   const [scanId, setScanId] = useState<string | null>(null);
@@ -110,6 +116,25 @@ const LibraryManagementPage: React.FC = () => {
   const [showDuplicateReport, setShowDuplicateReport] = useState(false);
 
   const statistics = getLibraryStatistics();
+
+  // Load persisted settings on first render
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    try {
+      const savedLibrarySettings = window.localStorage.getItem(LIBRARY_SETTINGS_STORAGE_KEY);
+      if (savedLibrarySettings) {
+        setSettings(JSON.parse(savedLibrarySettings));
+      }
+
+      const savedJellyfinRoot = window.localStorage.getItem(JELLYFIN_ROOT_STORAGE_KEY);
+      if (savedJellyfinRoot) {
+        setJellyfinRootPath(savedJellyfinRoot);
+      }
+    } catch (storageError) {
+      console.error('Failed to load saved library settings:', storageError);
+    }
+  }, []);
 
   // Load scan results when user changes
   useEffect(() => {
@@ -328,7 +353,16 @@ const LibraryManagementPage: React.FC = () => {
   };
 
   const handleUpdateSettings = () => {
-    // Save settings logic would go here
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LIBRARY_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+
+      if (jellyfinRootPath.trim()) {
+        window.localStorage.setItem(JELLYFIN_ROOT_STORAGE_KEY, jellyfinRootPath.trim());
+      } else {
+        window.localStorage.removeItem(JELLYFIN_ROOT_STORAGE_KEY);
+      }
+    }
+
     setShowSettingsDialog(false);
   };
 
@@ -584,7 +618,7 @@ const LibraryManagementPage: React.FC = () => {
           <Typography variant="h6">File Browser</Typography>
           <Button
             variant="contained"
-            onClick={() => window.open('/admin/libraryBrowser', '_blank')}
+            onClick={() => window.open('/admin?view=LibraryBrowser', '_blank')}
             disabled={!user}
           >
             Open Library Browser
@@ -643,6 +677,20 @@ const LibraryManagementPage: React.FC = () => {
           </Button>
         </Box>
 
+        <Card sx={{ mb: 2 }}>
+          <CardContent>
+            <Typography variant="subtitle1" gutterBottom>
+              Global Jellyfin Root Path
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Used as the default destination root when organizing media files.
+            </Typography>
+            <Typography sx={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
+              {jellyfinRootPath || 'Not set (defaults to backend fallback)'}
+            </Typography>
+          </CardContent>
+        </Card>
+
         <Card>
           <CardContent>
             <Typography variant="subtitle1" gutterBottom>
@@ -700,7 +748,10 @@ const LibraryManagementPage: React.FC = () => {
               endAdornment: (
                 <Button
                   size="small"
-                  onClick={() => setShowFolderBrowser(true)}
+                  onClick={() => {
+                    setFolderBrowserMode('libraryPath');
+                    setShowFolderBrowser(true);
+                  }}
                   startIcon={<FolderIcon />}
                 >
                   Browse
@@ -751,7 +802,7 @@ const LibraryManagementPage: React.FC = () => {
           <Typography variant="subtitle1" gutterBottom>
             File Processing
           </Typography>
-          <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+          <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
             <TextField
               label="Extract Metadata"
               select
@@ -771,6 +822,43 @@ const LibraryManagementPage: React.FC = () => {
               <MenuItem value="false">Disabled</MenuItem>
             </TextField>
           </Box>
+
+          <Typography variant="subtitle1" gutterBottom>
+            Jellyfin Organization
+          </Typography>
+          <TextField
+            margin="dense"
+            label="Global Jellyfin Root Path"
+            fullWidth
+            variant="outlined"
+            placeholder="/mnt/beelink-media"
+            value={jellyfinRootPath}
+            onChange={(e) => setJellyfinRootPath(e.target.value)}
+            InputProps={{
+              endAdornment: (
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setFolderBrowserMode('jellyfinRoot');
+                    setShowFolderBrowser(true);
+                  }}
+                  startIcon={<FolderIcon />}
+                >
+                  Browse
+                </Button>
+              ),
+            }}
+            helperText="Used by default for file organization to Jellyfin paths."
+            sx={{ mb: 1 }}
+          />
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => setJellyfinRootPath('')}
+            sx={{ textTransform: 'none' }}
+          >
+            Clear global Jellyfin root
+          </Button>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowSettingsDialog(false)}>Cancel</Button>
@@ -785,10 +873,14 @@ const LibraryManagementPage: React.FC = () => {
         open={showFolderBrowser}
         onClose={() => setShowFolderBrowser(false)}
         onSelect={(path) => {
-          setNewPathForm(prev => ({ ...prev, rootPath: path }));
+          if (folderBrowserMode === 'jellyfinRoot') {
+            setJellyfinRootPath(path);
+          } else {
+            setNewPathForm(prev => ({ ...prev, rootPath: path }));
+          }
           setShowFolderBrowser(false);
         }}
-        initialPath={newPathForm.rootPath}
+        initialPath={folderBrowserMode === 'jellyfinRoot' ? jellyfinRootPath : newPathForm.rootPath}
       />
 
       {/* Duplicate Report Dialog */}

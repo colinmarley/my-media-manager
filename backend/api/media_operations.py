@@ -25,6 +25,8 @@ import uuid
 from services.filesystem_manager import FileSystemManager
 from services.media_metadata_extractor import MediaMetadataExtractor
 from services.firestore_service import FirestoreService
+from services.media_resolution_service import MediaResolutionService
+from services.file_organization_service import FileOrganizationService
 from config.settings import settings
 from utils.exceptions import FileOperationError, PathSecurityError
 from utils.logging import logger
@@ -35,6 +37,14 @@ router = APIRouter()
 file_manager = FileSystemManager()
 metadata_extractor = MediaMetadataExtractor()
 firestore_service = FirestoreService(settings.firebase_project_id)
+media_resolution_service = None
+file_organization_service = None
+
+def initialize_organization_services(fs_service: FirestoreService):
+    """Initialize Phase 4 services"""
+    global media_resolution_service, file_organization_service
+    media_resolution_service = MediaResolutionService(fs_service)
+    file_organization_service = FileOrganizationService(file_manager, fs_service)
 
 # ============================================================================
 # Request/Response Models
@@ -66,6 +76,7 @@ class OrganizeFilesRequest(BaseModel):
     """Request model for organizing files"""
     assignmentId: str
     userId: str
+    jellyfinRootPath: Optional[str] = None
 
 # ============================================================================
 # Enhanced File Scanning
@@ -371,52 +382,141 @@ async def assign_files_to_episode(request: AssignToEpisodeRequest):
 @router.post("/organize/{assignmentId}")
 async def organize_files(assignmentId: str, request: OrganizeFilesRequest):
     """
-    Organize files according to Jellyfin folder structure.
+    PHASE 4: Organize files according to Jellyfin folder structure.
     
-    Creates folder structure, moves files, and updates all relevant documents.
+    Complete workflow:
+    1. Resolve media (search/create records for unmatched items)
+    2. Calculate Jellyfin destination paths
+    3. Create folder structure
+    4. Move files from encoded to Jellyfin paths
+    5. Update assignment status to organized
+    
+    Returns:
+        Complete organization result with file movement details
     """
     try:
-        logger.info("Starting file organization", assignment_id=assignmentId)
+        logger.info("Starting Phase 4 file organization", assignment_id=assignmentId)
+        
+        # Validate services are initialized
+        if not media_resolution_service or not file_organization_service:
+            raise HTTPException(
+                status_code=500,
+                detail="Organization services not initialized. Start the backend server."
+            )
         
         # Get assignment document
         assignment = firestore_service.get_document('media_assignments', assignmentId)
         if not assignment:
             raise HTTPException(status_code=404, detail=f"Assignment not found: {assignmentId}")
         
-        # Get file document
-        file_doc = firestore_service.get_document('media_files', assignment['fileId'])
-        if not file_doc:
-            raise HTTPException(status_code=404, detail=f"File not found: {assignment['fileId']}")
+        media_type = assignment.get("mediaType", "movie")
+        logger.info(
+            "Organization workflow",
+            assignment_id=assignmentId,
+            media_type=media_type
+        )
         
-        # Determine target folder structure based on media type
-        # This would integrate with MediaOrganizationService from frontend
-        # For now, return structure that will be created
+        # Step 1: Resolve media (search/create records if needed)
+        logger.info("Step 1: Resolving media")
+        if media_type == "episode":
+            assignment = await media_resolution_service.resolve_episode_assignment(assignment)
+        else:
+            assignment = await media_resolution_service.resolve_assignment_media(assignment)
         
-        target_path = assignment.get('targetFolder', {}).get('fullPath')
-        if not target_path:
-            raise HTTPException(status_code=400, detail="Target folder not specified in assignment")
+        # Get resolved media
+        media_id = assignment.get("mediaId")
+        if not media_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not resolve media for assignment"
+            )
         
-        # TODO: Implement actual file move operation
-        # This would call file_manager.move_file() and handle errors
+        # Get media details from Firestore
+        collection = "movies" if media_type == "movie" else "series"
+        media = firestore_service.get_document(collection, media_id)
+        if not media:
+            raise HTTPException(status_code=404, detail=f"Media not found: {media_id}")
         
-        # Update assignment status
-        firestore_service.update_document('media_assignments', assignmentId, {
-            'status': 'organized',
+        # Add series info for episodes
+        if media_type == "episode":
+            series_id = assignment.get("seriesId")
+            if series_id:
+                series = firestore_service.get_document("series", series_id)
+                media["seriesTitle"] = series.get("title") if series else "Unknown Series"
+        
+        logger.info(
+            "Media resolved",
+            media_id=media_id,
+            title=media.get("title"),
+            is_placeholder=media.get("isPlaceholder", False)
+        )
+        
+        # Step 2 & 3 & 4: Organize files (path calculation + folder creation + movement)
+        logger.info("Step 2-4: Organizing files to Jellyfin paths")
+        organization_result = await file_organization_service.organize_assignment(
+            assignment,
+            media,
+            request.jellyfinRootPath,
+        )
+        
+        if not organization_result.get("success"):
+            error_msg = organization_result.get("error", "Unknown error")
+            logger.error("File organization failed", error=error_msg)
+            
+            # Update assignment with failure status
+            firestore_service.update_document('media_assignments', assignmentId, {
+                'organizationStatus': 'failed',
+                'organizationError': error_msg,
+                'updatedAt': datetime.utcnow().isoformat()
+            })
+            
+            raise HTTPException(
+                status_code=400,
+                detail=f"File organization failed: {error_msg}"
+            )
+        
+        # Step 5: Update assignment status to organized
+        logger.info(
+            "Step 5: Updating assignment status",
+            files_moved=organization_result.get("filesMoved"),
+            target_path=organization_result.get("targetPath")
+        )
+        
+        final_update = {
+            'organizationStatus': 'completed',
             'isOrganized': True,
+            'targetPath': organization_result.get('targetPath'),
             'dateOrganized': datetime.utcnow().isoformat(),
+            'updatedAt': datetime.utcnow().isoformat(),
             'organizationHistory': assignment.get('organizationHistory', []) + [{
                 'timestamp': datetime.utcnow().isoformat(),
-                'operation': 'organize',
-                'sourcePath': file_doc['filePath'],
-                'targetPath': target_path,
+                'operation': 'phase4_organization',
+                'sourceFiles': assignment.get('sourceFile', {}).get('filePath'),
+                'targetPath': organization_result.get('targetPath'),
+                'filesMoved': organization_result.get('filesMoved'),
                 'status': 'completed'
             }]
-        })
+        }
+        
+        firestore_service.update_document('media_assignments', assignmentId, final_update)
+        
+        logger.info(
+            "Phase 4 organization completed successfully",
+            assignment_id=assignmentId,
+            files_moved=organization_result.get("filesMoved")
+        )
         
         return {
             "success": True,
             "message": "Files organized successfully",
-            "assignmentId": assignmentId
+            "assignmentId": assignmentId,
+            "organizationResult": organization_result,
+            "mediaResolved": {
+                "mediaId": media_id,
+                "title": media.get("title"),
+                "type": media_type,
+                "isPlaceholder": media.get("isPlaceholder", False)
+            }
         }
         
     except HTTPException:

@@ -64,9 +64,11 @@ import {
   Home
 } from '@mui/icons-material';
 import useLibraryBrowserStore from '../../../../store/useLibraryBrowserStore';
+import useAuthenticationStore from '../../../../store/useAuthenticationStore';
 import { ScannedFile, ScannedDirectory } from '../../../../service/library/LibraryBrowserService';
 import MediaAssignment from './MediaAssignment';
 import LibraryBrowserService from '../../../../service/library/LibraryBrowserService';
+import IngressAutomationService, { QueueItemStatus } from '../../../../service/ingress/IngressAutomationService';
 
 type LibraryItem = ScannedFile | ScannedDirectory;
 
@@ -132,6 +134,8 @@ const getParentPath = (fullPath: string, libraryPath?: string): string => {
 };
 
 const LibraryBrowser: React.FC = () => {
+  const { user } = useAuthenticationStore();
+
   const {
     scannedFiles,
     scannedDirectories,
@@ -188,8 +192,28 @@ const LibraryBrowser: React.FC = () => {
   const [moveDialog, setMoveDialog] = useState(false);
   const [bulkMoveDialog, setBulkMoveDialog] = useState(false);
   const [targetPath, setTargetPath] = useState('');
+  const [queueStatusMap, setQueueStatusMap] = useState<Record<string, QueueItemStatus>>({});
+
+  // Fetch ingress queue status map to show in-progress ingest chips next to files
+  useEffect(() => {
+    const fetchStatusMap = async () => {
+      try {
+        const map = await IngressAutomationService.getQueueStatusMap();
+        setQueueStatusMap(map);
+      } catch {
+        // Non-critical — backend may be offline
+      }
+    };
+    fetchStatusMap();
+    const interval = window.setInterval(fetchStatusMap, 8000);
+    return () => window.clearInterval(interval);
+  }, []);
 
   useEffect(() => {
+    if (!user) {
+      return;
+    }
+
     // Load data when component mounts or filters change
     loadScannedFiles();
     loadScannedDirectories();
@@ -197,7 +221,7 @@ const LibraryBrowser: React.FC = () => {
     if (currentPath) {
       loadRootFolders(currentPath);
     }
-  }, [currentPath, loadScannedFiles, loadScannedDirectories, loadRootFolders]);
+  }, [user, currentPath, loadScannedFiles, loadScannedDirectories, loadRootFolders]);
 
   useEffect(() => {
     // Set rootLibraryPath from first scanned item if not already set
@@ -209,9 +233,13 @@ const LibraryBrowser: React.FC = () => {
   }, [scannedFiles, scannedDirectories, rootLibraryPath, setRootLibraryPath]);
 
   useEffect(() => {
+    if (!user) {
+      return;
+    }
+
     // Refresh when filters change
     refreshData();
-  }, [searchQuery, mediaTypeFilter, scanIdFilter, currentPage, refreshData]);
+  }, [user, searchQuery, mediaTypeFilter, scanIdFilter, currentPage, refreshData]);
 
   const handleRefresh = () => {
     refreshData();
@@ -501,6 +529,29 @@ const LibraryBrowser: React.FC = () => {
             <Chip label={file.media_type || 'unknown'} size="small" variant="outlined" />
           </TableCell>
           <TableCell>
+            {(() => {
+              const qs = queueStatusMap[file.path];
+              if (!qs) return null;
+              const colorMap: Record<string, 'default' | 'info' | 'warning' | 'error' | 'success'> = {
+                pending: 'info',
+                processing: 'info',
+                auto_assigned: 'success',
+                needs_review: 'warning',
+                failed: 'error',
+                completed: 'success',
+              };
+              return (
+                <Tooltip title={qs.title ? `${qs.title}${qs.confidence != null ? ` (${qs.confidence}%)` : ''}` : qs.status}>
+                  <Chip
+                    label={qs.status.replace('_', ' ')}
+                    size="small"
+                    color={colorMap[qs.status] || 'default'}
+                  />
+                </Tooltip>
+              );
+            })()}
+          </TableCell>
+          <TableCell>
             <Typography variant="caption" color="text.secondary">
               {file.metadata?.size ? ((file.metadata.size / 1024 / 1024).toFixed(2) + ' MB') : 'N/A'}
             </Typography>
@@ -730,6 +781,7 @@ const LibraryBrowser: React.FC = () => {
                   <TableCell>Name</TableCell>
                   <TableCell width="120">Extension</TableCell>
                   <TableCell width="120">Type</TableCell>
+                  <TableCell width="130">Ingress Status</TableCell>
                   <TableCell width="100">Size</TableCell>
                   <TableCell width="150">Actions</TableCell>
                 </TableRow>

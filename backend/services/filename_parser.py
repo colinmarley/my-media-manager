@@ -37,6 +37,9 @@ class FilenameParser:
         re.compile(r"(?i)\b(\d{1,2})x(\d{1,2})\b"),
     ]
 
+    # Matches MakeMKV disc filenames like B1_t00, A1_t04, C2_t02
+    _makemkv_pattern = re.compile(r"^[A-Za-z]\d+[_-]t\d+$")
+
     _year_pattern = re.compile(r"(?<!\d)(19\d{2}|20\d{2})(?!\d)")
     _quality_pattern = re.compile(
         r"(?i)\b(2160p|1080p|720p|480p|4k|uhd|hdr|dv|bluray|web[ ._-]?dl|webrip)\b"
@@ -65,8 +68,14 @@ class FilenameParser:
         "remux",
     ]
 
-    def parse_filename(self, filename: str) -> ParsedMediaInfo:
-        """Parse a filename and return normalized media hints."""
+    def parse_filename(
+        self, filename: str, folder_name: Optional[str] = None
+    ) -> ParsedMediaInfo:
+        """Parse a filename and return normalized media hints.
+
+        If folder_name is provided and the filename is a bare MakeMKV disc code
+        (e.g. B1_t00.mkv), the folder name is used as the title fallback.
+        """
         base_name = os.path.basename(filename)
         name_without_ext, extension = os.path.splitext(base_name)
 
@@ -98,6 +107,12 @@ class FilenameParser:
                 title_candidate = name_without_ext[: year_match.start()]
 
         title = self._clean_title(title_candidate)
+
+        # Fall back to folder name when filename is a MakeMKV disc code or useless
+        if folder_name and (
+            not title or self._makemkv_pattern.match(name_without_ext.strip())
+        ):
+            title = self._clean_title(folder_name)
 
         media_type = "movie" if year is not None else "unknown"
         return ParsedMediaInfo(

@@ -21,13 +21,18 @@ class FirestoreService {
   }
 
   async getDocuments(): Promise<DocumentData[]> {
-    const q = query(collection(db, this.collectionName));
-    const querySnapshot = await getDocs(q);
-    const documents: DocumentData[] = [];
-    querySnapshot.forEach((doc) => {
-      documents.push({ id: doc.id, ...doc.data() });
-    });
-    return documents;
+    try {
+      const q = query(collection(db, this.collectionName));
+      const querySnapshot = await getDocs(q);
+      const documents: DocumentData[] = [];
+      querySnapshot.forEach((doc) => {
+        documents.push({ id: doc.id, ...doc.data() });
+      });
+      return documents;
+    } catch (e) {
+      console.warn(`Error getting documents from ${this.collectionName}:`, e);
+      return [];
+    }
   }
 
   async getDocumentsByField(field: string, value: any): Promise<DocumentData[]> {

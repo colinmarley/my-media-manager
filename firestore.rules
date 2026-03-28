@@ -43,6 +43,21 @@ service cloud.firestore {
       allow update: if isAuthenticated();
       allow delete: if isAdmin();
     }
+
+    // Legacy scanner collections used by Library Browser
+    match /scanned_files/{fileId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    match /scanned_directories/{directoryId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
     
     // ============================================
     // EXISTING COLLECTIONS - Movies & TV Shows
@@ -86,6 +101,12 @@ service cloud.firestore {
     
     // Directors
     match /directors/{directorId} {
+      allow read: if true;
+      allow write: if isAuthenticated();
+    }
+
+    // Actors
+    match /actors/{actorId} {
       allow read: if true;
       allow write: if isAuthenticated();
     }

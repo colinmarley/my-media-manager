@@ -96,4 +96,39 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
+## Secrets and Environment Variables
+
+**Never commit real secrets or live environment variables to git.**
+
+### What is ignored
+
+The following patterns are excluded via `.gitignore`:
+
+| Pattern | Purpose |
+|---|---|
+| `.env`, `.env.*` | All environment variable files |
+| `venv/`, `.venv/` | Python virtual environments |
+| `*service-account*.json` | Firebase / GCP service account keys |
+| `*credentials*.json` | Any credentials file |
+| `*secret*.json` | Any secret file |
+| `*.pem`, `*.key`, `*.p12` | Private keys and certificates |
+
+### What is tracked (examples only)
+
+| File | Purpose |
+|---|---|
+| `.env.example` | Frontend environment variable template |
+| `.env.local.example` | Local override template |
+| `backend/.env.example` | Backend environment variable template |
+
+### Setup
+
+1. Copy the example files and fill in your own values — **do not commit the filled-in copies**:
+   ```bash
+   cp .env.example .env.local
+   cp backend/.env.example backend/.env
+   ```
+2. All real keys (Firebase, OMDB, TMDB, etc.) belong only in your local `.env` / `backend/.env` files.
+3. If you accidentally commit a secret, **rotate the key immediately** and remove it from git history.
+
 

@@ -45,6 +45,7 @@ import { Episode } from '@/types/collections/Episode.type';
 import { Season } from '@/types/collections/Season.type';
 import MediaOrganizationService from '@/service/library/MediaOrganizationService';
 import MediaAssignmentSearchService, { SearchResult } from '@/service/library/MediaAssignmentSearchService';
+import { JELLYFIN_ROOT_STORAGE_KEY } from '@/constants/librarySettings';
 import FolderBrowser from '../../library/_components/FolderBrowser';
 import EpisodeSelector from './EpisodeSelector';
 import EpisodeMatchingInterface from './EpisodeMatchingInterface';
@@ -93,6 +94,7 @@ export default function MediaAssignmentDialog({
   const [version, setVersion] = useState('1080p');
   const [organizeNow, setOrganizeNow] = useState(false);
   const [destinationFolder, setDestinationFolder] = useState<string | null>(null);
+  const [isUsingGlobalDefault, setIsUsingGlobalDefault] = useState(false);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -103,6 +105,15 @@ export default function MediaAssignmentDialog({
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
 
   const orgService = new MediaOrganizationService();
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const savedRoot = window.localStorage.getItem(JELLYFIN_ROOT_STORAGE_KEY);
+    if (savedRoot) {
+      setDestinationFolder(savedRoot);
+      setIsUsingGlobalDefault(true);
+    }
+  }, []);
 
   // Autocomplete search (Firebase only) - triggered as user types
   const handleAutocompleteSearch = async (value: string) => {
@@ -624,6 +635,14 @@ export default function MediaAssignmentDialog({
               {/* Destination Folder Selection */}
               <Box>
                 <FormLabel>Destination Library Folder</FormLabel>
+                {isUsingGlobalDefault && destinationFolder && (
+                  <Chip
+                    label="Using global default"
+                    size="small"
+                    color="info"
+                    sx={{ ml: 1, height: 22 }}
+                  />
+                )}
                 <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mt: 1 }}>
                   <Button
                     variant="outlined"
@@ -636,7 +655,13 @@ export default function MediaAssignmentDialog({
                   {destinationFolder && (
                     <IconButton
                       size="small"
-                      onClick={() => setDestinationFolder(null)}
+                      onClick={() => {
+                        setDestinationFolder(null);
+                        setIsUsingGlobalDefault(false);
+                        if (typeof window !== 'undefined') {
+                          window.localStorage.removeItem(JELLYFIN_ROOT_STORAGE_KEY);
+                        }
+                      }}
                       color="error"
                     >
                       <Close />
@@ -644,7 +669,7 @@ export default function MediaAssignmentDialog({
                   )}
                 </Box>
                 <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-                  Choose where media will be organized. If not selected, uses the file's current location.
+                  Choose Jellyfin root path for organization. This selection is remembered for next assignments.
                 </Typography>
               </Box>
 
@@ -769,6 +794,10 @@ export default function MediaAssignmentDialog({
         onClose={() => setShowFolderBrowser(false)}
         onSelect={(path) => {
           setDestinationFolder(path);
+          setIsUsingGlobalDefault(false);
+          if (typeof window !== 'undefined') {
+            window.localStorage.setItem(JELLYFIN_ROOT_STORAGE_KEY, path);
+          }
           setShowFolderBrowser(false);
         }}
         initialPath={destinationFolder || ''}

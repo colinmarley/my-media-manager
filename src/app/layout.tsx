@@ -41,9 +41,14 @@ export default function RootLayout({
                       Media
                     </Button>
                   </Link>
-                  <Link href="/admin/libraryBrowser" passHref>
+                  <Link href="/admin?view=LibraryBrowser" passHref>
                     <Button variant="contained" color="primary" sx={Styles.headerButton}>
                       Library Browser
+                    </Button>
+                  </Link>
+                  <Link href="/ingress-automation" passHref>
+                    <Button variant="contained" color="primary" sx={Styles.headerButton}>
+                      Ingress Automation
                     </Button>
                   </Link>
                 </Box>

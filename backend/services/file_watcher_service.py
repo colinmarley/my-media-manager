@@ -107,7 +107,8 @@ class FileWatcherService:
         """Start monitoring the provided ingress directories."""
         with self.lock:
             if self.is_running:
-                raise ScanOperationError("File watcher is already running")
+                # Idempotent start: return current status when watcher is already active.
+                return self.get_status()
 
             normalized_paths = self._normalize_ingress_paths(ingress_paths)
             if not normalized_paths:

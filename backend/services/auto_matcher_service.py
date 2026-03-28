@@ -40,9 +40,15 @@ class MatchCandidate:
 class AutoMatcherService:
     """Matches parsed media info against OMDB/TMDB to find best candidates."""
 
-    def __init__(self, omdb_api_key: Optional[str] = None):
+    def __init__(
+        self,
+        omdb_api_key: Optional[str] = None,
+        tmdb_api_key: Optional[str] = None,
+    ):
         self.omdb_api_key = omdb_api_key or os.environ.get("OMDB_API_KEY", "")
         self.omdb_base_url = "http://www.omdbapi.com"
+        self.tmdb_api_key = tmdb_api_key or os.environ.get("TMDB_API_KEY", "")
+        self.tmdb_base_url = "https://api.themoviedb.org/3"
         self.request_timeout = 10
 
     def search_and_match(
@@ -73,6 +79,26 @@ class AutoMatcherService:
                 title=title,
                 error=str(exc),
             )
+
+        # TMDB fallback when OMDB returns no results
+        if not candidates and self.tmdb_api_key:
+            try:
+                if media_type == "episode":
+                    candidates = self._search_tmdb_series(title, year)
+                else:
+                    candidates = self._search_tmdb_movie(title, year)
+                if candidates:
+                    logger.info(
+                        "TMDB fallback returned candidates",
+                        title=title,
+                        count=len(candidates),
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "TMDB fallback search failed",
+                    title=title,
+                    error=str(exc),
+                )
 
         # Calculate confidence for each candidate
         for candidate in candidates:
@@ -175,6 +201,100 @@ class AutoMatcherService:
 
         except requests.RequestException as exc:
             logger.error("OMDB API request failed", title=title, error=str(exc))
+
+        return candidates
+
+    def _search_tmdb_movie(
+        self, title: str, year: Optional[int] = None
+    ) -> List[MatchCandidate]:
+        """Search TMDB for movies matching the title."""
+        if not self.tmdb_api_key:
+            return []
+
+        candidates = []
+        try:
+            params: Dict[str, Any] = {
+                "api_key": self.tmdb_api_key,
+                "query": title,
+            }
+            if year:
+                params["year"] = year
+
+            response = requests.get(
+                f"{self.tmdb_base_url}/search/movie",
+                params=params,
+                timeout=self.request_timeout,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            for result in data.get("results", [])[:10]:
+                release_year = None
+                release_date = result.get("release_date", "")
+                if release_date:
+                    m = re.match(r"(\d{4})", release_date)
+                    if m:
+                        release_year = int(m.group(1))
+
+                candidate = MatchCandidate(
+                    source="tmdb",
+                    media_id=str(result.get("id", "")),
+                    title=result.get("title", ""),
+                    media_type="movie",
+                    year=release_year,
+                    raw_data=result,
+                )
+                candidates.append(candidate)
+
+        except requests.RequestException as exc:
+            logger.error("TMDB movie search failed", title=title, error=str(exc))
+
+        return candidates
+
+    def _search_tmdb_series(
+        self, title: str, year: Optional[int] = None
+    ) -> List[MatchCandidate]:
+        """Search TMDB for TV series matching the title."""
+        if not self.tmdb_api_key:
+            return []
+
+        candidates = []
+        try:
+            params: Dict[str, Any] = {
+                "api_key": self.tmdb_api_key,
+                "query": title,
+            }
+            if year:
+                params["first_air_date_year"] = year
+
+            response = requests.get(
+                f"{self.tmdb_base_url}/search/tv",
+                params=params,
+                timeout=self.request_timeout,
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            for result in data.get("results", [])[:10]:
+                first_air_year = None
+                first_air_date = result.get("first_air_date", "")
+                if first_air_date:
+                    m = re.match(r"(\d{4})", first_air_date)
+                    if m:
+                        first_air_year = int(m.group(1))
+
+                candidate = MatchCandidate(
+                    source="tmdb",
+                    media_id=str(result.get("id", "")),
+                    title=result.get("name", ""),
+                    media_type="series",
+                    year=first_air_year,
+                    raw_data=result,
+                )
+                candidates.append(candidate)
+
+        except requests.RequestException as exc:
+            logger.error("TMDB series search failed", title=title, error=str(exc))
 
         return candidates
 

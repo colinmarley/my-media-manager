@@ -5,14 +5,36 @@ Maintains in-memory queue state for detected ingress files and exposes
 operations for processing, retrying, and tracking status transitions.
 """
 
+import os
 import threading
 import time
 import uuid
+from collections import defaultdict
 from dataclasses import asdict, dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from services.filename_parser import FilenameParser
 from utils.logging import logger
+
+try:
+    from pymediainfo import MediaInfo as _MediaInfo
+    _MEDIAINFO_AVAILABLE = True
+except ImportError:
+    _MEDIAINFO_AVAILABLE = False
+
+
+def _get_file_duration(file_path: str) -> Optional[float]:
+    """Return duration in milliseconds for a media file, or None on failure."""
+    if not _MEDIAINFO_AVAILABLE or not os.path.isfile(file_path):
+        return None
+    try:
+        info = _MediaInfo.parse(file_path)
+        for track in info.tracks:
+            if track.track_type == "General" and track.duration is not None:
+                return float(track.duration)
+    except Exception:
+        pass
+    return None
 
 
 QUEUE_PENDING = "pending"
@@ -43,6 +65,8 @@ class IngressQueueItem:
     parsed_info: Optional[Dict[str, Any]] = None
     best_match: Optional[Dict[str, Any]] = None
     match_candidates: Optional[List[Dict[str, Any]]] = None
+    media_duration_ms: Optional[float] = None
+    proposed_path: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -93,6 +117,7 @@ class IngressQueueService:
                 queued_at=queued_file.queued_at,
                 status=QUEUE_PENDING,
                 priority=max(1, min(priority, 10)),
+                media_duration_ms=_get_file_duration(queued_file.file_path),
             )
 
             self.items_by_id[item_id] = queue_item
@@ -104,6 +129,44 @@ class IngressQueueService:
             item_id=queue_item.id,
             file_path=queue_item.file_path,
             priority=queue_item.priority,
+        )
+        return queue_item
+
+    def add_manual_file(self, file_path: str, priority: int = 5) -> IngressQueueItem:
+        """Manually add an existing file to the ingress queue.
+
+        Returns the existing item if the file path is already tracked.
+        """
+        with self.lock:
+            existing_id = self.path_to_item_id.get(file_path)
+            if existing_id is not None:
+                return self.items_by_id[existing_id]
+
+            now = time.time()
+            item_id = str(uuid.uuid4())
+            file_name = os.path.basename(file_path)
+            file_size = os.path.getsize(file_path) if os.path.isfile(file_path) else 0
+            queue_item = IngressQueueItem(
+                id=item_id,
+                file_path=file_path,
+                file_name=file_name,
+                ingress_path=os.path.dirname(file_path),
+                file_size=file_size,
+                detected_at=now,
+                queued_at=now,
+                status=QUEUE_PENDING,
+                priority=max(1, min(priority, 10)),
+                media_duration_ms=_get_file_duration(file_path),
+            )
+
+            self.items_by_id[item_id] = queue_item
+            self.path_to_item_id[file_path] = item_id
+            self.item_order.append(item_id)
+
+        logger.info(
+            "Manual ingress queue item added",
+            item_id=queue_item.id,
+            file_path=queue_item.file_path,
         )
         return queue_item
 
@@ -120,7 +183,10 @@ class IngressQueueService:
 
         start_time = time.time()
         try:
-            parsed_info = self.parser.parse_filename(candidate.file_name).to_dict()
+            folder_name = os.path.basename(os.path.dirname(candidate.file_path))
+            parsed_info = self.parser.parse_filename(
+                candidate.file_name, folder_name=folder_name
+            ).to_dict()
             match_result = self._run_matcher(parsed_info)
             best_match = match_result.get("best_match") if match_result else None
 
@@ -138,6 +204,9 @@ class IngressQueueService:
                 candidate.match_candidates = (
                     match_result.get("candidates", []) if match_result else []
                 )
+                # proposed_path is computed dynamically in get_queue_items() so that
+                # main-feature vs special-feature designation can be resolved across
+                # all items matched to the same title.
                 candidate.status = (
                     QUEUE_AUTO_ASSIGNED
                     if confidence_score >= self.auto_assign_threshold
@@ -146,9 +215,15 @@ class IngressQueueService:
                 candidate.processed_at = time.time()
 
             if candidate.status == QUEUE_AUTO_ASSIGNED and self.assignment_orchestrator:
-                assignment_id = await self._attempt_auto_assignment(candidate)
+                assignment_result = await self._attempt_auto_assignment(candidate)
                 with self.lock:
-                    candidate.assignment_id = assignment_id
+                    if assignment_result:
+                        candidate.assignment_id = assignment_result.get("assignment_id")
+                        if assignment_result.get("organized"):
+                            candidate.status = QUEUE_COMPLETED
+                        organization_result = assignment_result.get("organization_result")
+                        if organization_result and not organization_result.get("success"):
+                            candidate.last_error = organization_result.get("error")
 
             await self._persist_queue_item(candidate)
 
@@ -259,12 +334,100 @@ class IngressQueueService:
             item = self.items_by_id.get(item_id)
             return item.to_dict() if item else None
 
+    # ------------------------------------------------------------------
+    # Proposed-path helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sanitize_title(title: str) -> str:
+        """Strip characters that are invalid in file/folder names."""
+        for ch in r'<>:"/\|?*':
+            title = title.replace(ch, "")
+        return title.strip()
+
+    @staticmethod
+    def _folder_title(best_match: Dict[str, Any]) -> str:
+        title = IngressQueueService._sanitize_title(best_match.get("title") or "Unknown")
+        year = best_match.get("year")
+        return f"{title} ({year})" if year else title
+
+    @staticmethod
+    def _build_main_path(file_name: str, best_match: Dict[str, Any]) -> str:
+        """Proposed path for the main feature file."""
+        ext = os.path.splitext(file_name)[1]
+        folder = IngressQueueService._folder_title(best_match)
+        media_type = best_match.get("media_type", "movie")
+        if media_type in ("episode", "series"):
+            season = best_match.get("season")
+            season_str = f"Season {int(season):02d}" if season is not None else "Season 01"
+            return f"shows/{folder}/{season_str}/{file_name}"
+        return f"movies/{folder}/{folder}{ext}"
+
+    @staticmethod
+    def _build_special_path(file_name: str, best_match: Dict[str, Any], number: int) -> str:
+        """Proposed path for an extra / special-feature file."""
+        ext = os.path.splitext(file_name)[1]
+        folder = IngressQueueService._folder_title(best_match)
+        media_type = best_match.get("media_type", "movie")
+        if media_type in ("episode", "series"):
+            season = best_match.get("season")
+            season_str = f"Season {int(season):02d}" if season is not None else "Season 01"
+            return f"shows/{folder}/{season_str}/{file_name}"
+        return f"movies/{folder}/Special Feature {number}{ext}"
+
+    def _enrich_proposed_paths(self, items: List[Dict[str, Any]]) -> None:
+        """
+        Assign proposed_path for each item dict in-place.
+
+        Within each group of items that share the same best_match title+year,
+        the file with the longest media duration is considered the main feature
+        and gets a Jellyfin-style canonical name (e.g. "Yes Man (2008).mkv").
+        All other files in that group are considered special features and are
+        named "Special Feature 1.mkv", "Special Feature 2.mkv", etc. (ordered
+        by duration descending).
+
+        Items with no best_match are left with proposed_path = None.
+        """
+        # Build groups: key -> list of indices into items
+        groups: Dict[Tuple[str, Any], List[int]] = defaultdict(list)
+        for i, item in enumerate(items):
+            match = item.get("best_match")
+            if match and match.get("title"):
+                key: Tuple[str, Any] = (match["title"].lower(), match.get("year"))
+                groups[key].append(i)
+            else:
+                items[i]["proposed_path"] = None
+
+        for indices in groups.values():
+            if len(indices) == 1:
+                idx = indices[0]
+                items[idx]["proposed_path"] = self._build_main_path(
+                    items[idx]["file_name"], items[idx]["best_match"]
+                )
+            else:
+                # Longest duration → main feature
+                main_idx = max(indices, key=lambda i: items[i].get("media_duration_ms") or 0)
+                others = sorted(
+                    [i for i in indices if i != main_idx],
+                    key=lambda i: items[i].get("media_duration_ms") or 0,
+                    reverse=True,
+                )
+                items[main_idx]["proposed_path"] = self._build_main_path(
+                    items[main_idx]["file_name"], items[main_idx]["best_match"]
+                )
+                for number, idx in enumerate(others, start=1):
+                    items[idx]["proposed_path"] = self._build_special_path(
+                        items[idx]["file_name"], items[idx]["best_match"], number
+                    )
+
     def get_queue_items(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
         with self.lock:
             items = [self.items_by_id[item_id] for item_id in self.item_order]
             if status is not None:
                 items = [item for item in items if item.status == status]
-            return [item.to_dict() for item in items]
+            result = [item.to_dict() for item in items]
+        self._enrich_proposed_paths(result)
+        return result
 
     def get_queue_status(self) -> Dict[str, Any]:
         with self.lock:
@@ -304,6 +467,19 @@ class IngressQueueService:
             self.path_to_item_id.clear()
             self.processing_history.clear()
             return count
+
+    async def process_pending_items(self, max_items: int = 25) -> List[Dict[str, Any]]:
+        """Process up to max_items pending queue items."""
+        processed_items: List[Dict[str, Any]] = []
+
+        limit = max(1, min(max_items, 500))
+        for _ in range(limit):
+            processed = await self.process_next_item()
+            if processed is None:
+                break
+            processed_items.append(processed.to_dict())
+
+        return processed_items
 
     def _get_next_pending_item(self) -> Optional[IngressQueueItem]:
         pending_items = [
@@ -352,7 +528,7 @@ class IngressQueueService:
             logger.error("Auto-matcher failed", error=str(exc))
             return {"status": "matcher_failed", "candidates": [], "best_match": None}
 
-    async def _attempt_auto_assignment(self, item: IngressQueueItem) -> Optional[str]:
+    async def _attempt_auto_assignment(self, item: IngressQueueItem) -> Optional[Dict[str, Any]]:
         try:
             return await self.assignment_orchestrator.auto_assign(item.to_dict())
         except Exception as exc:

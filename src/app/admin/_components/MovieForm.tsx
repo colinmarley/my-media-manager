@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import Divider from '@mui/material/Divider';
 import Grid from '@mui/material/Grid';
 import FirestoreService from '../../../service/firebase/FirestoreService';
-import FormControl from '@mui/material/FormControl';
 import { FormTextField } from './formInputs/common/FormTextField';
 import DirectorInput from './formInputs/DirectorInput';
 import { Movie } from '../../../types/collections/Movie.type';
@@ -246,10 +245,10 @@ const MovieForm: React.FC = () => {
 
     return (
         <React.Fragment>
-            <FormControl
+            <Box
+                component="form"
                 onSubmit={handleSubmit}
-                classes={styles.root}
-                color="secondary"
+                className={styles.root}
                 sx={{maxWidth: "100%"}}>
                 <Grid
                     container
@@ -363,7 +362,7 @@ const MovieForm: React.FC = () => {
                             disabled={!omdbData} />
                     </Grid>
                 </Grid>
-            </FormControl>
+            </Box>
             {shouldShowAddDirectorModal && (
                 <AddDirectorModule onClose={closeAddDirectorModal} />
             )}

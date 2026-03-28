@@ -1,103 +1,44 @@
 "use client";
 
-import { useEffect, useState } from 'react';
-import { Box, TextField, Button, Typography, Paper } from '@mui/material';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from '../../../firebaseConfig';
-import useAuthenticationStore from '@/store/useAuthenticationStore';
+import Link from 'next/link';
+import { Box, Button, Card, CardContent, Grid, Typography } from '@mui/material';
 
 const Dashboard = () => {
-  const [messages, setMessages] = useState<{ text: string; isFromUser: boolean }[]>([]);
-  const [newMessage, setNewMessage] = useState<string>('');
-  const { login, user } = useAuthenticationStore();
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (newMessage.trim()) {
-      setMessages([...messages, { text: newMessage, isFromUser: true }]);
-      setNewMessage('');
-    }
-  };
+  const dashboardLinks = [
+    { title: 'Media Search', description: 'Search OMDB and preview media details.', href: '/dashboard/media' },
+    { title: 'Library View', description: 'Browse saved movies and series.', href: '/dashboard/media/library' },
+    { title: 'Ingress Automation', description: 'Monitor ingestion queue and automation health.', href: '/ingress-automation' },
+    { title: 'Admin', description: 'Manage records, scanning, and tools.', href: '/admin' },
+  ];
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        height: '100vh',
-        padding: '16px',
-        backgroundColor: '#121212',
-      }}
-    >
-      {/* Messages Container */}
-      <Box
-        sx={{
-          flex: 1,
-          width: '100%',
-          overflowY: 'auto',
-          marginBottom: '16px',
-          padding: '16px',
-          backgroundColor: '#1e1e1e',
-          borderRadius: '8px',
-        }}
-      >
-        {messages.map((message, index) => (
-          <Paper
-            key={index}
-            elevation={3}
-            sx={{
-              padding: '8px 16px',
-              marginBottom: '8px',
-              alignSelf: message.isFromUser ? 'flex-end' : 'flex-start',
-              backgroundColor: message.isFromUser ? '#3d5afe' : '#03a9f4',
-              color: '#ffffff',
-              borderRadius: '16px',
-              maxWidth: '70%',
-            }}
-          >
-            <Typography variant="body1">{message.text}</Typography>
-          </Paper>
-        ))}
-      </Box>
+    <Box sx={{ p: 3 }}>
+      <Typography variant="h4" sx={{ mb: 1 }}>
+        Dashboard
+      </Typography>
+      <Typography variant="body1" sx={{ mb: 3 }}>
+        Choose a workspace below.
+      </Typography>
 
-      {/* Form for New Message */}
-      <Box
-        component="form"
-        onSubmit={handleSubmit}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          width: '100%',
-          gap: '8px',
-        }}
-      >
-        <TextField
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          placeholder="Type your message..."
-          fullWidth
-          multiline
-          rows={2}
-          variant="outlined"
-          sx={{
-            backgroundColor: '#1e1e1e',
-            borderRadius: '8px',
-          }}
-        />
-        <Button
-          type="submit"
-          variant="contained"
-          color="primary"
-          sx={{
-            height: '56px',
-            borderRadius: '8px',
-          }}
-        >
-          Send
-        </Button>
-      </Box>
+      <Grid container spacing={2}>
+        {dashboardLinks.map((link) => (
+          <Grid key={link.href} size={{ xs: 12, sm: 6 }}>
+            <Card sx={{ height: '100%' }}>
+              <CardContent>
+                <Typography variant="h6" sx={{ mb: 1 }}>
+                  {link.title}
+                </Typography>
+                <Typography variant="body2" sx={{ mb: 2 }}>
+                  {link.description}
+                </Typography>
+                <Button component={Link} href={link.href} variant="contained">
+                  Open
+                </Button>
+              </CardContent>
+            </Card>
+          </Grid>
+        ))}
+      </Grid>
     </Box>
   );
 };

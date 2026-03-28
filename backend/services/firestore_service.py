@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 import logging
 
+from config.settings import settings
 from utils.logging import logger
 
 class FirestoreService:
@@ -31,7 +32,10 @@ class FirestoreService:
                         from firebase_admin import credentials
                         
                         # Check if service account file exists
-                        service_account_path = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+                        service_account_path = (
+                            os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')
+                            or settings.firebase_credentials_path
+                        )
                         if service_account_path and os.path.exists(service_account_path):
                             cred = credentials.Certificate(service_account_path)
                             initialize_app(cred)
@@ -573,3 +577,41 @@ class FirestoreService:
         except Exception as e:
             logger.error("Failed to get ingress processing history", error=str(e))
             return []
+
+    # ========================================================================
+    # Ingress Runtime Config Methods
+    # ========================================================================
+
+    async def save_ingress_config(self, config_dict: Dict[str, Any]) -> bool:
+        """Persist ingress runtime config to Firestore (single 'current' document)."""
+        if not self._initialized:
+            logger.warning("Firestore not initialized - ingress config not saved")
+            return False
+
+        try:
+            doc_ref = self.db.collection("ingress_config").document("current")
+            doc_ref.set({
+                **config_dict,
+                "updatedAt": SERVER_TIMESTAMP,
+            })
+            logger.info("Ingress config saved to Firestore")
+            return True
+        except Exception as e:
+            logger.error("Failed to save ingress config", error=str(e))
+            return False
+
+    async def get_ingress_config(self) -> Optional[Dict[str, Any]]:
+        """Load saved ingress runtime config from Firestore."""
+        if not self._initialized:
+            return None
+
+        try:
+            doc = self.db.collection("ingress_config").document("current").get()
+            if doc.exists:
+                data = doc.to_dict()
+                data.pop("updatedAt", None)
+                return data
+            return None
+        except Exception as e:
+            logger.error("Failed to get ingress config", error=str(e))
+            return None
