@@ -11,8 +11,8 @@ import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
 import ListItemButton from '@mui/material/ListItemButton';
 import FirestoreService from '../../../service/firebase/FirestoreService';
-import { FBSeries, Season, Episode } from '../../../types/firebase/FBSeries.type';
-import { DirectorEntry, ImageFile } from '../../../types/firebase/FBCommon.type';
+import { FBSeries } from '../../../types/firebase/FBSeries.type';
+import { CastEntry, DirectorEntry, DirectorReference, ImageFile } from '../../../types/firebase/FBCommon.type';
 import { OmdbResponseFull, OmdbSearchResponse } from '../../../types/OmdbResponse.type';
 import { searchByText, retrieveMediaDataById } from '@/service/omdb/OmdbService';
 import ImageSearch from '../imageManager/_components/ImageSearch';
@@ -20,6 +20,8 @@ import useSeriesValidation from '../../../utils/useSeriesValidation';
 import styles from '../_styles/Form.module.css';
 import SubmitButton from '@/app/_components/SubmitButton';
 import { prepareTitleForStorage } from '../../../utils/titleUtils';
+import { FieldLabel, FormSection, FormSectionStack } from './forms/common';
+import { NestedSeasonEditor, SeasonEntry } from './forms/editors';
 
 interface SeriesValidation {
   title: string | null;
@@ -36,19 +38,6 @@ interface SeriesValidation {
   regionCode: string | null;
 }
 
-const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, error?: string | null }) => (
-  <TextField
-    label={props.label}
-    value={props.value}
-    onChange={props.onChange}
-    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
-    fullWidth
-    required
-    error={!!props.error}
-    helperText={props.error}
-  />
-);
-
 const SeriesForm: React.FC = () => {
   const [title, setTitle] = useState('');
   const [countryOfOrigin, setCountryOfOrigin] = useState('');
@@ -59,13 +48,12 @@ const SeriesForm: React.FC = () => {
   const [omdbData, setOmdbData] = useState<OmdbResponseFull | null>(null);
   const [omdbResults, setOmdbResults] = useState<OmdbSearchResponse[]>([]);
   const [runningDates, setRunningDates] = useState('');
-  const [releases, setReleases] = useState<string[]>([]);
   const [runtime, setRuntime] = useState('');
   const [topCast, setTopCast] = useState<string[]>([]);
   const [writers, setWriters] = useState<string[]>([]);
   const [isPartOfCollection, setIsPartOfCollection] = useState(false);
   const [collectionIds, setCollectionIds] = useState<string[]>([]);
-  const [seasons, setSeasons] = useState<Season[]>([]);
+  const [seasons, setSeasons] = useState<SeasonEntry[]>([]);
   const [genres, setGenres] = useState<string[]>([]);
   const [language, setLanguage] = useState('');
   const [regionCode, setRegionCode] = useState('');
@@ -136,7 +124,7 @@ const SeriesForm: React.FC = () => {
     setOmdbResults([]); // Clear the search results after selection
   };
 
-  const directorEntryToDirector = (entry: DirectorEntry): any => {
+  const directorEntryToDirector = (entry: DirectorEntry): DirectorReference => {
     return {
       fullName: entry.fullName,
       notes: '',
@@ -174,24 +162,33 @@ const SeriesForm: React.FC = () => {
     const series: FBSeries = {
       id: '', // Firebase will generate the ID
       ...prepareTitleForStorage(title),
-      countryOfOrigin,
+      countryOfOrigin: countryOfOrigin
+        .split(',')
+        .map((country) => country.trim())
+        .filter(Boolean),
       directors: directors.map(directorEntryToDirector),
       imageFiles,
       letterboxdLink,
       plexLink,
-      omdbData: omdbData!,
       runningDates,
-      releases: [], // Assuming releases are an array of release IDs
+      releaseIds: [],
       runtime,
-      topCast,
+      topCast: topCast.map<CastEntry>((actorName) => ({ actorName })),
       writers,
       isPartOfCollection,
       collectionIds,
-      seasons,
+      seasons: seasons as FBSeries['seasons'],
       genres,
-      language,
+      languages: language
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
       regionCode,
-      imdbID: omdbData?.imdbID || '',
+      externalIds: omdbData?.imdbID ? { imdbId: omdbData.imdbID } : undefined,
+      totalSeasons: seasons.length,
+      plot: omdbData?.Plot || undefined,
+      contentRating: omdbData?.Rated || undefined,
+      awards: omdbData?.Awards || undefined,
     };
 
     const service = new FirestoreService('series');
@@ -201,116 +198,244 @@ const SeriesForm: React.FC = () => {
   return (
     <form onSubmit={handleSubmit} className={styles.root}>
       <Grid container spacing={2}>
-        <Grid size={8}>
-          <Grid size={12}>
-            <Typography variant="h4" color="white">Add New Series</Typography>
-          </Grid>
-          <Grid size={12}>
-            <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
-          </Grid>
-          <Grid size={12}>
-            <Button onClick={() => handleSeriesTitleSearch(title)} variant="contained" color="primary">
-              Search Series Title
-            </Button>
-          </Grid>
-          {omdbResults.length > 0 && (
-            <Grid size={12}>
-              <Typography variant="h6">Search Results:</Typography>
-              <List>
-                {omdbResults.map((result, index) => (
-                  <ListItem key={`search-result-${index}`} disablePadding>
-                    <ListItemButton onClick={() => handleSeriesSelect(result.Title, result.Year, result.imdbID)}>
-                      <ListItemText primary={`${result.Title} (${result.Year})`} />
-                    </ListItemButton>
-                  </ListItem>
-                ))}
-              </List>
-            </Grid>
-          )}
-          <Grid size={12}>
-            <FormTextField label="Country of Origin" value={countryOfOrigin} onChange={(e) => setCountryOfOrigin(e.target.value)} error={errors.countryOfOrigin} />
-          </Grid>
-          <Grid size={12}>
-            <Typography variant="h6">Directors</Typography>
-            {directors.map((director, index) => (
-              <Grid container spacing={2} key={index}>
+        <Grid size={12}>
+          <Typography variant="h4" color="white">Add New Series</Typography>
+        </Grid>
+        <Grid size={12}>
+          <FormSectionStack>
+            <FormSection title="Search and Import" description="Search OMDB to auto-fill the form." titleTooltip="Search OMDB to pre-fill title, cast, runtime, artwork, and other metadata before reviewing it manually.">
+              <Grid container spacing={2}>
+                <Grid size={omdbData?.Poster ? 8 : 12}>
+                  <Grid container spacing={2}>
+                    <Grid size={9}>
+                      <TextField
+                        label={<FieldLabel label="Title" tooltip="Required. The official series title. Include a disambiguating year only when needed." />}
+                        value={title}
+                        onChange={(e) => setTitle(e.target.value)}
+                        sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                        fullWidth
+                        error={!!errors.title}
+                        helperText={errors.title}
+                      />
+                    </Grid>
+                    <Grid size={3}>
+                      <Button onClick={() => handleSeriesTitleSearch(title)} variant="contained" color="primary">
+                        Search
+                      </Button>
+                    </Grid>
+                    {omdbResults.length > 0 && (
+                      <Grid size={12}>
+                        <List dense>
+                          {omdbResults.map((result, index) => (
+                            <ListItem key={`search-result-${index}`} disablePadding>
+                              <ListItemButton onClick={() => handleSeriesSelect(result.Title, result.Year, result.imdbID)}>
+                                <ListItemText primary={`${result.Title} (${result.Year})`} />
+                              </ListItemButton>
+                            </ListItem>
+                          ))}
+                        </List>
+                      </Grid>
+                    )}
+                  </Grid>
+                </Grid>
+                {omdbData?.Poster && (
+                  <Grid size={4}>
+                    <Box
+                      component="img"
+                      src={omdbData.Poster}
+                      alt={title}
+                      sx={{ width: '100%', height: 'auto', borderRadius: 1 }}
+                    />
+                  </Grid>
+                )}
+              </Grid>
+            </FormSection>
+
+            <FormSection title="Core Details" description="Series dates, runtime and origin." titleTooltip="Enter the core identity and scheduling details for the series. Use broadcast dates and average runtime.">
+              <Grid container spacing={2}>
                 <Grid size={6}>
-                  <FormTextField
-                    label="Name"
-                    value={director.fullName}
-                    onChange={(e) => handleDirectorChange(index, 'fullName', e.target.value)}
+                  <TextField
+                    label={<FieldLabel label="Running Dates" tooltip="Format: YYYY-YYYY or YYYY-. Example: 2011-2019 or 2019-." />}
+                    value={runningDates}
+                    onChange={(e) => setRunningDates(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    error={!!errors.runningDates}
+                    helperText={errors.runningDates}
                   />
                 </Grid>
                 <Grid size={6}>
-                  <FormTextField
-                    label="Title"
-                    value={director.title}
-                    onChange={(e) => handleDirectorChange(index, 'title', e.target.value)}
+                  <TextField
+                    label={<FieldLabel label="Runtime" tooltip="Average episode runtime in h:mm:ss format. Example: 0:42:00." />}
+                    value={runtime}
+                    onChange={(e) => setRuntime(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    placeholder="h:mm:ss"
+                    error={!!errors.runtime}
+                    helperText={errors.runtime}
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Country of Origin" tooltip="Comma-separated production countries. Example: United States, Canada." />}
+                    value={countryOfOrigin}
+                    onChange={(e) => setCountryOfOrigin(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    error={!!errors.countryOfOrigin}
+                    helperText={errors.countryOfOrigin}
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={isPartOfCollection}
+                        onChange={(e) => setIsPartOfCollection(e.target.checked)}
+                      />
+                    }
+                    label={<FieldLabel label="Is Part of Collection" tooltip="Enable when this series belongs to one or more curated collections." />}
                   />
                 </Grid>
               </Grid>
-            ))}
-            <Button onClick={handleAddDirector}>Add Director</Button>
-          </Grid>
-          <Grid size={6}>
-            <FormTextField label="Letterboxd Link" value={letterboxdLink} onChange={(e) => setLetterboxdLink(e.target.value)} />
-          </Grid>
-          <Grid size={6}>
-            <FormTextField label="Plex Link" value={plexLink} onChange={(e) => setPlexLink(e.target.value)} />
-          </Grid>
-          <Grid size={3}>
-            <FormTextField label="Running Dates" value={runningDates} onChange={(e) => setRunningDates(e.target.value)} error={errors.runningDates} />
-          </Grid>
-          <Grid size={3}>
-            <FormTextField label="Runtime" value={runtime} onChange={(e) => setRuntime(e.target.value)} error={errors.runtime} />
-          </Grid>
-          <Grid size={6}>
-            <FormTextField label="Top Cast" value={topCast.join(', ')} onChange={(e) => setTopCast(e.target.value.split(', '))} error={errors.topCast} />
-          </Grid>
-          <Grid size={6}>
-            <FormTextField label="Writers" value={writers.join(', ')} onChange={(e) => setWriters(e.target.value.split(', '))} error={errors.writers} />
-          </Grid>
-          <Grid size={6}>
-            <FormControlLabel
-              control={
-                <Checkbox
-                  checked={isPartOfCollection}
-                  onChange={(e) => setIsPartOfCollection(e.target.checked)}
-                />
-              }
-              label="Is Part of Collection"
-            />
-          </Grid>
-          <Grid size={4}>
-            <FormTextField label="Genres" value={genres.join(', ')} onChange={(e) => setGenres(e.target.value.split(', '))} error={errors.genres} />
-          </Grid>
-          <Grid size={8}>
-            <FormTextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
-          </Grid>
-          <Grid size={12}>
-            <ImageSearch />
-          </Grid>
+            </FormSection>
+
+            <FormSection title="Credits" description="Directors, cast and writers." titleTooltip="Store principal creative credits and recurring cast used throughout series-level views.">
+              <Grid container spacing={2}>
+                <Grid size={12}>
+                  <Typography variant="subtitle1" color="white">Directors</Typography>
+                  {directors.map((director, index) => (
+                    <Grid container spacing={2} key={index} sx={{ mb: 1 }}>
+                      <Grid size={6}>
+                        <TextField
+                          label={<FieldLabel label="Name" tooltip="Director's full name." />}
+                          value={director.fullName}
+                          onChange={(e) => handleDirectorChange(index, 'fullName', e.target.value)}
+                          size="small"
+                          fullWidth
+                          sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                        />
+                      </Grid>
+                      <Grid size={6}>
+                        <TextField
+                          label={<FieldLabel label="Title" tooltip="Optional role descriptor, such as Co-director or Episode Director." />}
+                          value={director.title}
+                          onChange={(e) => handleDirectorChange(index, 'title', e.target.value)}
+                          size="small"
+                          fullWidth
+                          sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                        />
+                      </Grid>
+                    </Grid>
+                  ))}
+                  <Button onClick={handleAddDirector} size="small">Add Director</Button>
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Top Cast" tooltip="Comma-separated principal cast names." />}
+                    value={topCast.join(', ')}
+                    onChange={(e) => setTopCast(e.target.value.split(', '))}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    error={!!errors.topCast}
+                    helperText={errors.topCast}
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Writers" tooltip="Comma-separated writer names credited for the series." />}
+                    value={writers.join(', ')}
+                    onChange={(e) => setWriters(e.target.value.split(', '))}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    error={!!errors.writers}
+                    helperText={errors.writers}
+                  />
+                </Grid>
+              </Grid>
+            </FormSection>
+
+            <FormSection title="Classification" description="Genres and language metadata." titleTooltip="Set genre and language metadata that powers filtering and external metadata matching.">
+              <Grid container spacing={2}>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Genres" tooltip="Comma-separated genres, such as Drama, Sci-Fi, Thriller." />}
+                    value={genres.join(', ')}
+                    onChange={(e) => setGenres(e.target.value.split(', '))}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    error={!!errors.genres}
+                    helperText={errors.genres}
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Language" tooltip="Comma-separated spoken languages used in the series." />}
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    error={!!errors.language}
+                    helperText={errors.language}
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Region Code" tooltip="Primary release region code, such as US or UK." />}
+                    value={regionCode}
+                    onChange={(e) => setRegionCode(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    placeholder="e.g. US, UK"
+                    error={!!errors.regionCode}
+                    helperText={errors.regionCode}
+                  />
+                </Grid>
+              </Grid>
+            </FormSection>
+
+            <FormSection title="Seasons and Episodes" description="Add seasons and their episodes inline. Season and episode numbers must be unique." titleTooltip="Author nested season and episode structures in one flow, keeping season and episode numbering unique.">
+              <NestedSeasonEditor
+                seasons={seasons}
+                onChange={setSeasons}
+                error={errors.seasons}
+              />
+            </FormSection>
+
+            <FormSection title="Links and Media" description="External links and artwork." titleTooltip="Optional external URLs and artwork used for this series record.">
+              <Grid container spacing={2}>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Letterboxd Link" tooltip="Optional URL to the series page on Letterboxd or similar tracking site." />}
+                    value={letterboxdLink}
+                    onChange={(e) => setLetterboxdLink(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Plex Link" tooltip="Optional URL to this series in your Plex library." />}
+                    value={plexLink}
+                    onChange={(e) => setPlexLink(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                  />
+                </Grid>
+                <Grid size={12}>
+                  <ImageSearch />
+                </Grid>
+              </Grid>
+            </FormSection>
+          </FormSectionStack>
         </Grid>
-        <Grid size={4}>
-          <Box
-            component="img"
-            src={omdbData?.Poster} // Use the Poster URL from OMDB data
-            alt={title}
-            sx={{ width: '100%', height: 'auto' }}
-          />
-        </Grid>
-        
         <Grid size={3}>
           <SubmitButton
             label="Add Series"
             onClick={handleSubmit}
             disabled={!omdbData} />
         </Grid>
-        {omdbData && (
-          <Grid size={12}>
-            <Typography variant="body1">OMDB Data: {JSON.stringify(omdbData)}</Typography>
-          </Grid>
-        )}
       </Grid>
     </form>
   );

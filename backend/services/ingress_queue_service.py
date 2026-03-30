@@ -6,6 +6,7 @@ operations for processing, retrying, and tracking status transitions.
 """
 
 import os
+import re
 import threading
 import time
 import uuid
@@ -13,6 +14,7 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+from config.settings import settings
 from services.filename_parser import FilenameParser
 from utils.logging import logger
 
@@ -291,13 +293,48 @@ class IngressQueueService:
         return item
 
     async def mark_complete(self, item_id: str) -> Optional[IngressQueueItem]:
-        """Mark an item as fully completed after organization."""
+        """Mark an item complete and attempt organization to Jellyfin."""
         with self.lock:
             item = self.items_by_id.get(item_id)
             if item is None:
                 return None
 
-            item.status = QUEUE_COMPLETED
+        organization_error: Optional[str] = None
+        organized = False
+        assignment_id: Optional[str] = None
+
+        if self.assignment_orchestrator is not None:
+            try:
+                assignment_result = await self.assignment_orchestrator.auto_assign(
+                    item.to_dict(),
+                    force_organize=True,
+                )
+                if assignment_result:
+                    assignment_id = assignment_result.get("assignment_id")
+                    organized = bool(assignment_result.get("organized"))
+                    if not organized:
+                        org_result = assignment_result.get("organization_result") or {}
+                        organization_error = org_result.get("error") or (
+                            "Organization did not complete successfully"
+                        )
+                else:
+                    organization_error = "Unable to create assignment for this queue item"
+            except Exception as exc:
+                organization_error = str(exc)
+
+            if assignment_id:
+                item.assignment_id = assignment_id
+
+            if self.assignment_orchestrator is None:
+                # Backward-compatible behavior when no orchestrator is configured.
+                item.status = QUEUE_COMPLETED
+                item.last_error = None
+            elif organized:
+                item.status = QUEUE_COMPLETED
+                item.last_error = None
+            else:
+                item.status = QUEUE_FAILED
+                item.last_error = organization_error or "Failed to organize accepted file"
             item.processed_at = time.time()
 
         await self._persist_queue_item(item)
@@ -323,6 +360,93 @@ class IngressQueueService:
             "error": reason,
             "processed_at": item.processed_at,
         }
+        with self.lock:
+            self.processing_history.append(history_item)
+
+        await self._persist_processing_history(history_item)
+        return item
+
+    async def manual_assign_item(
+        self,
+        item_id: str,
+        match_payload: Dict[str, Any],
+        organize_now: bool = False,
+    ) -> Optional[IngressQueueItem]:
+        """Manually assign a queue item to explicit media and optionally organize now."""
+        with self.lock:
+            item = self.items_by_id.get(item_id)
+            if item is None:
+                return None
+
+        media_type = match_payload.get("media_type") or "movie"
+        if media_type not in ("movie", "episode", "series"):
+            media_type = "movie"
+
+        normalized_media_type = "episode" if media_type in ("episode", "series") else "movie"
+
+        best_match = {
+            "source": match_payload.get("source", "manual"),
+            "title": match_payload.get("title"),
+            "year": match_payload.get("year"),
+            "media_type": normalized_media_type,
+            "season": match_payload.get("season"),
+            "episode": match_payload.get("episode"),
+            "imdb_id": match_payload.get("imdb_id"),
+            "media_id": match_payload.get("imdb_id") or match_payload.get("media_id") or match_payload.get("firebase_media_id"),
+            "firebase_media_id": match_payload.get("firebase_media_id"),
+            "confidence_score": 100,
+            "match_reason": "manual_assignment",
+            "raw_data": match_payload.get("raw_data") or {},
+        }
+
+        parsed_info = dict(item.parsed_info or {})
+        parsed_info["media_type"] = normalized_media_type
+        if match_payload.get("season") is not None:
+            parsed_info["season"] = match_payload.get("season")
+        if match_payload.get("episode") is not None:
+            parsed_info["episode"] = match_payload.get("episode")
+
+        with self.lock:
+            item.best_match = best_match
+            item.parsed_info = parsed_info
+            item.match_candidates = [best_match]
+            item.confidence_score = 100
+            item.status = QUEUE_AUTO_ASSIGNED
+            item.last_error = None
+            item.processed_at = time.time()
+
+        assignment_result = None
+        if self.assignment_orchestrator is not None:
+            assignment_result = await self._attempt_auto_assignment(item)
+
+        with self.lock:
+            if assignment_result:
+                item.assignment_id = assignment_result.get("assignment_id")
+                if organize_now:
+                    if assignment_result.get("organized"):
+                        item.status = QUEUE_COMPLETED
+                    else:
+                        item.status = QUEUE_FAILED
+                        org_result = assignment_result.get("organization_result") or {}
+                        item.last_error = org_result.get("error") or "Manual assignment organization failed"
+                else:
+                    item.status = QUEUE_COMPLETED
+            else:
+                item.status = QUEUE_FAILED
+                item.last_error = "Manual assignment failed"
+
+        await self._persist_queue_item(item)
+
+        history_item = {
+            "item_id": item.id,
+            "file_path": item.file_path,
+            "status": item.status,
+            "confidence_score": item.confidence_score,
+            "assignment_id": item.assignment_id,
+            "manual_assignment": True,
+            "processed_at": item.processed_at,
+        }
+
         with self.lock:
             self.processing_history.append(history_item)
 
@@ -386,32 +510,109 @@ class IngressQueueService:
         named "Special Feature 1.mkv", "Special Feature 2.mkv", etc. (ordered
         by duration descending).
 
-        Items with no best_match are left with proposed_path = None.
+        Items with no usable match are left with proposed_path = None, unless
+        they can inherit a matched anchor from the same ingress folder.
         """
-        # Build groups: key -> list of indices into items
         groups: Dict[Tuple[str, Any], List[int]] = defaultdict(list)
+        ingress_groups: Dict[str, List[int]] = defaultdict(list)
+        movie_folder_state_cache: Dict[str, Tuple[bool, int]] = {}
+
+        def _movie_folder_state(best_match: Dict[str, Any]) -> Tuple[bool, int]:
+            """Return (main_feature_exists, next_special_number) for a movie folder."""
+            media_type = (best_match.get("media_type") or "movie").lower()
+            if media_type in ("episode", "series"):
+                return False, 1
+
+            folder = self._folder_title(best_match)
+            cache_key = folder.lower()
+            if cache_key in movie_folder_state_cache:
+                return movie_folder_state_cache[cache_key]
+
+            dest_dir = os.path.join(settings.jellyfin_dest_base, "movies", folder)
+            main_exists = False
+            highest_special_number = 0
+            folder_lower = folder.lower()
+            video_extensions = {ext.lower() for ext in settings.supported_video_extensions}
+
+            if os.path.isdir(dest_dir):
+                try:
+                    for name in os.listdir(dest_dir):
+                        full_path = os.path.join(dest_dir, name)
+                        if not os.path.isfile(full_path):
+                            continue
+
+                        stem, ext = os.path.splitext(name)
+                        if ext.lower() not in video_extensions:
+                            continue
+
+                        if stem.lower() == folder_lower:
+                            main_exists = True
+
+                        special_match = re.match(r"^Special Feature\s+(\d+)$", stem, re.IGNORECASE)
+                        if special_match:
+                            highest_special_number = max(
+                                highest_special_number,
+                                int(special_match.group(1)),
+                            )
+                except OSError:
+                    pass
+
+            state = (main_exists, highest_special_number + 1)
+            movie_folder_state_cache[cache_key] = state
+            return state
+
+        def _fallback_title(item: Dict[str, Any], match: Dict[str, Any]) -> Optional[str]:
+            parsed_info = item.get("parsed_info") or {}
+            return (
+                match.get("title")
+                or parsed_info.get("title")
+                or os.path.basename(item.get("ingress_path") or "")
+                or None
+            )
+
         for i, item in enumerate(items):
+            ingress_path = item.get("ingress_path")
+            if ingress_path:
+                ingress_groups[ingress_path].append(i)
+
             match = item.get("best_match")
-            if match and match.get("title"):
-                key: Tuple[str, Any] = (match["title"].lower(), match.get("year"))
-                groups[key].append(i)
+            if match and isinstance(match, dict):
+                title = _fallback_title(item, match)
+                if title:
+                    key: Tuple[str, Any] = (title.lower(), match.get("year"))
+                    groups[key].append(i)
+                else:
+                    items[i]["proposed_path"] = None
             else:
                 items[i]["proposed_path"] = None
 
         for indices in groups.values():
-            if len(indices) == 1:
-                idx = indices[0]
+            sample_match = items[indices[0]].get("best_match") or {}
+            main_exists, next_special_number = _movie_folder_state(sample_match)
+
+            ordered = sorted(
+                indices,
+                key=lambda i: items[i].get("media_duration_ms") or 0,
+                reverse=True,
+            )
+
+            if main_exists:
+                for offset, idx in enumerate(ordered):
+                    items[idx]["proposed_path"] = self._build_special_path(
+                        items[idx]["file_name"],
+                        items[idx]["best_match"],
+                        next_special_number + offset,
+                    )
+                continue
+
+            if len(ordered) == 1:
+                idx = ordered[0]
                 items[idx]["proposed_path"] = self._build_main_path(
                     items[idx]["file_name"], items[idx]["best_match"]
                 )
             else:
-                # Longest duration → main feature
-                main_idx = max(indices, key=lambda i: items[i].get("media_duration_ms") or 0)
-                others = sorted(
-                    [i for i in indices if i != main_idx],
-                    key=lambda i: items[i].get("media_duration_ms") or 0,
-                    reverse=True,
-                )
+                main_idx = ordered[0]
+                others = ordered[1:]
                 items[main_idx]["proposed_path"] = self._build_main_path(
                     items[main_idx]["file_name"], items[main_idx]["best_match"]
                 )
@@ -419,6 +620,67 @@ class IngressQueueService:
                     items[idx]["proposed_path"] = self._build_special_path(
                         items[idx]["file_name"], items[idx]["best_match"], number
                     )
+
+        # Fallback: if some files in a source folder are unmatched (common for
+        # special features), inherit the matched anchor from that same folder so
+        # proposed paths and displayed match labels are never blank.
+        for ingress_indices in ingress_groups.values():
+            unmatched = [
+                i for i in ingress_indices
+                if not items[i].get("proposed_path")
+            ]
+            matched = [
+                i for i in ingress_indices
+                if items[i].get("proposed_path") and isinstance(items[i].get("best_match"), dict)
+            ]
+
+            if not unmatched or not matched:
+                continue
+
+            anchor_idx = max(matched, key=lambda i: items[i].get("media_duration_ms") or 0)
+            anchor_match = items[anchor_idx].get("best_match") or {}
+            if not anchor_match:
+                continue
+
+            _, next_special_number = _movie_folder_state(anchor_match)
+
+            existing_numbers = []
+            for i in matched:
+                proposed = items[i].get("proposed_path")
+                if not isinstance(proposed, str):
+                    continue
+                stem = os.path.splitext(os.path.basename(proposed))[0]
+                special_match = re.match(r"^Special Feature\s+(\d+)$", stem, re.IGNORECASE)
+                if special_match:
+                    existing_numbers.append(int(special_match.group(1)))
+            if existing_numbers:
+                next_special_number = max(next_special_number, max(existing_numbers) + 1)
+
+            unmatched_sorted = sorted(
+                unmatched,
+                key=lambda i: items[i].get("media_duration_ms") or 0,
+                reverse=True,
+            )
+            for offset, idx in enumerate(unmatched_sorted, start=1):
+                inherited_match = dict(anchor_match)
+                existing_match = items[idx].get("best_match") or {}
+                inherited_match.update({
+                    key: value
+                    for key, value in existing_match.items()
+                    if value is not None
+                })
+                inherited_match.setdefault("title", anchor_match.get("title"))
+                inherited_match.setdefault("year", anchor_match.get("year"))
+                inherited_match["inferred_from_ingress_folder"] = True
+
+                items[idx]["best_match"] = inherited_match
+                items[idx]["proposed_path"] = self._build_special_path(
+                    items[idx].get("file_name") or "",
+                    inherited_match,
+                    next_special_number + (offset - 1),
+                )
+
+
 
     def get_queue_items(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
         with self.lock:

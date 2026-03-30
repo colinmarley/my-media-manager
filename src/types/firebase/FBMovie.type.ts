@@ -1,24 +1,28 @@
-import { TopCastEntry } from '../inputs/MovieInputs';
-import { OmdbResponseFull } from '../OmdbResponse.type';
-import { FBRelease } from './FBRelease.type';
-import { ImageFile, DirectorEntry } from './FBCommon.type';
+import { AuditFields, CastEntry, DirectorEntry, ExternalIds, ImageFile } from './FBCommon.type';
 
-export interface FBMovie {
+export interface FBMovie extends AuditFields {
   id: string;
   title: string;
-  countryOfOrigin: string;
+  titleLower?: string;
+  countryOfOrigin: string[];
   directors: DirectorEntry[];
   imageFiles: ImageFile[];
-  letterboxdLink?: string; // Optional field for Letterboxd link
-  plexLink?: string; // Optional field for Plex link
-  omdbData: OmdbResponseFull;
+  letterboxdLink?: string;
+  plexLink?: string;
   releaseDate: string;
-  releases: FBRelease[];
+  releaseIds: string[];
   runtime: string;
-  topCast: TopCastEntry[];
+  topCast: CastEntry[];
   writers: string[];
   isPartOfCollection: boolean;
-  // Additional suggested fields
-  genres?: string[]; // Optional field for the genres
-  language?: string; // Optional field for the language
+  genres?: string[];
+  languages?: string[];
+  externalIds?: ExternalIds;
+  imdbId?: string;
+  plot?: string;
+  certification?: string;
+  imdbRating?: string;
+  rottenTomatoesScore?: string | null;
+  awards?: string;
+  boxOffice?: string | null;
 }

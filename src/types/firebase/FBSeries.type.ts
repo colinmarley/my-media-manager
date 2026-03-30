@@ -1,6 +1,11 @@
-import { OmdbResponseFull } from '../OmdbResponse.type';
-import { Director, ImageFile } from './FBCommon.type';
-import { FBRelease } from './FBRelease.type';
+import {
+  AuditFields,
+  CastEntry,
+  DirectorReference,
+  ExternalIds,
+  ImageFile,
+  SeriesStatus,
+} from './FBCommon.type';
 
 export interface Extra {
   runtime: string;
@@ -22,26 +27,31 @@ export interface Episode {
   runtime: string;
 }
 
-export interface FBSeries {
+export interface FBSeries extends AuditFields {
   id: string;
   title: string;
-  countryOfOrigin: string;
-  directors: Director[];
+  titleLower?: string;
+  countryOfOrigin: string[];
+  directors: DirectorReference[];
   imageFiles: ImageFile[];
-  letterboxdLink?: string; // Optional field for Letterboxd link
-  plexLink?: string; // Optional field for Plex link
-  omdbData: OmdbResponseFull;
-  runningDates: string; // e.g., "2005-2010"
-  releases: FBRelease[];
+  letterboxdLink?: string;
+  plexLink?: string;
+  runningDates: string;
+  releaseIds: string[];
   runtime: string;
-  topCast: string[];
+  topCast: CastEntry[];
   writers: string[];
   isPartOfCollection: boolean;
-  collectionIds?: string[]; // Optional field for collection IDs
+  collectionIds?: string[];
   seasons: Season[];
-  imdbID: string; // Optional field for IMDb ID
-  // Additional suggested fields
-  genres?: string[]; // Optional field for the genre
-  language?: string; // Optional field for the language
-  regionCode?: string; // Optional field for the region code
+  genres?: string[];
+  languages?: string[];
+  regionCode?: string;
+  externalIds?: ExternalIds;
+  plot?: string;
+  totalSeasons?: number;
+  status?: SeriesStatus;
+  network?: string;
+  contentRating?: string;
+  awards?: string;
 }

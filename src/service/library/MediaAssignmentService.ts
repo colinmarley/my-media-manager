@@ -11,6 +11,7 @@ import {
   MediaSearchParams, 
   MediaSuggestion, 
   NamingFormat, 
+  ScannedFile,
   DEFAULT_NAMING_FORMATS,
   FolderStructureTemplate,
   DEFAULT_FOLDER_STRUCTURES,
@@ -21,7 +22,6 @@ import {
   BatchOperationResult,
   BatchOperationSummary
 } from '../../types/library/MediaAssignment';
-import { ScannedFile } from './LibraryBrowserService';
 import { OmdbResponseFull, OmdbSearchResponse } from '../../types/OmdbResponse.type';
 import { searchByText, retrieveMediaDataById, retrieveMovieDataByTitle, retrieveShowDataByTitle } from '../omdb/OmdbService';
 

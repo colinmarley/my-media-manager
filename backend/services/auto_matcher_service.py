@@ -44,12 +44,14 @@ class AutoMatcherService:
         self,
         omdb_api_key: Optional[str] = None,
         tmdb_api_key: Optional[str] = None,
+        firestore_service: Optional[Any] = None,
     ):
         self.omdb_api_key = omdb_api_key or os.environ.get("OMDB_API_KEY", "")
         self.omdb_base_url = "http://www.omdbapi.com"
         self.tmdb_api_key = tmdb_api_key or os.environ.get("TMDB_API_KEY", "")
         self.tmdb_base_url = "https://api.themoviedb.org/3"
         self.request_timeout = 10
+        self.firestore_service = firestore_service
 
     def search_and_match(
         self, parsed_info: Dict[str, Any]
@@ -67,38 +69,53 @@ class AutoMatcherService:
         if not title:
             return {"status": "no_title", "candidates": []}
 
-        candidates = []
+        candidates: List[MatchCandidate] = []
+
+        # 1) Always check Firebase first so existing library context is prioritized.
         try:
-            if media_type == "episode":
-                candidates = self._search_series(title, year)
-            else:
-                candidates = self._search_movie(title, year)
+            firebase_candidates = self._search_firebase(title, year, parsed_info)
+            candidates.extend(firebase_candidates)
         except Exception as exc:
             logger.warning(
-                "OMDB search failed",
+                "Firebase search failed",
                 title=title,
                 error=str(exc),
             )
 
-        # TMDB fallback when OMDB returns no results
-        if not candidates and self.tmdb_api_key:
+        # 2) Only hit external providers when Firebase did not return good matches.
+        should_call_external = len(candidates) == 0
+
+        if should_call_external:
             try:
                 if media_type == "episode":
-                    candidates = self._search_tmdb_series(title, year)
+                    candidates.extend(self._search_series(title, year))
                 else:
-                    candidates = self._search_tmdb_movie(title, year)
-                if candidates:
-                    logger.info(
-                        "TMDB fallback returned candidates",
-                        title=title,
-                        count=len(candidates),
-                    )
+                    candidates.extend(self._search_movie(title, year))
             except Exception as exc:
                 logger.warning(
-                    "TMDB fallback search failed",
+                    "OMDB search failed",
                     title=title,
                     error=str(exc),
                 )
+
+            if not candidates and self.tmdb_api_key:
+                try:
+                    if media_type == "episode":
+                        candidates.extend(self._search_tmdb_series(title, year))
+                    else:
+                        candidates.extend(self._search_tmdb_movie(title, year))
+                    if candidates:
+                        logger.info(
+                            "TMDB fallback returned candidates",
+                            title=title,
+                            count=len(candidates),
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "TMDB fallback search failed",
+                        title=title,
+                        error=str(exc),
+                    )
 
         # Calculate confidence for each candidate
         for candidate in candidates:
@@ -115,6 +132,203 @@ class AutoMatcherService:
             "candidates": [c.to_dict() for c in candidates[:5]],
             "best_match": best_candidate.to_dict() if best_candidate else None,
         }
+
+    def _search_firebase(
+        self,
+        title: str,
+        year: Optional[int],
+        parsed_info: Dict[str, Any],
+    ) -> List[MatchCandidate]:
+        """Search internal Firebase records before external providers."""
+        if not self.firestore_service:
+            return []
+
+        if not getattr(self.firestore_service, "_initialized", False):
+            return []
+
+        media_type = parsed_info.get("media_type")
+        if media_type == "episode":
+            return self._search_firebase_series(title, year, parsed_info)
+
+        return self._search_firebase_movies(title, year)
+
+    def _search_firebase_movies(
+        self,
+        title: str,
+        year: Optional[int],
+    ) -> List[MatchCandidate]:
+        candidates: List[MatchCandidate] = []
+
+        try:
+            docs = self.firestore_service.db.collection("movies").limit(120).get()
+            for doc in docs:
+                payload = doc.to_dict() or {}
+                candidate_title = payload.get("title") or ""
+                if not candidate_title:
+                    continue
+
+                title_similarity = self._fuzzy_match_titles(title, candidate_title)
+                if title_similarity < 0.6:
+                    continue
+
+                candidate_year = self._extract_year_from_doc(payload)
+                file_count = self._extract_file_association_count(payload)
+
+                candidate = MatchCandidate(
+                    source="firebase",
+                    media_id=doc.id,
+                    title=candidate_title,
+                    media_type="movie",
+                    year=candidate_year,
+                    imdb_id=self._extract_imdb_id(payload),
+                    match_reason=(
+                        "firebase_title_match"
+                        if file_count <= 0
+                        else "firebase_title_match_with_existing_files"
+                    ),
+                    raw_data={
+                        "collection": "movies",
+                        "has_existing_files": file_count > 0,
+                        "associated_file_count": file_count,
+                    },
+                )
+                candidates.append(candidate)
+        except Exception as exc:
+            logger.warning("Firebase movie search failed", title=title, error=str(exc))
+
+        return candidates
+
+    def _search_firebase_series(
+        self,
+        title: str,
+        year: Optional[int],
+        parsed_info: Dict[str, Any],
+    ) -> List[MatchCandidate]:
+        candidates: List[MatchCandidate] = []
+        season = parsed_info.get("season")
+        episode = parsed_info.get("episode")
+
+        try:
+            docs = self.firestore_service.db.collection("series").limit(120).get()
+            for doc in docs:
+                payload = doc.to_dict() or {}
+                candidate_title = payload.get("title") or ""
+                if not candidate_title:
+                    continue
+
+                title_similarity = self._fuzzy_match_titles(title, candidate_title)
+                if title_similarity < 0.6:
+                    continue
+
+                candidate_year = self._extract_year_from_doc(payload)
+                total_file_count = self._extract_file_association_count(payload)
+                episode_file_count = self._count_episode_level_assignments(
+                    series_id=doc.id,
+                    season=season,
+                    episode=episode,
+                )
+
+                has_existing_files = total_file_count > 0 or episode_file_count > 0
+                candidate = MatchCandidate(
+                    source="firebase",
+                    media_id=doc.id,
+                    title=candidate_title,
+                    media_type="series",
+                    year=candidate_year,
+                    season=season,
+                    episode=episode,
+                    imdb_id=self._extract_imdb_id(payload),
+                    match_reason=(
+                        "firebase_series_match"
+                        if not has_existing_files
+                        else "firebase_series_match_with_existing_files"
+                    ),
+                    raw_data={
+                        "collection": "series",
+                        "has_existing_files": has_existing_files,
+                        "associated_file_count": total_file_count,
+                        "associated_episode_file_count": episode_file_count,
+                    },
+                )
+                candidates.append(candidate)
+        except Exception as exc:
+            logger.warning("Firebase series search failed", title=title, error=str(exc))
+
+        return candidates
+
+    def _count_episode_level_assignments(
+        self,
+        series_id: str,
+        season: Optional[int],
+        episode: Optional[int],
+    ) -> int:
+        if season is None or episode is None:
+            return 0
+
+        try:
+            docs = (
+                self.firestore_service.db.collection("media_assignments")
+                .where("mediaType", "==", "episode")
+                .where("seriesId", "==", series_id)
+                .where("seasonNumber", "==", season)
+                .where("episodeNumber", "==", episode)
+                .limit(50)
+                .get()
+            )
+            return len(docs)
+        except Exception:
+            return 0
+
+    def _extract_file_association_count(self, payload: Dict[str, Any]) -> int:
+        assignment_summary = payload.get("assignmentSummary") or {}
+        if isinstance(assignment_summary, dict):
+            total_files = assignment_summary.get("totalFiles")
+            if isinstance(total_files, int):
+                return max(total_files, 0)
+
+        file_count = payload.get("fileCount")
+        if isinstance(file_count, int):
+            return max(file_count, 0)
+
+        library_files = payload.get("libraryFiles")
+        if isinstance(library_files, list):
+            return len(library_files)
+
+        return 0
+
+    def _extract_year_from_doc(self, payload: Dict[str, Any]) -> Optional[int]:
+        external_year = payload.get("year")
+        if isinstance(external_year, int):
+            return external_year
+
+        omdb_data = payload.get("omdbData")
+        if isinstance(omdb_data, dict):
+            return self._parse_year(str(omdb_data.get("Year") or ""))
+
+        release_date = payload.get("releaseDate")
+        if isinstance(release_date, str):
+            return self._parse_year(release_date)
+
+        running_dates = payload.get("runningDates")
+        if isinstance(running_dates, str):
+            return self._parse_year(running_dates)
+
+        return None
+
+    def _extract_imdb_id(self, payload: Dict[str, Any]) -> Optional[str]:
+        external_ids = payload.get("externalIds")
+        if isinstance(external_ids, dict):
+            imdb_id = external_ids.get("imdbId")
+            if isinstance(imdb_id, str) and imdb_id:
+                return imdb_id
+
+        omdb_data = payload.get("omdbData")
+        if isinstance(omdb_data, dict):
+            imdb_id = omdb_data.get("imdbID")
+            if isinstance(imdb_id, str) and imdb_id:
+                return imdb_id
+
+        return None
 
     def _search_movie(
         self, title: str, year: Optional[int] = None
@@ -331,6 +545,15 @@ class AutoMatcherService:
                 score += 15
             if parsed_episode is not None:
                 score += 10
+
+        if candidate.source == "firebase":
+            score += 20
+            raw_data = candidate.raw_data or {}
+            if raw_data.get("has_existing_files"):
+                score += 15
+            associated_episode_file_count = raw_data.get("associated_episode_file_count")
+            if isinstance(associated_episode_file_count, int) and associated_episode_file_count > 0:
+                score += 15
 
         score = min(score, 100)
         return max(0, score)

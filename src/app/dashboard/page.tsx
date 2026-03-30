@@ -5,8 +5,7 @@ import { Box, Button, Card, CardContent, Grid, Typography } from '@mui/material'
 
 const Dashboard = () => {
   const dashboardLinks = [
-    { title: 'Media Search', description: 'Search OMDB and preview media details.', href: '/dashboard/media' },
-    { title: 'Library View', description: 'Browse saved movies and series.', href: '/dashboard/media/library' },
+    { title: 'My Library', description: 'Browse and manage your saved movies and shows.', href: '/dashboard/my-library' },
     { title: 'Ingress Automation', description: 'Monitor ingestion queue and automation health.', href: '/ingress-automation' },
     { title: 'Admin', description: 'Manage records, scanning, and tools.', href: '/admin' },
   ];

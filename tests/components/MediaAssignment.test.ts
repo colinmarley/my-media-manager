@@ -4,23 +4,24 @@
  */
 
 import { collection, addDoc, updateDoc, doc } from 'firebase/firestore';
+import { vi } from 'vitest';
 
 // Mock Firebase
-jest.mock('firebase/firestore', () => ({
-  collection: jest.fn(),
-  addDoc: jest.fn(),
-  updateDoc: jest.fn(),
-  doc: jest.fn(),
+vi.mock('firebase/firestore', () => ({
+  collection: vi.fn(() => ({})),
+  addDoc: vi.fn(),
+  updateDoc: vi.fn(),
+  doc: vi.fn(() => ({})),
 }));
 
 describe('Media Assignment Logic', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    vi.clearAllMocks();
   });
 
   describe('handleAssignMedia', () => {
     it('should create media_assignments document with correct data', async () => {
-      const mockAddDoc = addDoc as jest.MockedFunction<typeof addDoc>;
+      const mockAddDoc = addDoc as any;
       mockAddDoc.mockResolvedValue({ id: 'test-assignment-id' } as any);
 
       const assignment = {
@@ -71,7 +72,7 @@ describe('Media Assignment Logic', () => {
     });
 
     it('should update scanned_files status for all assigned files', async () => {
-      const mockUpdateDoc = updateDoc as jest.MockedFunction<typeof updateDoc>;
+      const mockUpdateDoc = updateDoc as any;
       mockUpdateDoc.mockResolvedValue(undefined);
 
       const fileIds = ['file123', 'file456', 'file789'];
@@ -103,7 +104,7 @@ describe('Media Assignment Logic', () => {
     });
 
     it('should handle episode assignments with series/season data', async () => {
-      const mockAddDoc = addDoc as jest.MockedFunction<typeof addDoc>;
+      const mockAddDoc = addDoc as any;
       mockAddDoc.mockResolvedValue({ id: 'test-assignment-id' } as any);
 
       const assignment = {
@@ -175,7 +176,7 @@ describe('Media Assignment Logic', () => {
     });
 
     it('should handle Firebase errors gracefully', async () => {
-      const mockAddDoc = addDoc as jest.MockedFunction<typeof addDoc>;
+      const mockAddDoc = addDoc as any;
       mockAddDoc.mockRejectedValue(new Error('Firebase connection failed'));
 
       try {
@@ -190,7 +191,7 @@ describe('Media Assignment Logic', () => {
     });
 
     it('should handle partial file update failures', async () => {
-      const mockUpdateDoc = updateDoc as jest.MockedFunction<typeof updateDoc>;
+      const mockUpdateDoc = updateDoc as any;
       
       // First two succeed, third fails
       mockUpdateDoc
@@ -239,7 +240,7 @@ describe('Media Assignment Logic', () => {
     });
 
     it('should NOT include episode-specific fields for movie assignments', async () => {
-      const mockAddDoc = addDoc as jest.MockedFunction<typeof addDoc>;
+      const mockAddDoc = addDoc as any;
       mockAddDoc.mockResolvedValue({ id: 'test-assignment-id' } as any);
 
       const movieAssignment = {
@@ -342,7 +343,7 @@ describe('Media Assignment Logic', () => {
     });
 
     it('should INCLUDE episode-specific fields for episode assignments', async () => {
-      const mockAddDoc = addDoc as jest.MockedFunction<typeof addDoc>;
+      const mockAddDoc = addDoc as any;
       mockAddDoc.mockResolvedValue({ id: 'test-assignment-id' } as any);
 
       const episodeAssignment = {
@@ -419,7 +420,7 @@ describe('Media Assignment Logic', () => {
     });
 
     it('should NOT include version field when undefined', async () => {
-      const mockAddDoc = addDoc as jest.MockedFunction<typeof addDoc>;
+      const mockAddDoc = addDoc as any;
       mockAddDoc.mockResolvedValue({ id: 'test-assignment-id' } as any);
 
       const movieAssignment = {

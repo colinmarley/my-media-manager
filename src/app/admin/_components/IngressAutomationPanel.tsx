@@ -3,16 +3,27 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   CircularProgress,
   Divider,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControlLabel,
+  FormControl,
   Grid,
+  InputLabel,
   IconButton,
+  MenuItem,
+  Select,
+  Stack,
   Switch,
   Table,
   TableBody,
@@ -28,6 +39,7 @@ import {
 import {
   CheckCircle,
   Cancel,
+  Edit,
   Replay,
   HealthAndSafety,
 } from '@mui/icons-material';
@@ -37,6 +49,7 @@ import IngressAutomationService, {
   IngressQueueStatus,
   IngressWatcherStatus,
 } from '@/service/ingress/IngressAutomationService';
+import MediaAssignmentSearchService, { SearchResult } from '@/service/library/MediaAssignmentSearchService';
 
 const STATUS_COLORS: Record<string, 'default' | 'info' | 'warning' | 'error' | 'success'> = {
   pending: 'info',
@@ -46,6 +59,8 @@ const STATUS_COLORS: Record<string, 'default' | 'info' | 'warning' | 'error' | '
   failed: 'error',
   completed: 'success',
 };
+
+const BULK_SELECTABLE_STATUSES = new Set(['needs_review', 'auto_assigned', 'failed']);
 
 function formatDuration(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -71,12 +86,53 @@ const IngressAutomationPanel: React.FC = () => {
   const [savingConfig, setSavingConfig] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processExistingOnStart, setProcessExistingOnStart] = useState(false);
+  const [selectedQueueItemIds, setSelectedQueueItemIds] = useState<string[]>([]);
   // Editable config state
   const [editThreshold, setEditThreshold] = useState<number>(80);
   const [editAutoOrganize, setEditAutoOrganize] = useState<boolean>(true);
   const [editAutoProcess, setEditAutoProcess] = useState<boolean>(true);
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
+  const [assigning, setAssigning] = useState(false);
+  const [assignSearching, setAssignSearching] = useState(false);
+  const [assignTargetItemIds, setAssignTargetItemIds] = useState<string[]>([]);
+  const [assignMediaType, setAssignMediaType] = useState<'movie' | 'episode'>('movie');
+  const [assignSearchQuery, setAssignSearchQuery] = useState('');
+  const [assignSearchResults, setAssignSearchResults] = useState<SearchResult[]>([]);
+  const [selectedAssignResult, setSelectedAssignResult] = useState<SearchResult | null>(null);
+  const [organizeAfterAssign, setOrganizeAfterAssign] = useState(false);
+  const [episodeMapByItemId, setEpisodeMapByItemId] = useState<Record<string, { season?: number; episode?: number }>>({});
 
   const defaultPaths = useMemo(() => config?.defaultIngressPaths || [], [config]);
+  const visibleQueueItems = useMemo(() => queueItems.slice(0, 30), [queueItems]);
+  const selectableVisibleItems = useMemo(
+    () => visibleQueueItems.filter((item) => BULK_SELECTABLE_STATUSES.has(item.status)),
+    [visibleQueueItems]
+  );
+  const selectedVisibleCount = useMemo(
+    () => selectableVisibleItems.filter((item) => selectedQueueItemIds.includes(item.id)).length,
+    [selectableVisibleItems, selectedQueueItemIds]
+  );
+  const selectedQueueItems = useMemo(
+    () => queueItems.filter((item) => selectedQueueItemIds.includes(item.id)),
+    [queueItems, selectedQueueItemIds]
+  );
+  const selectedAcceptCount = useMemo(
+    () => selectedQueueItems.filter((item) => item.status === 'needs_review' || item.status === 'auto_assigned').length,
+    [selectedQueueItems]
+  );
+  const selectedRejectCount = useMemo(
+    () => selectedQueueItems.filter((item) => item.status === 'needs_review').length,
+    [selectedQueueItems]
+  );
+  const selectedRetryCount = useMemo(
+    () => selectedQueueItems.filter((item) => item.status === 'needs_review' || item.status === 'failed').length,
+    [selectedQueueItems]
+  );
+
+  const assignTargets = useMemo(
+    () => queueItems.filter((item) => assignTargetItemIds.includes(item.id)),
+    [queueItems, assignTargetItemIds]
+  );
 
   const refreshAll = async () => {
     setError(null);
@@ -95,6 +151,7 @@ const IngressAutomationPanel: React.FC = () => {
       setWatcher(watcherStatus);
       setQueueStatus(queueStatusData);
       setQueueItems(items);
+  setSelectedQueueItemIds((prev) => prev.filter((id) => items.some((item) => item.id === id)));
       setHistory(historyItems);
       if (healthData) setHealth(healthData);
       if (!pathsInput && configData.defaultIngressPaths.length > 0) {
@@ -124,6 +181,60 @@ const IngressAutomationPanel: React.FC = () => {
       .map((line) => line.trim())
       .filter(Boolean);
     return rows.length > 0 ? rows : defaultPaths;
+  };
+
+  const isQueueItemSelectable = (item: IngressQueueItem) => BULK_SELECTABLE_STATUSES.has(item.status);
+
+  const toggleQueueItemSelection = (itemId: string) => {
+    setSelectedQueueItemIds((prev) => (
+      prev.includes(itemId)
+        ? prev.filter((id) => id !== itemId)
+        : [...prev, itemId]
+    ));
+  };
+
+  const toggleSelectAllVisible = () => {
+    const selectableIds = selectableVisibleItems.map((item) => item.id);
+    if (selectableIds.length === 0) {
+      return;
+    }
+
+    setSelectedQueueItemIds((prev) => {
+      const allSelected = selectableIds.every((id) => prev.includes(id));
+      if (allSelected) {
+        return prev.filter((id) => !selectableIds.includes(id));
+      }
+
+      return Array.from(new Set([...prev, ...selectableIds]));
+    });
+  };
+
+  const runBulkAction = async (
+    actionLabel: string,
+    eligibleItems: IngressQueueItem[],
+    action: (item: IngressQueueItem) => Promise<unknown>
+  ) => {
+    if (eligibleItems.length === 0) {
+      setError(`No selected items can be ${actionLabel.toLowerCase()}.`);
+      return;
+    }
+
+    setWorking(true);
+    setError(null);
+    try {
+      const results = await Promise.allSettled(eligibleItems.map((item) => action(item)));
+      const failedCount = results.filter((result) => result.status === 'rejected').length;
+
+      if (failedCount > 0) {
+        setError(`${actionLabel} completed with ${failedCount} failure${failedCount === 1 ? '' : 's'}.`);
+      }
+
+      await refreshAll();
+    } catch (err: any) {
+      setError(err?.message || `${actionLabel} failed`);
+    } finally {
+      setWorking(false);
+    }
   };
 
   const handleStartWatcher = async () => {
@@ -215,6 +326,140 @@ const IngressAutomationPanel: React.FC = () => {
     }
   };
 
+  const handleBulkAccept = async () => {
+    await runBulkAction(
+      'Accept',
+      selectedQueueItems.filter((item) => item.status === 'needs_review' || item.status === 'auto_assigned'),
+      (item) => IngressAutomationService.markComplete(item.id)
+    );
+  };
+
+  const handleBulkReject = async () => {
+    await runBulkAction(
+      'Reject',
+      selectedQueueItems.filter((item) => item.status === 'needs_review'),
+      (item) => IngressAutomationService.markFailed(item.id, 'Manually dismissed')
+    );
+  };
+
+  const handleBulkRetry = async () => {
+    await runBulkAction(
+      'Retry',
+      selectedQueueItems.filter((item) => item.status === 'needs_review' || item.status === 'failed'),
+      (item) => IngressAutomationService.retryItem(item.id)
+    );
+  };
+
+  const openAssignDialog = (itemIds: string[]) => {
+    const targets = queueItems.filter((item) => itemIds.includes(item.id));
+    if (targets.length === 0) {
+      setError('Select one or more queue items to assign.');
+      return;
+    }
+
+    const shouldUseEpisode = targets.some((item) => {
+      const mediaType = item.parsed_info?.media_type || item.best_match?.media_type;
+      return mediaType === 'episode' || mediaType === 'series';
+    });
+
+    const defaultEpisodeMap: Record<string, { season?: number; episode?: number }> = {};
+    targets.forEach((item) => {
+      defaultEpisodeMap[item.id] = {
+        season: item.parsed_info?.season || item.best_match?.season,
+        episode: item.parsed_info?.episode || item.best_match?.episode,
+      };
+    });
+
+    setAssignTargetItemIds(itemIds);
+    setAssignMediaType(shouldUseEpisode ? 'episode' : 'movie');
+    setEpisodeMapByItemId(defaultEpisodeMap);
+    setAssignSearchQuery('');
+    setAssignSearchResults([]);
+    setSelectedAssignResult(null);
+    setOrganizeAfterAssign(false);
+    setAssignDialogOpen(true);
+  };
+
+  const closeAssignDialog = () => {
+    if (assigning) {
+      return;
+    }
+
+    setAssignDialogOpen(false);
+  };
+
+  const handleAssignSearch = async () => {
+    if (!assignSearchQuery.trim()) {
+      setAssignSearchResults([]);
+      return;
+    }
+
+    setAssignSearching(true);
+    try {
+      const results = await MediaAssignmentSearchService.combinedSearch(
+        assignSearchQuery.trim(),
+        assignMediaType === 'movie' ? 'movie' : 'series'
+      );
+      setAssignSearchResults(results);
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : 'Failed to search titles');
+    } finally {
+      setAssignSearching(false);
+    }
+  };
+
+  const handleManualAssign = async () => {
+    if (!selectedAssignResult) {
+      setError('Select a title to assign.');
+      return;
+    }
+
+    if (assignTargetItemIds.length === 0) {
+      setError('No queue items selected for assignment.');
+      return;
+    }
+
+    if (assignMediaType === 'episode') {
+      const missingMapping = assignTargetItemIds.find((itemId) => {
+        const mapping = episodeMapByItemId[itemId];
+        return !mapping?.season || !mapping?.episode;
+      });
+      if (missingMapping) {
+        setError('Each selected queue item needs season and episode values.');
+        return;
+      }
+    }
+
+    setAssigning(true);
+    setError(null);
+    try {
+      for (const itemId of assignTargetItemIds) {
+        const mapping = episodeMapByItemId[itemId] || {};
+        await IngressAutomationService.manualAssign({
+          itemId,
+          mediaType: assignMediaType,
+          title: selectedAssignResult.title,
+          year: Number.isFinite(Number(selectedAssignResult.year)) ? Number(selectedAssignResult.year) : undefined,
+          source: selectedAssignResult.source,
+          imdbId: selectedAssignResult.imdbId || undefined,
+          mediaId: selectedAssignResult.source === 'omdb' ? selectedAssignResult.imdbId : selectedAssignResult.id,
+          firebaseMediaId: selectedAssignResult.source === 'firebase' ? selectedAssignResult.id : undefined,
+          season: assignMediaType === 'episode' ? mapping.season : undefined,
+          episode: assignMediaType === 'episode' ? mapping.episode : undefined,
+          organizeNow: organizeAfterAssign,
+        });
+      }
+
+      setAssignDialogOpen(false);
+      setSelectedQueueItemIds((prev) => prev.filter((id) => !assignTargetItemIds.includes(id)));
+      await refreshAll();
+    } catch (assignError) {
+      setError(assignError instanceof Error ? assignError.message : 'Manual assignment failed');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
@@ -248,7 +493,7 @@ const IngressAutomationPanel: React.FC = () => {
 
       <Alert severity="info" sx={{ mb: 3 }}>
         High-confidence matches are auto-assigned and organized. Items below threshold appear as
-        &ldquo;needs_review&rdquo; for manual action here or in Library Browser.
+        &ldquo;needs_review&rdquo; for manual action here.
       </Alert>
 
       {/* Status Summary */}
@@ -411,11 +656,62 @@ const IngressAutomationPanel: React.FC = () => {
         <Grid size={{ xs: 12, lg: 7 }}>
           <Card>
             <CardContent>
-              <Typography variant="h6" sx={{ mb: 2 }}>Queue Items</Typography>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+                <Typography variant="h6">Queue Items</Typography>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                  <Typography variant="caption" color="text.secondary">
+                    {selectedQueueItemIds.length > 0
+                      ? `${selectedQueueItemIds.length} selected`
+                      : `${selectableVisibleItems.length} selectable`}
+                  </Typography>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    onClick={handleBulkAccept}
+                    disabled={working || selectedAcceptCount === 0}
+                  >
+                    Accept Selected
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
+                    onClick={handleBulkReject}
+                    disabled={working || selectedRejectCount === 0}
+                  >
+                    Reject Selected
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={handleBulkRetry}
+                    disabled={working || selectedRetryCount === 0}
+                  >
+                    Retry Selected
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => openAssignDialog(selectedQueueItemIds)}
+                    disabled={working || selectedQueueItemIds.length === 0}
+                  >
+                    Assign Selected
+                  </Button>
+                </Box>
+              </Box>
               <TableContainer component={Paper} variant="outlined">
                 <Table size="small">
                   <TableHead>
                     <TableRow>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          indeterminate={selectedVisibleCount > 0 && selectedVisibleCount < selectableVisibleItems.length}
+                          checked={selectableVisibleItems.length > 0 && selectedVisibleCount === selectableVisibleItems.length}
+                          disabled={selectableVisibleItems.length === 0}
+                          onChange={toggleSelectAllVisible}
+                          inputProps={{ 'aria-label': 'Select all queue items' }}
+                        />
+                      </TableCell>
                       <TableCell>File</TableCell>
                       <TableCell>Duration</TableCell>
                       <TableCell>Status</TableCell>
@@ -427,13 +723,21 @@ const IngressAutomationPanel: React.FC = () => {
                   <TableBody>
                     {queueItems.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={6} sx={{ color: 'text.secondary' }}>
+                        <TableCell colSpan={7} sx={{ color: 'text.secondary' }}>
                           No queue items.
                         </TableCell>
                       </TableRow>
                     ) : (
-                      queueItems.slice(0, 30).map((item) => (
+                      visibleQueueItems.map((item) => (
                         <TableRow key={item.id}>
+                          <TableCell padding="checkbox">
+                            <Checkbox
+                              checked={selectedQueueItemIds.includes(item.id)}
+                              disabled={!isQueueItemSelectable(item) || working}
+                              onChange={() => toggleQueueItemSelection(item.id)}
+                              inputProps={{ 'aria-label': `Select ${item.file_name}` }}
+                            />
+                          </TableCell>
                           <TableCell sx={{ maxWidth: 240 }}>
                             <Typography variant="body2" noWrap title={item.file_path}>
                               {item.file_name}
@@ -478,6 +782,13 @@ const IngressAutomationPanel: React.FC = () => {
                                 <Tooltip title="Retry">
                                   <IconButton size="small" onClick={() => handleRetry(item.id)}>
                                     <Replay fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
+                              {(item.status === 'needs_review' || item.status === 'failed') && (
+                                <Tooltip title="Assign manually">
+                                  <IconButton size="small" onClick={() => openAssignDialog([item.id])}>
+                                    <Edit fontSize="small" color="primary" />
                                   </IconButton>
                                 </Tooltip>
                               )}
@@ -547,6 +858,121 @@ const IngressAutomationPanel: React.FC = () => {
           </Card>
         </Grid>
       </Grid>
+
+      <Dialog open={assignDialogOpen} onClose={closeAssignDialog} maxWidth="md" fullWidth>
+        <DialogTitle>Manual Assignment</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <Typography variant="body2" color="text.secondary">
+              Assigning {assignTargetItemIds.length} queue item{assignTargetItemIds.length === 1 ? '' : 's'}.
+            </Typography>
+
+            <FormControl size="small" sx={{ maxWidth: 240 }}>
+              <InputLabel id="assign-media-type-label">Assignment Type</InputLabel>
+              <Select
+                labelId="assign-media-type-label"
+                label="Assignment Type"
+                value={assignMediaType}
+                onChange={(event) => setAssignMediaType(event.target.value as 'movie' | 'episode')}
+              >
+                <MenuItem value="movie">Movie</MenuItem>
+                <MenuItem value="episode">TV Episode</MenuItem>
+              </Select>
+            </FormControl>
+
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              <TextField
+                label={assignMediaType === 'movie' ? 'Search movie' : 'Search series'}
+                fullWidth
+                size="small"
+                value={assignSearchQuery}
+                onChange={(event) => setAssignSearchQuery(event.target.value)}
+              />
+              <Button variant="contained" onClick={handleAssignSearch} disabled={assignSearching || !assignSearchQuery.trim()}>
+                {assignSearching ? 'Searching…' : 'Search'}
+              </Button>
+            </Box>
+
+            <Autocomplete
+              options={assignSearchResults}
+              value={selectedAssignResult}
+              onChange={(_, value) => setSelectedAssignResult(value)}
+              getOptionLabel={(option) => `${option.title} (${option.year}) [${option.source}]`}
+              renderInput={(params) => <TextField {...params} label="Select title" size="small" />}
+            />
+
+            {assignMediaType === 'episode' && assignTargets.length > 0 && (
+              <Box>
+                <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                  Episode Mapping
+                </Typography>
+                <Stack spacing={1.2}>
+                  {assignTargets.map((item) => {
+                    const mapping = episodeMapByItemId[item.id] || {};
+                    return (
+                      <Box key={item.id} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                        <Typography variant="body2" sx={{ minWidth: 260 }} noWrap title={item.file_name}>
+                          {item.file_name}
+                        </Typography>
+                        <TextField
+                          label="Season"
+                          type="number"
+                          size="small"
+                          value={mapping.season ?? ''}
+                          onChange={(event) => {
+                            const seasonValue = event.target.value ? Number(event.target.value) : undefined;
+                            setEpisodeMapByItemId((prev) => ({
+                              ...prev,
+                              [item.id]: {
+                                ...prev[item.id],
+                                season: seasonValue,
+                              },
+                            }));
+                          }}
+                          sx={{ width: 120 }}
+                        />
+                        <TextField
+                          label="Episode"
+                          type="number"
+                          size="small"
+                          value={mapping.episode ?? ''}
+                          onChange={(event) => {
+                            const episodeValue = event.target.value ? Number(event.target.value) : undefined;
+                            setEpisodeMapByItemId((prev) => ({
+                              ...prev,
+                              [item.id]: {
+                                ...prev[item.id],
+                                episode: episodeValue,
+                              },
+                            }));
+                          }}
+                          sx={{ width: 120 }}
+                        />
+                      </Box>
+                    );
+                  })}
+                </Stack>
+              </Box>
+            )}
+
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={organizeAfterAssign}
+                  onChange={(event) => setOrganizeAfterAssign(event.target.checked)}
+                />
+              }
+              label="Organize files immediately"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeAssignDialog} disabled={assigning}>Cancel</Button>
+          <Button variant="contained" onClick={handleManualAssign} disabled={assigning || !selectedAssignResult}>
+            {assigning ? 'Assigning…' : 'Assign'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

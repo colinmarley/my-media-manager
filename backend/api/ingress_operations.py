@@ -50,6 +50,20 @@ class AddFilesRequest(BaseModel):
     priority: int = Field(default=5, ge=1, le=10)
 
 
+class QueueManualAssignRequest(BaseModel):
+    itemId: str
+    mediaType: str = Field(default="movie")
+    title: str
+    year: Optional[int] = None
+    source: str = Field(default="manual")
+    imdbId: Optional[str] = None
+    mediaId: Optional[str] = None
+    firebaseMediaId: Optional[str] = None
+    season: Optional[int] = None
+    episode: Optional[int] = None
+    organizeNow: bool = False
+
+
 @router.post("/watcher/start")
 async def start_ingress_watcher(payload: StartWatcherRequest, req: Request):
     """Start monitoring ingress paths for new encoded files."""
@@ -251,6 +265,46 @@ async def mark_ingress_item_failed(payload: QueueFailRequest, req: Request):
     queue_service = req.app.state.ingress_queue_service
 
     queue_item = await queue_service.mark_failed(payload.itemId, payload.reason)
+    if queue_item is None:
+        raise HTTPException(status_code=404, detail={
+            "type": "NotFoundError",
+            "message": f"Queue item not found: {payload.itemId}",
+            "code": "QUEUE_ITEM_NOT_FOUND",
+        })
+
+    return {
+        "success": True,
+        "data": queue_item.to_dict(),
+        "timestamp": str(int(time.time())),
+    }
+
+
+@router.post("/queue/manual-assign")
+async def manual_assign_ingress_item(payload: QueueManualAssignRequest, req: Request):
+    """Manually assign an ingress queue item to explicit media and optional S/E mapping."""
+    queue_service = req.app.state.ingress_queue_service
+
+    match_payload = {
+        "source": payload.source,
+        "title": payload.title,
+        "year": payload.year,
+        "media_type": payload.mediaType,
+        "imdb_id": payload.imdbId,
+        "media_id": payload.mediaId,
+        "firebase_media_id": payload.firebaseMediaId,
+        "season": payload.season,
+        "episode": payload.episode,
+        "raw_data": {
+            "manual": True,
+            "firebaseMediaId": payload.firebaseMediaId,
+        },
+    }
+
+    queue_item = await queue_service.manual_assign_item(
+        payload.itemId,
+        match_payload,
+        organize_now=payload.organizeNow,
+    )
     if queue_item is None:
         raise HTTPException(status_code=404, detail={
             "type": "NotFoundError",

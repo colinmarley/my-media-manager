@@ -1,18 +1,19 @@
 import { FBSeries } from '../types/firebase/FBSeries.type';
+import {
+  toLegacyError,
+  validateNonEmptyArray,
+  validateOptionalTextNotEmpty,
+  validateRequiredText,
+  validateUniqueNumbers,
+} from './validation/commonValidation';
 
 const useSeriesValidation = () => {
   const validateTitle = (title: string): string | null => {
-    if (!title) {
-      return 'Title is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(title, 'Title'));
   };
 
   const validateCountryOfOrigin = (countryOfOrigin: string): string | null => {
-    if (!countryOfOrigin) {
-      return 'Country of Origin is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(countryOfOrigin, 'Country of Origin'));
   };
 
   const validateDirectors = (directors: FBSeries['directors']): string | null => {
@@ -28,43 +29,32 @@ const useSeriesValidation = () => {
   };
 
   const validateImageFiles = (imageFiles: FBSeries['imageFiles']): string | null => {
-    if (imageFiles.length === 0) {
-      return 'At least one image file is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(imageFiles, 'image file'));
   };
 
   const validateRunningDates = (runningDates: string): string | null => {
-    if (!runningDates) {
-      return 'Running Dates are required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(runningDates, 'Running Dates'));
   };
 
   const validateRuntime = (runtime: string): string | null => {
-    if (!runtime) {
-      return 'Runtime is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(runtime, 'Runtime'));
   };
 
   const validateTopCast = (topCast: string[]): string | null => {
-    if (topCast.length === 0) {
-      return 'At least one top cast member is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(topCast, 'top cast member'));
   };
 
   const validateWriters = (writers: string[]): string | null => {
-    if (writers.length === 0) {
-      return 'At least one writer is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(writers, 'writer'));
   };
 
   const validateSeasons = (seasons: FBSeries['seasons']): string | null => {
     if (seasons.length === 0) {
       return 'At least one season is required';
+    }
+    const seasonNumberErrors = validateUniqueNumbers(seasons, 'season');
+    if (seasonNumberErrors.length > 0) {
+      return seasonNumberErrors[0];
     }
     for (const season of seasons) {
       if (!season.title) {
@@ -72,6 +62,10 @@ const useSeriesValidation = () => {
       }
       if (season.episodes.length === 0) {
         return 'At least one episode is required in each season';
+      }
+      const episodeNumberErrors = validateUniqueNumbers(season.episodes, 'episode');
+      if (episodeNumberErrors.length > 0) {
+        return episodeNumberErrors[0];
       }
       for (const episode of season.episodes) {
         if (!episode.title) {
@@ -90,14 +84,16 @@ const useSeriesValidation = () => {
   };
 
   const validateLanguage = (language?: string): string | null => {
-    if (language && language.length === 0) {
+    const errors = validateOptionalTextNotEmpty(language, 'Language');
+    if (errors.length > 0) {
       return 'Language is required';
     }
     return null;
   };
 
   const validateRegionCode = (regionCode?: string): string | null => {
-    if (regionCode && regionCode.length === 0) {
+    const errors = validateOptionalTextNotEmpty(regionCode, 'Region Code');
+    if (errors.length > 0) {
       return 'Region Code is required';
     }
     return null;

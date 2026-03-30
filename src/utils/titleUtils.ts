@@ -10,9 +10,10 @@
  * @returns Object with title and titleLower fields
  */
 export function prepareTitleForStorage(title: string): { title: string; titleLower: string } {
+  const normalizedTitle = title.trim();
   return {
-    title: title,
-    titleLower: title.toLowerCase()
+    title: normalizedTitle,
+    titleLower: normalizedTitle.toLowerCase()
   };
 }
 

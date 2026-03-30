@@ -126,6 +126,7 @@ async def lifespan(app: FastAPI):
     auto_matcher_service = AutoMatcherService(
         omdb_api_key=settings.omdb_api_key,
         tmdb_api_key=settings.tmdb_api_key,
+        firestore_service=firestore_service,
     )
     file_organization_service = FileOrganizationService(
         filesystem_manager=file_manager,

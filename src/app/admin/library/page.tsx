@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import TestLibraryScanner from './_components/TestLibraryScanner';
 import FolderBrowser from './_components/FolderBrowser';
+import LibraryMaintenancePanel from './_components/LibraryMaintenancePanel';
 import {
   Box,
   Typography,
@@ -614,54 +615,17 @@ const LibraryManagementPage: React.FC = () => {
 
       {/* File Browser Tab */}
       <TabPanel value={currentTab} index={2}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-          <Typography variant="h6">File Browser</Typography>
-          <Button
-            variant="contained"
-            onClick={() => window.open('/admin?view=LibraryBrowser', '_blank')}
-            disabled={!user}
-          >
-            Open Library Browser
-          </Button>
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h6">File Maintenance</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Rename, move, create folders, and inspect directory contents directly from Admin Library.
+          </Typography>
         </Box>
-        
-        <Alert severity="info" sx={{ mb: 3 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            🆕 New Features Available:
-          </Typography>
-          <Typography variant="body2">
-            • <strong>Show Folder Contents:</strong> Toggle the switch to view all files and subdirectories within each folder
-            <br />
-            • <strong>Bulk Move to Folder:</strong> Select multiple items and use "Move to Folder" to quickly organize your media files
-            <br />
-            • <strong>Enhanced Navigation:</strong> Browse folder hierarchies directly without leaving the current view
-          </Typography>
-        </Alert>
-        
-        <Card>
-          <CardContent>
-            {!user ? (
-              <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
-                Please log in to browse files.
-              </Typography>
-            ) : scanResults.length === 0 ? (
-              <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
-                No scanned files available. Complete a library scan to browse files.
-              </Typography>
-            ) : (
-              <Box sx={{ textAlign: 'center', py: 4 }}>
-                <Typography variant="body1" gutterBottom>
-                  You have {scanResults.reduce((total, result) => total + (result.filesFound || 0), 0)} files 
-                  and {scanResults.reduce((total, result) => total + (result.directoriesFound || 0), 0)} directories 
-                  from {scanResults.length} scan{scanResults.length !== 1 ? 's' : ''}.
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                  Click "Open Library Browser" above to browse and manage your scanned files with the new folder browsing and bulk move features.
-                </Typography>
-              </Box>
-            )}
-          </CardContent>
-        </Card>
+
+        <LibraryMaintenancePanel
+          libraryPaths={libraryPaths}
+          disabled={!user}
+        />
       </TabPanel>
 
       {/* Settings Tab */}

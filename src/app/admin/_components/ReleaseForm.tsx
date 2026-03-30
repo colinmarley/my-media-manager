@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
-import { Button, Checkbox, FormControl, FormControlLabel, TextField, Typography } from '@mui/material';
+import { Button, Checkbox, FormControlLabel, TextField, Typography } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import FirestoreService from '../../../service/firebase/FirestoreService';
 import { FBRelease, ImageFile, Extra } from '../../../types/firebase/FBRelease.type';
+import { DiscFormat, MediaType } from '../../../types/firebase/FBCommon.type';
 import useReleaseValidation from '../../../utils/useReleaseValidation';
-import styles from '../_styles/MovieForm.module.css';
+import styles from '../_styles/Form.module.css';
 import SubmitButton from '@/app/_components/SubmitButton';
+import { FieldLabel, FormSection, FormSectionStack } from './forms/common';
+import { NestedExtrasEditor } from './forms/editors';
 
 interface ReleaseValidation {
     title: string | null;
@@ -17,35 +20,16 @@ interface ReleaseValidation {
     images: string | null;
 }
 
-const FormTextField = (
-  props: { 
-    label: string,
-    value: string,
-    onChange: (e: React.ChangeEvent<HTMLInputElement>) => void,
-    error?: string | null
-  }) => (
-    <TextField
-      label={props.label}
-      value={props.value}
-      onChange={props.onChange}
-      sx={{input: { color: 'white' }, label: { color: 'white' }}}
-      fullWidth
-      required
-      error={!!props.error}
-      helperText={props.error}
-    />
-);
-
 const ReleaseForm: React.FC = () => {
   const [title, setTitle] = useState('');
   const [year, setYear] = useState('');
   const [containsExtras, setContainsExtras] = useState(false);
   const [containsInserts, setContainsInserts] = useState(false);
   const [discIds, setDiscIds] = useState<string[]>([]);
-  const [discTypes, setDiscTypes] = useState<string[]>([]);
+  const [discTypes, setDiscTypes] = useState<DiscFormat[]>([]);
   const [episodeIds, setEpisodeIds] = useState<string[]>([]);
   const [extras, setExtras] = useState<Extra[]>([]);
-  const [mediaType, setMediaType] = useState('');
+  const [mediaType, setMediaType] = useState<MediaType | ''>('');
   const [movieIds, setMovieIds] = useState<string[]>([]);
   const [seasonIds, setSeasonIds] = useState<string[]>([]);
   const [seriesIds, setSeriesIds] = useState<string[]>([]);
@@ -82,23 +66,13 @@ const ReleaseForm: React.FC = () => {
   };
 
   const handleAddDiscType = () => {
-    setDiscTypes([...discTypes, '']);
+    setDiscTypes([...discTypes, 'DVD']);
   };
 
   const handleDiscTypeChange = (index: number, value: string) => {
     const newDiscTypes = [...discTypes];
-    newDiscTypes[index] = value;
+    newDiscTypes[index] = value as DiscFormat;
     setDiscTypes(newDiscTypes);
-  };
-
-  const handleAddExtra = () => {
-    setExtras([...extras, { runtime: '', title: '', type: '' }]);
-  };
-
-  const handleExtraChange = (index: number, field: keyof Extra, value: string) => {
-    const newExtras = [...extras];
-    newExtras[index][field] = value;
-    setExtras(newExtras);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -131,7 +105,7 @@ const ReleaseForm: React.FC = () => {
       discTypes,
       episodeIds: episodeIds.map(id => ({ id })),
       extras,
-      mediaType,
+      mediaType: mediaType as MediaType,
       movieIds: movieIds.map(id => ({ id })),
       seasonIds: seasonIds.map(id => ({ id })),
       seriesIds: seriesIds.map(id => ({ id })),
@@ -143,100 +117,208 @@ const ReleaseForm: React.FC = () => {
   };
 
   return (
-    <FormControl
-      onSubmit={handleSubmit}
-      classes={styles.root}
-      color="secondary">
+    <form onSubmit={handleSubmit} className={styles.root}>
       <Grid container spacing={2}>
         <Grid size={12}>
           <Typography variant="h4" color="white">Add New Release</Typography>
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Year" value={year} onChange={(e) => setYear(e.target.value)} error={errors.year} />
-        </Grid>
-        <Grid size={12}>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={containsExtras}
-                onChange={(e) => setContainsExtras(e.target.checked)}
+          <FormSectionStack>
+            <FormSection title="Identity and Type" description="Release title, year and media type." titleTooltip="Describe the edition itself, not just the underlying movie or series. Use the release's own year and media type.">
+              <Grid container spacing={2}>
+                <Grid size={8}>
+                  <TextField
+                    label={<FieldLabel label="Title" tooltip="Required. Name this specific release or edition, for example Criterion Collection #42." />}
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    error={!!errors.title}
+                    helperText={errors.title}
+                  />
+                </Grid>
+                <Grid size={4}>
+                  <TextField
+                    label={<FieldLabel label="Year" tooltip="The year this specific release edition was published." />}
+                    type="number"
+                    value={year}
+                    onChange={(e) => setYear(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    error={!!errors.year}
+                    helperText={errors.year}
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Media Type" tooltip="Use MOVIE, SERIES, SEASON, or DOUBLE_FEATURE." />}
+                    value={mediaType}
+                    onChange={(e) => setMediaType(e.target.value)}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    placeholder="e.g. MOVIE, SERIES"
+                    error={!!errors.mediaType}
+                    helperText={errors.mediaType}
+                  />
+                </Grid>
+                <Grid size={3}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={containsExtras}
+                        onChange={(e) => setContainsExtras(e.target.checked)}
+                      />
+                    }
+                    label={<FieldLabel label="Contains Extras" tooltip="Check this when the release includes bonus features or supplements." />}
+                  />
+                </Grid>
+                <Grid size={3}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={containsInserts}
+                        onChange={(e) => setContainsInserts(e.target.checked)}
+                      />
+                    }
+                    label={<FieldLabel label="Contains Inserts" tooltip="Check this when the package includes printed material such as booklets or posters." />}
+                  />
+                </Grid>
+              </Grid>
+            </FormSection>
+
+            <FormSection title="Disc Associations" description="Discs included in this release." titleTooltip="List each physical disc and its format so this release can be tracked and grouped accurately.">
+              <Grid container spacing={2}>
+                <Grid size={12}>
+                  <Typography variant="subtitle2" color="rgba(255,255,255,0.7)" sx={{ mb: 1 }}>Disc IDs</Typography>
+                  {discIds.map((discId, index) => (
+                    <Grid container spacing={1} key={index} sx={{ mb: 1 }}>
+                      <Grid size={10}>
+                        <TextField
+                          label={<FieldLabel label={`Disc ID ${index + 1}`} tooltip="A Firestore document ID for a disc included in this release." />}
+                          value={discId}
+                          onChange={(e) => handleDiscIdChange(index, e.target.value)}
+                          size="small"
+                          fullWidth
+                          sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                          error={!!errors.discIds}
+                          helperText={index === 0 ? errors.discIds : undefined}
+                        />
+                      </Grid>
+                      <Grid size={2}>
+                        <Button
+                          onClick={() => setDiscIds(discIds.filter((_, i) => i !== index))}
+                          color="error"
+                          size="small"
+                          variant="outlined"
+                        >
+                          Remove
+                        </Button>
+                      </Grid>
+                    </Grid>
+                  ))}
+                  <Button onClick={handleAddDiscId} size="small" data-testid="add-disc-id-btn">Add Disc ID</Button>
+                </Grid>
+                <Grid size={12}>
+                  <Typography variant="subtitle2" color="rgba(255,255,255,0.7)" sx={{ mb: 1 }}>Disc Types</Typography>
+                  {discTypes.map((discType, index) => (
+                    <Grid container spacing={1} key={index} sx={{ mb: 1 }}>
+                      <Grid size={10}>
+                        <TextField
+                          label={<FieldLabel label={`Disc Type ${index + 1}`} tooltip="Disc format for this entry, such as DVD, BLURAY, or UHD." />}
+                          value={discType}
+                          onChange={(e) => handleDiscTypeChange(index, e.target.value)}
+                          size="small"
+                          fullWidth
+                          placeholder="e.g. DVD, BLURAY"
+                          sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                          error={!!errors.discTypes}
+                          helperText={index === 0 ? errors.discTypes : undefined}
+                        />
+                      </Grid>
+                      <Grid size={2}>
+                        <Button
+                          onClick={() => setDiscTypes(discTypes.filter((_, i) => i !== index))}
+                          color="error"
+                          size="small"
+                          variant="outlined"
+                        >
+                          Remove
+                        </Button>
+                      </Grid>
+                    </Grid>
+                  ))}
+                  <Button onClick={handleAddDiscType} size="small" data-testid="add-disc-type-btn">Add Disc Type</Button>
+                </Grid>
+              </Grid>
+            </FormSection>
+
+            <FormSection title="Media Associations" description="Linked movies, series, seasons or episodes." titleTooltip="Connect this release to one or more media entities by Firestore ID for browsing and ownership views.">
+              <Grid container spacing={2}>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Movie IDs" tooltip="Comma-separated Firestore movie IDs linked to this release." />}
+                    value={movieIds.join(', ')}
+                    onChange={(e) => setMovieIds(e.target.value ? e.target.value.split(', ') : [])}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    placeholder="Comma-separated IDs"
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Series IDs" tooltip="Comma-separated Firestore series IDs linked to this release." />}
+                    value={seriesIds.join(', ')}
+                    onChange={(e) => setSeriesIds(e.target.value ? e.target.value.split(', ') : [])}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    placeholder="Comma-separated IDs"
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Season IDs" tooltip="Comma-separated Firestore season IDs linked to this release." />}
+                    value={seasonIds.join(', ')}
+                    onChange={(e) => setSeasonIds(e.target.value ? e.target.value.split(', ') : [])}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    placeholder="Comma-separated IDs"
+                  />
+                </Grid>
+                <Grid size={6}>
+                  <TextField
+                    label={<FieldLabel label="Episode IDs" tooltip="Comma-separated Firestore episode IDs linked to this release." />}
+                    value={episodeIds.join(', ')}
+                    onChange={(e) => setEpisodeIds(e.target.value ? e.target.value.split(', ') : [])}
+                    sx={{ input: { color: 'white' }, label: { color: 'white' } }}
+                    fullWidth
+                    placeholder="Comma-separated IDs"
+                  />
+                </Grid>
+              </Grid>
+            </FormSection>
+
+            <FormSection title="Extras" description="Bonus features and special content included in this release." titleTooltip="Add supplemental content entries such as commentaries, featurettes, deleted scenes, or interviews.">
+              <NestedExtrasEditor
+                extras={extras}
+                onChange={setExtras}
+                error={errors.extras}
               />
-            }
-            label="Contains Extras"
-          />
+            </FormSection>
+
+            <FormSection title="Media Assets" description="Images associated with this release." titleTooltip="Provide release-specific artwork like slipcovers, package photos, or menus.">
+              <Typography variant="body2" color="rgba(255,255,255,0.5)">
+                Image management coming soon.
+              </Typography>
+            </FormSection>
+          </FormSectionStack>
         </Grid>
-        <Grid size={12}>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={containsInserts}
-                onChange={(e) => setContainsInserts(e.target.checked)}
-              />
-            }
-            label="Contains Inserts"
-          />
-        </Grid>
-        <Grid size={12}>
-          <Typography variant="h6">Disc IDs</Typography>
-          {discIds.map((discId, index) => (
-            <Grid container spacing={2} key={index}>
-              <Grid size={12}>
-                <FormTextField label="Disc ID" value={discId} onChange={(e) => handleDiscIdChange(index, e.target.value)} error={errors.discIds} />
-              </Grid>
-            </Grid>
-          ))}
-          <Button onClick={handleAddDiscId}>Add Disc ID</Button>
-        </Grid>
-        <Grid size={12}>
-          <Typography variant="h6">Disc Types</Typography>
-          {discTypes.map((discType, index) => (
-            <Grid container spacing={2} key={index}>
-              <Grid size={12}>
-                <FormTextField label="Disc Type" value={discType} onChange={(e) => handleDiscTypeChange(index, e.target.value)} error={errors.discTypes} />
-              </Grid>
-            </Grid>
-          ))}
-          <Button onClick={handleAddDiscType}>Add Disc Type</Button>
-        </Grid>
-        <Grid size={12}>
-          <Typography variant="h6">Extras</Typography>
-          {extras.map((extra, index) => (
-            <Grid container spacing={2} key={index}>
-              <Grid size={4}>
-                <FormTextField label="Title" value={extra.title} onChange={(e) => handleExtraChange(index, 'title', e.target.value)} error={errors.extras} />
-              </Grid>
-              <Grid size={4}>
-                <FormTextField label="Runtime" value={extra.runtime} onChange={(e) => handleExtraChange(index, 'runtime', e.target.value)} error={errors.extras} />
-              </Grid>
-              <Grid size={4}>
-                <FormTextField label="Type" value={extra.type} onChange={(e) => handleExtraChange(index, 'type', e.target.value)} error={errors.extras} />
-              </Grid>
-            </Grid>
-          ))}
-          <Button onClick={handleAddExtra}>Add Extra</Button>
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Media Type" value={mediaType} onChange={(e) => setMediaType(e.target.value)} error={errors.mediaType} />
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Movie IDs" value={movieIds.join(', ')} onChange={(e) => setMovieIds(e.target.value.split(', '))} />
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Season IDs" value={seasonIds.join(', ')} onChange={(e) => setSeasonIds(e.target.value.split(', '))} />
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Series IDs" value={seriesIds.join(', ')} onChange={(e) => setSeriesIds(e.target.value.split(', '))} />
-        </Grid>
-        <Grid size={12}>
+        <Grid size={3}>
           <SubmitButton
             label="Add Release"
             onClick={handleSubmit} />
         </Grid>
       </Grid>
-    </FormControl>
+    </form>
   );
 };
 

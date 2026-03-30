@@ -1,39 +1,30 @@
 import { FBEpisode } from '../types/firebase/FBEpisode.type';
+import {
+  toLegacyError,
+  validateNonEmptyArray,
+  validateOptionalTextNotEmpty,
+  validateRequiredText,
+} from './validation/commonValidation';
 
 const useEpisodeValidation = () => {
   const validateTitle = (title: string): string | null => {
-    if (!title) {
-      return 'Title is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(title, 'Title'));
   };
 
   const validateSeasonId = (seasonId: string): string | null => {
-    if (!seasonId) {
-      return 'Season ID is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(seasonId, 'Season ID'));
   };
 
   const validateSeriesId = (seriesId: string): string | null => {
-    if (!seriesId) {
-      return 'Series ID is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(seriesId, 'Series ID'));
   };
 
   const validateEpisodeNumber = (episodeNumber: string): string | null => {
-    if (!episodeNumber) {
-      return 'Episode Number is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(episodeNumber, 'Episode Number'));
   };
 
   const validateCountryOfOrigin = (countryOfOrigin: string): string | null => {
-    if (!countryOfOrigin) {
-      return 'Country of Origin is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(countryOfOrigin, 'Country of Origin'));
   };
 
   const validateDirectors = (directors: FBEpisode['directors']): string | null => {
@@ -49,45 +40,27 @@ const useEpisodeValidation = () => {
   };
 
   const validateImageFiles = (imageFiles: FBEpisode['imageFiles']): string | null => {
-    if (imageFiles.length === 0) {
-      return 'At least one image file is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(imageFiles, 'image file'));
   };
 
   const validateReleaseDate = (releaseDate: string): string | null => {
-    if (!releaseDate) {
-      return 'Release Date is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(releaseDate, 'Release Date'));
   };
 
   const validateRuntime = (runtime: string): string | null => {
-    if (!runtime) {
-      return 'Runtime is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(runtime, 'Runtime'));
   };
 
   const validateTopCast = (topCast: string[]): string | null => {
-    if (topCast.length === 0) {
-      return 'At least one top cast member is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(topCast, 'top cast member'));
   };
 
   const validateWriters = (writers: string[]): string | null => {
-    if (writers.length === 0) {
-      return 'At least one writer is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(writers, 'writer'));
   };
 
   const validateActors = (actors: string[]): string | null => {
-    if (actors.length === 0) {
-      return 'At least one actor is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(actors, 'actor'));
   };
 
   const validateGenres = (genres?: string[]): string | null => {
@@ -98,14 +71,16 @@ const useEpisodeValidation = () => {
   };
 
   const validateLanguage = (language?: string): string | null => {
-    if (language && language.length === 0) {
+    const errors = validateOptionalTextNotEmpty(language, 'Language');
+    if (errors.length > 0) {
       return 'Language is required';
     }
     return null;
   };
 
   const validateRegionCode = (regionCode?: string): string | null => {
-    if (regionCode && regionCode.length === 0) {
+    const errors = validateOptionalTextNotEmpty(regionCode, 'Region Code');
+    if (errors.length > 0) {
       return 'Region Code is required';
     }
     return null;

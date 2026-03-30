@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import Divider from '@mui/material/Divider';
 import Grid from '@mui/material/Grid';
 import FirestoreService from '../../../service/firebase/FirestoreService';
 import { FormTextField } from './formInputs/common/FormTextField';
@@ -12,6 +11,7 @@ import { retrieveMediaDataById, searchByText } from '@/service/omdb/OmdbService'
 import styles from '../_styles/MovieForm.module.css';
 import RatingsInput from './formInputs/RatingsInput';
 import { Box } from '@mui/material';
+import { FieldLabel, FormSection, FormSectionStack } from './forms/common';
 import CastInput from './formInputs/common/CastInput';
 import WritersInput from './formInputs/WritersInput';
 import MovieTitleSearch from './formInputs/movie/MovieTitleSearch';
@@ -254,106 +254,89 @@ const MovieForm: React.FC = () => {
                     container
                     spacing={2}
                     sx={{maxWidth: "100%"}}>
-                    <Grid size={8}>
-                        <Grid container spacing={2}>
-                            <MovieTitleSearch
-                                title={title}
-                                setTitle={setTitleValue}
-                                omdbResults={omdbResults?.value}
-                                handleMovieTitleSearch={handleMovieTitleSearch}
-                                handleMovieSelect={handleMovieSelect}
-                                />
-                            <MovieDetailsInput
-                                releaseDate={releaseDate}
-                                setReleaseDate={setReleaseDateValue}
-                                countries={countries}
-                                setCountries={setCountriesValue}
-                                runtime={runtime}
-                                setRuntime={setRuntimeValue}
-                                genres={genres}
-                                setGenres={setGenresValue}
-                                languages={languages}
-                                setLanguages={setLanguagesValue}
-                                certification={certification}
-                                setCertification={setCertificationValue}
-                                />
-                            <Grid size={12}>
-                                <FormTextField
-                                    label="Plot"
-                                    value={plot?.value}
-                                    multiline
-                                    onChange={(e) => setPlotValue(e.target.value)}
-                                    error={plot?.errors.join('\n') || null} />
-                            </Grid>
-                            <MovieLinkInput
-                                letterboxdLink={letterboxdLink}
-                                setLetterboxdLink={setLetterboxdLinkValue}
-                                plexLink={plexLink}
-                                setPlexLink={setPlexLinkValue}
-                                />
-                        </Grid>
-                    </Grid>
-                    <Grid size={4}>
-                        <Box
-                            component="img"
-                            src={omdbData?.value?.Poster}
-                            alt={title?.value}
-                            sx={{width: "100%", height: "auto"}} />
-                    </Grid>
-                    <RatingsInput
-                        ratings={ratings}
-                        setRatings={setRatingsValue} />
                     <Grid size={12}>
-                        <Divider
-                            sx={{color: "white"}}
-                            variant="fullWidth">
-                            Cast Details
-                        </Divider>
-                    </Grid>
-                    {/* <CastInput
-                        cast={cast}
-                        setCast={setCastValue}
-                        setShowModal={setShouldShowAddActorModal} />
-                    <Grid size={0}>
-                        <Divider
-                            orientation="vertical"
-                            variant="middle"
-                            sx={{color: 'white'}} />
-                    </Grid> */}
-                    <Grid size={12}>
-                        <CastDataGrid
-                            castList={cast?.value}
-                            onAddCastMember={handleAddCastMember}
-                            setShowModal={openAddActorModal} />
-                    </Grid>
-                    <Grid size={12}>
-                        <Divider
-                            sx={{color: "white"}}
-                            variant="fullWidth">
-                            Crew Details
-                        </Divider>
-                    </Grid>
-                        <DirectorDataGrid
-                            directorList={directors?.value}
-                            onAddDirector={addDirector} />
-                    <Grid size={0}>
-                        <Divider
-                            orientation="vertical"
-                            variant="middle"
-                            sx={{color: 'white'}} />
-                    </Grid>
-                    <WritersInput
-                        writers={writers}
-                        setWriters={setWritersValue} />
-                    {/* <MovieOptionalInput
-                        dvd={dvd}
-                        setDvd={setDvd}
-                        production={production}
-                        setProduction={setProduction}
-                        totalSeasons={totalSeasons}
-                        setTotalSeasons={setTotalSeasons} /> */}
-                    <Grid size={12}>
-                        <ImageSearch />
+                        <FormSectionStack>
+                            <FormSection title="Search and Import" description="Search OMDB to auto-fill the form, then review and modify as needed." titleTooltip="Import baseline metadata from OMDB, then correct anything that needs project-specific curation.">
+                                <Grid container spacing={2}>
+                                    <Grid size={omdbData?.value?.Poster ? 8 : 12}>
+                                        <MovieTitleSearch
+                                            title={title}
+                                            setTitle={setTitleValue}
+                                            omdbResults={omdbResults?.value}
+                                            handleMovieTitleSearch={handleMovieTitleSearch}
+                                            handleMovieSelect={handleMovieSelect}
+                                            />
+                                    </Grid>
+                                    {omdbData?.value?.Poster && (
+                                        <Grid size={4}>
+                                            <Box
+                                                component="img"
+                                                src={omdbData.value.Poster}
+                                                alt={title?.value}
+                                                sx={{width: "100%", height: "auto", borderRadius: 1}} />
+                                        </Grid>
+                                    )}
+                                </Grid>
+                            </FormSection>
+
+                            <FormSection title="Core Details" description="Movie release details and description." titleTooltip="Capture release date, runtime, countries, language, genres, rating, and synopsis.">
+                                <Grid container spacing={2}>
+                                    <MovieDetailsInput
+                                        releaseDate={releaseDate}
+                                        setReleaseDate={setReleaseDateValue}
+                                        countries={countries}
+                                        setCountries={setCountriesValue}
+                                        runtime={runtime}
+                                        setRuntime={setRuntimeValue}
+                                        genres={genres}
+                                        setGenres={setGenresValue}
+                                        languages={languages}
+                                        setLanguages={setLanguagesValue}
+                                        certification={certification}
+                                        setCertification={setCertificationValue}
+                                        />
+                                    <Grid size={12}>
+                                        <FormTextField
+                                            label={<FieldLabel label="Plot" tooltip="A short synopsis of the movie. One to three sentences is usually enough." />}
+                                            value={plot?.value}
+                                            multiline
+                                            onChange={(e) => setPlotValue(e.target.value)}
+                                            error={plot?.errors.join('\n') || null} />
+                                    </Grid>
+                                </Grid>
+                            </FormSection>
+
+                            <FormSection title="Credits" description="Directors, cast and writers." titleTooltip="Record principal creative credits and cast members shown in detail pages and metadata exports.">
+                                <DirectorDataGrid
+                                    directorList={directors?.value}
+                                    onAddDirector={addDirector} />
+                                <CastDataGrid
+                                    castList={cast?.value}
+                                    onAddCastMember={handleAddCastMember}
+                                    setShowModal={openAddActorModal} />
+                                <WritersInput
+                                    writers={writers}
+                                    setWriters={setWritersValue} />
+                            </FormSection>
+
+                            <FormSection title="Classification" description="Ratings and content certification." titleTooltip="Capture content ratings and certification data used for sorting, filtering, and parental guidance.">
+                                <Grid container spacing={2}>
+                                    <RatingsInput
+                                        ratings={ratings}
+                                        setRatings={setRatingsValue} />
+                                </Grid>
+                            </FormSection>
+
+                            <FormSection title="Links and Media" description="External links and poster artwork." titleTooltip="Store optional destination links and artwork references associated with this movie.">
+                                <MovieLinkInput
+                                    letterboxdLink={letterboxdLink}
+                                    setLetterboxdLink={setLetterboxdLinkValue}
+                                    plexLink={plexLink}
+                                    setPlexLink={setPlexLinkValue}
+                                    />
+                                <ImageSearch />
+                            </FormSection>
+                        </FormSectionStack>
                     </Grid>
                     <Grid size={3}>
                         <SubmitButton

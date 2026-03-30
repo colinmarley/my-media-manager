@@ -7,10 +7,10 @@
 
 import { create } from 'zustand';
 import MediaAssignmentService from '../service/library/MediaAssignmentService';
-import { ScannedFile } from '../service/library/LibraryBrowserService';
 import {
   FileAssignment,
   MediaSuggestion,
+  ScannedFile,
   NamingFormat,
   FolderStructureTemplate,
   DEFAULT_NAMING_FORMATS,

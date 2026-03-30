@@ -1,18 +1,19 @@
 import { FBSeason } from '../types/firebase/FBSeason.type';
+import {
+  toLegacyError,
+  validateNonEmptyArray,
+  validateOptionalTextNotEmpty,
+  validateRequiredText,
+  validateUniqueNumbers,
+} from './validation/commonValidation';
 
 const useSeasonValidation = () => {
   const validateTitle = (title: string): string | null => {
-    if (!title) {
-      return 'Title is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(title, 'Title'));
   };
 
   const validateSeriesId = (seriesId: string): string | null => {
-    if (!seriesId) {
-      return 'Series ID is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(seriesId, 'Series ID'));
   };
 
   const validateNumber = (number: number): string | null => {
@@ -23,10 +24,7 @@ const useSeasonValidation = () => {
   };
 
   const validateCountryOfOrigin = (countryOfOrigin: string): string | null => {
-    if (!countryOfOrigin) {
-      return 'Country of Origin is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(countryOfOrigin, 'Country of Origin'));
   };
 
   const validateDirectors = (directors: FBSeason['directors']): string | null => {
@@ -42,43 +40,32 @@ const useSeasonValidation = () => {
   };
 
   const validateImageFiles = (imageFiles: FBSeason['imageFiles']): string | null => {
-    if (imageFiles.length === 0) {
-      return 'At least one image file is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(imageFiles, 'image file'));
   };
 
   const validateReleaseDate = (releaseDate: string): string | null => {
-    if (!releaseDate) {
-      return 'Release Date is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(releaseDate, 'Release Date'));
   };
 
   const validateRuntime = (runtime: string): string | null => {
-    if (!runtime) {
-      return 'Runtime is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(runtime, 'Runtime'));
   };
 
   const validateTopCast = (topCast: string[]): string | null => {
-    if (topCast.length === 0) {
-      return 'At least one top cast member is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(topCast, 'top cast member'));
   };
 
   const validateWriters = (writers: string[]): string | null => {
-    if (writers.length === 0) {
-      return 'At least one writer is required';
-    }
-    return null;
+    return toLegacyError(validateNonEmptyArray(writers, 'writer'));
   };
 
   const validateEpisodes = (episodes: FBSeason['episodes']): string | null => {
     if (episodes.length === 0) {
       return 'At least one episode is required';
+    }
+    const episodeNumberErrors = validateUniqueNumbers(episodes, 'episode');
+    if (episodeNumberErrors.length > 0) {
+      return episodeNumberErrors[0];
     }
     for (const episode of episodes) {
       if (!episode.title) {
@@ -96,14 +83,16 @@ const useSeasonValidation = () => {
   };
 
   const validateLanguage = (language?: string): string | null => {
-    if (language && language.length === 0) {
+    const errors = validateOptionalTextNotEmpty(language, 'Language');
+    if (errors.length > 0) {
       return 'Language is required';
     }
     return null;
   };
 
   const validateRegionCode = (regionCode?: string): string | null => {
-    if (regionCode && regionCode.length === 0) {
+    const errors = validateOptionalTextNotEmpty(regionCode, 'Region Code');
+    if (errors.length > 0) {
       return 'Region Code is required';
     }
     return null;

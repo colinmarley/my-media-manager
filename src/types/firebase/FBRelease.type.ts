@@ -1,18 +1,27 @@
-export interface FBRelease {
-  id: string;
-  containsExtras: boolean; // whether the release contains extra features
-  containsInserts: boolean; // e.g., posters, booklets
-  discIds: string[]; // Array of disc references
-  discTypes: string[]; // Array of disc types (e.g., "DVD", "BLURAY", "HDDVD")
-  episodeIds?: EpisodeInfoSmall[]; // Array of episode references
-  extras: Extra[]; // Array of extras
-  mediaType: string; // e.g., "MOVIE", "SERIES", "DOUBLE_FEATURE"
-  movieIds?: MovieInfoSmall[]; // Array of movie references
-  seasonIds?: SeasonInfoSmall[]; // Array of season references
-  seriesIds?: SeriesInfoSmall[]; // Array of searies references
-  title: string; // Title of the release
-  year: number; // Year of the release
-  images: ImageFile[]; // Array of image files
+import { AuditFields, DiscFormat, ImageFile, MediaType } from './FBCommon.type';
+
+export interface FBRelease extends AuditFields {
+    id: string;
+    containsExtras: boolean;
+    containsInserts: boolean;
+    discIds: string[];
+    discTypes: DiscFormat[];
+    episodeIds?: EpisodeInfoSmall[];
+    extras: Extra[];
+    mediaType: MediaType;
+    movieIds?: MovieInfoSmall[];
+    seasonIds?: SeasonInfoSmall[];
+    seriesIds?: SeriesInfoSmall[];
+    title: string;
+    year: number;
+    images: ImageFile[];
+    edition?: string;
+    publisher?: string;
+    territory?: string;
+    releaseDate?: string | null;
+    spineNumber?: string | null;
+    outOfPrint?: boolean;
+    upc?: string | null;
 }
 
 export interface Extra {

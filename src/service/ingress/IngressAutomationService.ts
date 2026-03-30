@@ -41,6 +41,28 @@ export interface IngressQueueItem {
     source?: string;
     confidence_score?: number;
   };
+  parsed_info?: {
+    title?: string;
+    year?: number;
+    media_type?: string;
+    season?: number;
+    episode?: number;
+    quality?: string;
+  };
+}
+
+export interface QueueManualAssignPayload {
+  itemId: string;
+  mediaType: 'movie' | 'episode';
+  title: string;
+  year?: number;
+  source?: string;
+  imdbId?: string;
+  mediaId?: string;
+  firebaseMediaId?: string;
+  season?: number;
+  episode?: number;
+  organizeNow?: boolean;
 }
 
 export interface QueueItemStatus {
@@ -153,6 +175,14 @@ class IngressAutomationService {
     const result = await this.request('/queue/mark-failed', {
       method: 'POST',
       body: JSON.stringify({ itemId, reason }),
+    });
+    return result.data;
+  }
+
+  async manualAssign(payload: QueueManualAssignPayload): Promise<IngressQueueItem> {
+    const result = await this.request('/queue/manual-assign', {
+      method: 'POST',
+      body: JSON.stringify(payload),
     });
     return result.data;
   }

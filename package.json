@@ -6,7 +6,12 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "test:ci": "vitest run --coverage --bail=1 --reporter=default",
+    "ci:verify": "npm run test:ci"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -30,13 +35,19 @@
     "zustand": "^5.0.10"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/lodash": "^4.17.23",
     "@types/node": "^25.0.10",
     "@types/react": "^19.2.8",
     "@types/react-dom": "^19.2.3",
+    "@vitest/coverage-v8": "^3.2.4",
     "eslint": "^9.39.2",
     "eslint-config-next": "15.5.14",
     "firebase-admin": "^13.6.0",
-    "typescript": "^5.9.3"
+    "jsdom": "^26.1.0",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   }
 }

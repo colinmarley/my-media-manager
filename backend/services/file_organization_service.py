@@ -11,6 +11,7 @@ Handles:
 import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from xml.sax.saxutils import escape
 from config.settings import settings
 from utils.logging import logger
 
@@ -79,7 +80,11 @@ class FileOrganizationService:
             for source_file in source_files:
                 try:
                     result = await self._move_file_to_jellyfin(
-                        source_file, target_path, media_type
+                        source_file,
+                        target_path,
+                        media_type,
+                        assignment,
+                        media,
                     )
                     move_results.append(result)
 
@@ -100,6 +105,17 @@ class FileOrganizationService:
             # Check if all moves succeeded
             all_successful = all(r.get("success", False) for r in move_results)
 
+            # Create local NFO metadata files for Jellyfin when at least one file moved.
+            nfo_files_created: List[str] = []
+            if all_successful:
+                nfo_files_created = self._create_jellyfin_nfo_files(
+                    media_type=media_type,
+                    target_path=target_path,
+                    move_results=move_results,
+                    assignment=assignment,
+                    media=media,
+                )
+
             result = {
                 "success": all_successful,
                 "assignmentId": assignment.get("id"),
@@ -108,6 +124,7 @@ class FileOrganizationService:
                 "filesMoved": sum(1 for r in move_results if r.get("success")),
                 "totalFiles": len(move_results),
                 "folderCreated": folder_result.get("folderPath"),
+                "nfoFilesCreated": nfo_files_created,
                 "operations": move_results,
                 "timestamp": datetime.utcnow().isoformat(),
             }
@@ -188,7 +205,13 @@ class FileOrganizationService:
                 if media.get("imdbId"):
                     imdb_info = f" [imdbid-{media['imdbId']}]"
 
-                season_num = assignment.get("seasonNumber", 1)
+                season_num_raw = assignment.get("seasonNumber", 1)
+                try:
+                    season_num = int(season_num_raw)
+                except (TypeError, ValueError):
+                    season_num = 1
+                if season_num < 1:
+                    season_num = 1
                 season_str = f"Season {season_num:02d}"
 
                 return f"{library_root}/shows/{folder_name}{imdb_info}/{season_str}"
@@ -209,8 +232,9 @@ class FileOrganizationService:
         """Extract source file paths from assignment."""
         files = []
 
-        # Get primary file
-        primary_file = assignment.get("sourceFile", {}).get("filePath")
+        # Get primary file. Accept both legacy/new payload keys.
+        source_file_payload = assignment.get("sourceFile") or assignment.get("file") or {}
+        primary_file = source_file_payload.get("filePath")
         if primary_file:
             files.append(primary_file)
 
@@ -259,7 +283,12 @@ class FileOrganizationService:
             }
 
     async def _move_file_to_jellyfin(
-        self, source_file: str, target_dir: str, media_type: str
+        self,
+        source_file: str,
+        target_dir: str,
+        media_type: str,
+        assignment: Optional[Dict[str, Any]] = None,
+        media: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Move a file to Jellyfin directory."""
         try:
@@ -278,11 +307,25 @@ class FileOrganizationService:
                     "error": f"Source file not found: {source_file}",
                 }
 
-            # Extract filename
-            filename = os.path.basename(source_file)
+            # Build Jellyfin-compliant filename
+            filename = self._build_jellyfin_filename(
+                source_file=source_file,
+                target_dir=target_dir,
+                media_type=media_type,
+                assignment=assignment or {},
+                media=media or {},
+            )
 
             # Build destination path
             destination = os.path.join(target_dir, filename)
+
+            if os.path.exists(destination):
+                # Keep names deterministic while preventing accidental overwrite.
+                source_stem = self._sanitize_path(
+                    os.path.splitext(os.path.basename(source_file))[0]
+                )
+                base, ext = os.path.splitext(filename)
+                destination = os.path.join(target_dir, f"{base} - {source_stem}{ext}")
 
             # Move file
             result = self.filesystem_manager.move_file(source_file, destination)
@@ -324,6 +367,74 @@ class FileOrganizationService:
                 "error": str(e),
             }
 
+    def _build_jellyfin_filename(
+        self,
+        source_file: str,
+        target_dir: str,
+        media_type: str,
+        assignment: Dict[str, Any],
+        media: Dict[str, Any],
+    ) -> str:
+        """
+        Build a filename aligned with Jellyfin guidance.
+
+        Movies: filename matches movie folder name.
+        Shows: <Series Folder Name> SxxExx[ Episode Title].ext when episode data exists.
+        """
+        ext = os.path.splitext(source_file)[1]
+        source_name = os.path.basename(source_file)
+
+        if media_type == "movie":
+            folder_name = self._sanitize_path(os.path.basename(target_dir))
+            if folder_name:
+                return f"{folder_name}{ext}"
+            return source_name
+
+        if media_type == "episode":
+            season_dir = os.path.basename(target_dir)
+            series_dir = os.path.basename(os.path.dirname(target_dir))
+            series_name = self._sanitize_path(series_dir)
+
+            season_raw = assignment.get("seasonNumber")
+            if season_raw is None:
+                season_raw = assignment.get("parsedInfo", {}).get("season")
+            if season_raw is None and season_dir.lower().startswith("season "):
+                season_raw = season_dir.split(" ", 1)[1]
+
+            episode_raw = assignment.get("episodeNumber")
+            if episode_raw is None:
+                episode_raw = assignment.get("parsedInfo", {}).get("episode")
+
+            try:
+                season_num = int(season_raw)
+            except (TypeError, ValueError):
+                season_num = None
+
+            try:
+                episode_num = int(episode_raw)
+            except (TypeError, ValueError):
+                episode_num = None
+
+            if season_num is not None and season_num < 0:
+                season_num = 0
+            if episode_num is not None and episode_num < 0:
+                episode_num = 0
+
+            episode_title = (
+                assignment.get("parsedInfo", {}).get("episode_title")
+                or media.get("episodeTitle")
+                or ""
+            )
+            episode_title = self._sanitize_path(str(episode_title)).strip()
+
+            if series_name and season_num is not None and episode_num is not None:
+                base_name = f"{series_name} S{season_num:02d}E{episode_num:02d}"
+                if episode_title:
+                    base_name = f"{base_name} {episode_title}"
+                return f"{base_name}{ext}"
+
+        return source_name
+
     async def _update_assignment_status(
         self,
         assignment_id: str,
@@ -360,6 +471,137 @@ class FileOrganizationService:
                 assignment_id=assignment_id,
                 error=str(e),
             )
+
+    def _create_jellyfin_nfo_files(
+        self,
+        media_type: str,
+        target_path: str,
+        move_results: List[Dict[str, Any]],
+        assignment: Dict[str, Any],
+        media: Dict[str, Any],
+    ) -> List[str]:
+        """Create Jellyfin-compatible NFO files after successful organization."""
+        created: List[str] = []
+
+        try:
+            if media_type == "movie":
+                movie_nfo_path = os.path.join(target_path, "movie.nfo")
+                if self._write_nfo_if_missing(movie_nfo_path, self._build_movie_nfo(media)):
+                    created.append(movie_nfo_path)
+
+            elif media_type == "episode":
+                series_dir = os.path.dirname(target_path.rstrip("/"))
+
+                tvshow_nfo_path = os.path.join(series_dir, "tvshow.nfo")
+                if self._write_nfo_if_missing(tvshow_nfo_path, self._build_tvshow_nfo(media)):
+                    created.append(tvshow_nfo_path)
+
+                for item in move_results:
+                    if not item.get("success"):
+                        continue
+                    destination = item.get("destination")
+                    if not destination:
+                        continue
+                    stem, _ = os.path.splitext(destination)
+                    episode_nfo_path = f"{stem}.nfo"
+                    xml_text = self._build_episode_nfo(media, assignment)
+                    if self._write_nfo_if_missing(episode_nfo_path, xml_text):
+                        created.append(episode_nfo_path)
+        except Exception as exc:
+            logger.warning("Failed to create NFO files", error=str(exc), target_path=target_path)
+
+        return created
+
+    def _write_nfo_if_missing(self, path: str, content: str) -> bool:
+        """Write NFO only when not already present to avoid clobbering hand-edited metadata."""
+        try:
+            if os.path.exists(path):
+                return False
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info("NFO file created", path=path)
+            return True
+        except Exception as exc:
+            logger.warning("Failed to write NFO file", path=path, error=str(exc))
+            return False
+
+    def _build_movie_nfo(self, media: Dict[str, Any]) -> str:
+        title = escape(str(media.get("title") or "Unknown"))
+        year = media.get("year")
+        imdb_id = media.get("imdbId")
+
+        lines = [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<movie>",
+            f"  <title>{title}</title>",
+        ]
+
+        if year is not None:
+            lines.append(f"  <year>{escape(str(year))}</year>")
+        if imdb_id:
+            safe_id = escape(str(imdb_id))
+            lines.append(f"  <id>{safe_id}</id>")
+            lines.append(f"  <imdbid>{safe_id}</imdbid>")
+            lines.append(f"  <uniqueid type=\"imdb\" default=\"true\">{safe_id}</uniqueid>")
+
+        lines.append("</movie>")
+        return "\n".join(lines) + "\n"
+
+    def _build_tvshow_nfo(self, media: Dict[str, Any]) -> str:
+        title = escape(str(media.get("seriesTitle") or media.get("title") or "Unknown"))
+        year = media.get("year")
+        imdb_id = media.get("imdbId")
+
+        lines = [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<tvshow>",
+            f"  <title>{title}</title>",
+        ]
+
+        if year is not None:
+            lines.append(f"  <year>{escape(str(year))}</year>")
+        if imdb_id:
+            safe_id = escape(str(imdb_id))
+            lines.append(f"  <imdb_id>{safe_id}</imdb_id>")
+            lines.append(f"  <uniqueid type=\"imdb\" default=\"true\">{safe_id}</uniqueid>")
+
+        lines.append("</tvshow>")
+        return "\n".join(lines) + "\n"
+
+    def _build_episode_nfo(self, media: Dict[str, Any], assignment: Dict[str, Any]) -> str:
+        show_title = escape(str(media.get("seriesTitle") or media.get("title") or "Unknown"))
+
+        season_number = assignment.get("seasonNumber")
+        episode_number = assignment.get("episodeNumber")
+
+        try:
+            season_number = int(season_number)
+        except (TypeError, ValueError):
+            season_number = 1
+
+        try:
+            episode_number = int(episode_number)
+        except (TypeError, ValueError):
+            episode_number = 1
+
+        episode_title = assignment.get("parsedInfo", {}).get("episode_title") or ""
+        if episode_title:
+            safe_episode_title = escape(str(episode_title))
+        else:
+            safe_episode_title = f"{show_title} S{season_number:02d}E{episode_number:02d}"
+
+        lines = [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>",
+            "<episodedetails>",
+            f"  <title>{safe_episode_title}</title>",
+            f"  <showtitle>{show_title}</showtitle>",
+            f"  <season>{season_number}</season>",
+            f"  <episode>{episode_number}</episode>",
+        ]
+
+        lines.append("</episodedetails>")
+        return "\n".join(lines) + "\n"
 
     def _sanitize_path(self, name: str) -> str:
         """Sanitize name for use in file paths."""

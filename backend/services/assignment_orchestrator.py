@@ -25,7 +25,11 @@ class AssignmentOrchestrator:
         self.file_organization_service = file_organization_service
         self.auto_organize_enabled = auto_organize_enabled
 
-    async def auto_assign(self, queue_item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def auto_assign(
+        self,
+        queue_item: Dict[str, Any],
+        force_organize: bool = False,
+    ) -> Optional[Dict[str, Any]]:
         """
         Create an automatic assignment for a queue item when confidence is high.
 
@@ -45,10 +49,30 @@ class AssignmentOrchestrator:
 
         parsed_info = queue_item.get("parsed_info") or {}
         parsed_media_type = parsed_info.get("media_type")
-        media_type = "movie" if parsed_media_type == "movie" else "episode"
+        matched_media_type = (best_match.get("media_type") or "").lower()
+
+        if parsed_media_type == "movie" or matched_media_type == "movie":
+            media_type = "movie"
+        elif parsed_media_type in ("episode", "series", "tv") or matched_media_type in (
+            "episode",
+            "series",
+            "tv",
+        ):
+            media_type = "episode"
+        elif best_match.get("season") is not None or best_match.get("episode") is not None:
+            media_type = "episode"
+        else:
+            media_type = "movie"
         resolved_media = self._find_existing_media(media_type=media_type, imdb_id=imdb_id)
 
         assignment_id = str(uuid.uuid4())
+        source_file_payload = {
+            "filePath": queue_item.get("file_path"),
+            "fileName": queue_item.get("file_name"),
+            "fileSize": queue_item.get("file_size"),
+            "ingressPath": queue_item.get("ingress_path"),
+        }
+
         assignment_doc = {
             "id": assignment_id,
             "status": "auto_assigned",
@@ -65,12 +89,9 @@ class AssignmentOrchestrator:
                 "mediaType": media_type,
                 "raw": best_match.get("raw_data"),
             },
-            "file": {
-                "filePath": queue_item.get("file_path"),
-                "fileName": queue_item.get("file_name"),
-                "fileSize": queue_item.get("file_size"),
-                "ingressPath": queue_item.get("ingress_path"),
-            },
+            # Keep both keys for compatibility with existing readers.
+            "file": source_file_payload,
+            "sourceFile": source_file_payload,
             "parsedInfo": queue_item.get("parsed_info"),
             "queueItemId": queue_item.get("id"),
             "isOrganized": False,
@@ -82,8 +103,18 @@ class AssignmentOrchestrator:
         }
 
         if media_type == "episode":
-            assignment_doc["seasonNumber"] = parsed_info.get("season")
-            assignment_doc["episodeNumber"] = parsed_info.get("episode")
+            season_number = parsed_info.get("season")
+            if season_number is None:
+                season_number = best_match.get("season")
+
+            episode_number = parsed_info.get("episode")
+            if episode_number is None:
+                episode_number = best_match.get("episode")
+
+            if season_number is not None:
+                assignment_doc["seasonNumber"] = season_number
+            if episode_number is not None:
+                assignment_doc["episodeNumber"] = episode_number
 
         media_payload = self._build_media_payload(best_match, parsed_info, media_type)
 
@@ -99,7 +130,8 @@ class AssignmentOrchestrator:
             )
 
             organization_result = None
-            if self.auto_organize_enabled and self.file_organization_service is not None:
+            should_organize = force_organize or self.auto_organize_enabled
+            if should_organize and self.file_organization_service is not None:
                 organization_result = await self.file_organization_service.organize_assignment(
                     assignment_doc,
                     media_payload,

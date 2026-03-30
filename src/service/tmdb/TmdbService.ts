@@ -58,6 +58,27 @@ const TmdbService = {
   },
 
   /**
+   * Search for TV series by a query string.
+   * @param query - The search query.
+   * @returns A promise resolving to TV search results.
+   */
+  searchTV: async (query: string) => {
+    try {
+      const apiKey = getTmdbApiKey();
+      const response = await axios.get(`${TMDB_BASE_URL}/search/tv`, {
+        params: {
+          api_key: apiKey,
+          query,
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error searching for TV series:', error);
+      throw error;
+    }
+  },
+
+  /**
    * Fetch popular movies.
    * @returns A promise resolving to the list of popular movies.
    */
@@ -157,6 +178,26 @@ const TmdbService = {
       return response.data;
     } catch (error) {
       console.error('Error fetching TV series details:', error);
+      throw error;
+    }
+  },
+
+  /**
+   * Get external IDs for a TV series (includes imdb_id when available).
+   * @param seriesId - The TMDB series ID
+   * @returns A promise resolving to external IDs
+   */
+  getTVSeriesExternalIds: async (seriesId: number) => {
+    try {
+      const apiKey = getTmdbApiKey();
+      const response = await axios.get(`${TMDB_BASE_URL}/tv/${seriesId}/external_ids`, {
+        params: {
+          api_key: apiKey,
+        },
+      });
+      return response.data;
+    } catch (error) {
+      console.error('Error fetching TV series external IDs:', error);
       throw error;
     }
   },

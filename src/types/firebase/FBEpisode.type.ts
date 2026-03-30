@@ -1,30 +1,37 @@
-import { OmdbResponseFull } from '../OmdbResponse.type';
-import { Director, ImageFile } from './FBCommon.type';
-import { FBRelease } from './FBRelease.type';
+import {
+  AuditFields,
+  CastEntry,
+  DirectorReference,
+  ExternalIds,
+  ImageFile,
+} from './FBCommon.type';
 
-export interface FBEpisode {
+export interface FBEpisode extends AuditFields {
   id: string;
   title: string;
+  titleLower?: string;
   seasonId: string; // Reference to the season this episode belongs to
   seriesId: string; // Reference to the series this episode belongs to
-  episodeNumber: string;
+  seasonNumber?: number;
+  seriesTitle?: string;
+  episodeNumber: number;
   notes: string;
-  countryOfOrigin: string;
-  directors: Director[];
+  countryOfOrigin: string[];
+  directors: DirectorReference[];
   imageFiles: ImageFile[];
-  letterboxdLink?: string; // Optional field for Letterboxd link
-  plexLink?: string; // Optional field for Plex link
-  omdbData: OmdbResponseFull;
-  releaseDate: string;
-  releases: FBRelease[];
+  letterboxdLink?: string;
+  plexLink?: string;
+  airDate: string;
+  releaseIds?: string[];
   runtime: string;
-  topCast: string[];
+  topCast: CastEntry[];
   writers: string[];
-  actors: string[];
-  isPartOfCollection: boolean;
-  collectionIds?: string[]; // Optional field for collection IDs
-  // Additional suggested fields
-  genres?: string[]; // Optional field for the genre
-  language?: string; // Optional field for the language
-  regionCode?: string; // Optional field for the region code
+  synopsis?: string;
+  thumbnailUrl?: string | null;
+  isPartOfCollection?: boolean;
+  collectionIds?: string[];
+  genres?: string[];
+  languages?: string[];
+  regionCode?: string;
+  externalIds?: ExternalIds;
 }
