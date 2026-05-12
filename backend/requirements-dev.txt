@@ -1,0 +1,20 @@
+# =============================================================================
+# backend/requirements-dev.txt  —  Test & development-only dependencies
+#
+# Install with:
+#   pip install -r requirements-dev.txt
+#
+# These are NOT included in the production Docker image (see Dockerfile).
+# =============================================================================
+
+-r requirements.txt   # include all production dependencies
+
+# HTTP client — used by FastAPI's ASGITransport test helper
+httpx>=0.28
+
+# Test runner
+pytest>=9.0
+pytest-asyncio>=1.0
+
+# Async utilities (transitive, pinned for stability)
+anyio>=3.7

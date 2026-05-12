@@ -1,7 +1,6 @@
 'use client';
 
 import React, { ReactNode } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { Tabs, Tab, Box } from '@mui/material';
 import useAdminStore from '@/store/useAdminStore';
 
@@ -10,11 +9,10 @@ interface AdminLayoutProps {
 }
 
 const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
-  const searchParams = useSearchParams();
   const { selectedType, setSelectedType } = useAdminStore();
 
   React.useEffect(() => {
-    const requestedView = searchParams.get('view');
+    const requestedView = new URLSearchParams(window.location.search).get('view');
     if (!requestedView) {
       return;
     }
@@ -33,9 +31,9 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     if (validViews.has(requestedView) && requestedView !== selectedType) {
       setSelectedType(requestedView);
     }
-  }, [searchParams, selectedType, setSelectedType]);
+  }, [selectedType, setSelectedType]);
 
-  const handleChange = (event: React.ChangeEvent<{}>, newValue: string) => {
+  const handleChange = (_event: React.SyntheticEvent, newValue: string) => {
     setSelectedType(newValue);
   };
 

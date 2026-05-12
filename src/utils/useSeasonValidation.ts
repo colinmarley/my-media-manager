@@ -1,4 +1,4 @@
-import { FBSeason } from '../types/firebase/FBSeason.type';
+import { CatalogSeason } from '../types/catalog/Season.type';
 import {
   toLegacyError,
   validateNonEmptyArray,
@@ -27,19 +27,19 @@ const useSeasonValidation = () => {
     return toLegacyError(validateRequiredText(countryOfOrigin, 'Country of Origin'));
   };
 
-  const validateDirectors = (directors: FBSeason['directors']): string | null => {
+  const validateDirectors = (directors: CatalogSeason['directors']): string | null => {
     if (directors.length === 0) {
       return 'At least one director is required';
     }
     for (const director of directors) {
-      if (!director.name) {
+      if (!director.fullName) {
         return 'Director name is required';
       }
     }
     return null;
   };
 
-  const validateImageFiles = (imageFiles: FBSeason['imageFiles']): string | null => {
+  const validateImageFiles = (imageFiles: CatalogSeason['imageFiles']): string | null => {
     return toLegacyError(validateNonEmptyArray(imageFiles, 'image file'));
   };
 
@@ -59,7 +59,7 @@ const useSeasonValidation = () => {
     return toLegacyError(validateNonEmptyArray(writers, 'writer'));
   };
 
-  const validateEpisodes = (episodes: FBSeason['episodes']): string | null => {
+  const validateEpisodes = (episodes: CatalogSeason['episodes']): string | null => {
     if (episodes.length === 0) {
       return 'At least one episode is required';
     }

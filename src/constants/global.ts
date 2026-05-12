@@ -1,0 +1,15 @@
+export const BUTTON_LABELS = {
+  dashboard: 'Dashboard',
+  admin: 'Admin',
+  myLibrary: 'My Library',
+  ingressAutomation: 'Ingress Automation',
+  open: 'Open',
+  signIn: 'Sign In',
+  signingIn: 'Signing in…',
+  save: 'Save',
+  cancel: 'Cancel',
+  delete: 'Delete',
+  edit: 'Edit',
+  close: 'Close',
+  submit: 'Submit',
+} as const;

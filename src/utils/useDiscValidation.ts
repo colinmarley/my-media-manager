@@ -1,4 +1,4 @@
-import { FBDisc } from '../types/firebase/FBDisc.type';
+import { CatalogDisc } from '../types/catalog/Disc.type';
 import {
   toLegacyError,
   validateNonEmptyArray,
@@ -13,11 +13,11 @@ const useDiscValidation = () => {
     return toLegacyError(validateRequiredText(title, 'Title'));
   };
 
-  const validateVideoFiles = (videoFiles: FBDisc['videoFiles']): string | null => {
+  const validateVideoFiles = (videoFiles: CatalogDisc['videoFiles']): string | null => {
     return toLegacyError(validateNonEmptyArray(videoFiles, 'video file'));
   };
 
-  const validateImageFiles = (imageFiles: FBDisc['imageFiles']): string | null => {
+  const validateImageFiles = (imageFiles: CatalogDisc['imageFiles']): string | null => {
     return toLegacyError(validateNonEmptyArray(imageFiles, 'image file'));
   };
 

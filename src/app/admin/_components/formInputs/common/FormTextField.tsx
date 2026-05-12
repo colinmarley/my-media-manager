@@ -3,7 +3,7 @@ import React from 'react';
 import TextField from "@mui/material/TextField";
 
 interface FormTextFieldProps {
-    label: string;
+    label: string | React.ReactNode;
     value: string;
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
     required?: boolean;

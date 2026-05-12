@@ -35,13 +35,19 @@ from api.metadata_operations import router as metadata_router
 from api.media_operations import router as media_router, initialize_organization_services
 from api.file_browser import router as file_browser_router
 from api.ingress_operations import router as ingress_router
+from api.auth import router as auth_router
+from api.catalog import router as catalog_router
+from api.generic_data import router as generic_data_router
+from api.library_paths import router as library_paths_router
+from api.posters import router as posters_router
+from db.database import engine, Base, AsyncSessionLocal
+from db.models import AppConfig
 from services.filesystem_manager import FileSystemManager
 from services.file_watcher_service import FileWatcherService
 from services.ingress_queue_service import IngressQueueService
 from services.auto_matcher_service import AutoMatcherService
 from services.assignment_orchestrator import AssignmentOrchestrator
 from services.file_organization_service import FileOrganizationService
-from services.firestore_service import FirestoreService
 from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
 from services.task_manager import AsyncTaskManager
@@ -55,7 +61,6 @@ task_manager = None
 file_watcher_service = None
 ingress_queue_service = None
 auto_matcher_service = None
-firestore_service = None
 assignment_orchestrator = None
 ingress_auto_processor_task = None
 
@@ -112,7 +117,7 @@ async def lifespan(app: FastAPI):
         Control to the running application
     """
     # Startup
-    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service, ingress_queue_service, auto_matcher_service, firestore_service, assignment_orchestrator, ingress_auto_processor_task
+    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service, ingress_queue_service, auto_matcher_service, assignment_orchestrator, ingress_auto_processor_task
     
     logger.info("Starting Media Library Backend")
     
@@ -121,31 +126,64 @@ async def lifespan(app: FastAPI):
     metadata_extractor = MetadataExtractor()
     library_scanner = LibraryScanner(file_manager, metadata_extractor)
     task_manager = AsyncTaskManager(max_workers=settings.scan_worker_threads)
-    firestore_service = FirestoreService(settings.firebase_project_id)
-    await firestore_service.initialize()
+
+    # Initialize PostgreSQL schema (idempotent; Alembic manages production migrations)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Auto-seed password from env var if no hash is stored yet.
+    # By default we preserve user-set passwords across restarts.
+    if settings.app_default_password:
+        import bcrypt
+        from sqlalchemy import select
+        async with AsyncSessionLocal() as seed_db:
+            result = await seed_db.execute(
+                select(AppConfig).where(AppConfig.key == "password_hash")
+            )
+            existing = result.scalar_one_or_none()
+            if not existing:
+                hashed = bcrypt.hashpw(
+                    settings.app_default_password.encode(), bcrypt.gensalt()
+                ).decode()
+                seed_db.add(AppConfig(key="password_hash", value=hashed))
+                await seed_db.commit()
+                logger.info("Default app password seeded from APP_DEFAULT_PASSWORD env var")
+            elif settings.app_default_password_force_reset:
+                hashed = bcrypt.hashpw(
+                    settings.app_default_password.encode(), bcrypt.gensalt()
+                ).decode()
+                existing.value = hashed
+                await seed_db.commit()
+                logger.warning("Existing app password hash overwritten from APP_DEFAULT_PASSWORD due to force-reset")
+            else:
+                logger.debug("App password already set; skipping auto-seed")
+
     auto_matcher_service = AutoMatcherService(
         omdb_api_key=settings.omdb_api_key,
         tmdb_api_key=settings.tmdb_api_key,
-        firestore_service=firestore_service,
+        firestore_service=None,
+        metadata_source="library_then_omdb",
     )
     file_organization_service = FileOrganizationService(
         filesystem_manager=file_manager,
-        firestore_service=firestore_service,
+        firestore_service=None,
         jellyfin_dest_base=settings.jellyfin_dest_base,
+        db_session_factory=AsyncSessionLocal,
     )
     assignment_orchestrator = AssignmentOrchestrator(
-        firestore_service=firestore_service,
+        firestore_service=None,
         file_organization_service=file_organization_service,
         auto_organize_enabled=settings.ingress_auto_organize_enabled,
+        db_session_factory=AsyncSessionLocal,
     )
     ingress_queue_service = IngressQueueService(
         auto_matcher_service=auto_matcher_service,
-        firestore_service=firestore_service,
+        firestore_service=None,
         assignment_orchestrator=assignment_orchestrator,
         auto_assign_threshold=settings.ingress_auto_assign_threshold,
+        db_session_factory=AsyncSessionLocal,
     )
 
-    # Build runtime config from settings, then override with any persisted Firestore config
     ingress_runtime_config: dict = {
         "defaultIngressPaths": settings.ingress_default_paths,
         "autoProcessEnabled": settings.ingress_auto_process_enabled,
@@ -154,17 +192,9 @@ async def lifespan(app: FastAPI):
         "autoOrganizeEnabled": settings.ingress_auto_organize_enabled,
         "fileStabilityWaitSeconds": settings.ingress_file_stability_wait_seconds,
         "debounceSeconds": settings.ingress_debounce_seconds,
+        "jellyfinDestBase": settings.jellyfin_dest_base,
+        "defaultMetadataSource": "library_then_omdb",
     }
-    try:
-        saved_config = await firestore_service.get_ingress_config()
-        if saved_config:
-            ingress_runtime_config.update(saved_config)
-            ingress_queue_service.auto_assign_threshold = max(
-                0, min(ingress_runtime_config.get("autoAssignThreshold", settings.ingress_auto_assign_threshold), 100)
-            )
-            logger.info("Loaded persisted ingress config from Firestore")
-    except Exception as exc:
-        logger.warning("Could not load persisted ingress config", error=str(exc))
 
     # Startup health checks
     for ingress_path in ingress_runtime_config.get("defaultIngressPaths", []):
@@ -176,11 +206,31 @@ async def lifespan(app: FastAPI):
     dest_base = settings.jellyfin_dest_base
     if os.path.exists(dest_base):
         logger.info("Destination mount accessible", path=dest_base)
+
+        # Bootstrap typed destination folders so Jellyfin and the watcher
+        # never encounter a missing directory on first run.
+        bootstrap_folders = [
+            settings.folder_movies,
+            settings.folder_tv_shows,
+            "Series",
+            "Home Videos",
+            settings.folder_documentaries,
+            settings.folder_live_performances,
+            settings.folder_needs_review,
+            "ingest",
+        ]
+        for folder in bootstrap_folders:
+            folder_path = os.path.join(dest_base, folder)
+            try:
+                os.makedirs(folder_path, exist_ok=True)
+                logger.debug("Ensured media folder exists", path=folder_path)
+            except OSError as exc:
+                logger.warning("Could not create media folder", path=folder_path, error=str(exc))
     else:
         logger.warning("Destination mount not found - file organization will fail", path=dest_base)
-    
+
     # Initialize Phase 4 services for file organization
-    initialize_organization_services(firestore_service)
+    initialize_organization_services(None)
     
     file_watcher_service = FileWatcherService(
         file_manager=file_manager,
@@ -209,7 +259,7 @@ async def lifespan(app: FastAPI):
     app.state.file_watcher_service = file_watcher_service
     app.state.ingress_queue_service = ingress_queue_service
     app.state.auto_matcher_service = auto_matcher_service
-    app.state.firestore_service = firestore_service
+    app.state.file_organization_service = file_organization_service
     app.state.assignment_orchestrator = assignment_orchestrator
     app.state.ingress_runtime_config = ingress_runtime_config
 
@@ -274,6 +324,11 @@ app.include_router(file_browser_router, tags=["File Browser"])
 app.include_router(library_router, prefix="/api/library", tags=["Library Operations"])
 app.include_router(metadata_router, prefix="/api/metadata", tags=["Metadata Operations"])
 app.include_router(media_router, prefix="/api/media", tags=["Media Operations"])
+app.include_router(auth_router, prefix="/api")
+app.include_router(catalog_router)
+app.include_router(generic_data_router)
+app.include_router(library_paths_router)
+app.include_router(posters_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
 
 @app.get("/")
@@ -313,7 +368,7 @@ async def health_check():
             "file_watcher_service": app.state.file_watcher_service is not None,
             "ingress_queue_service": app.state.ingress_queue_service is not None,
             "auto_matcher_service": app.state.auto_matcher_service is not None,
-            "firestore_service": app.state.firestore_service is not None,
+            "firestore_service": getattr(app.state, "firestore_service", None) is not None,
             "assignment_orchestrator": app.state.assignment_orchestrator is not None,
         }
     }

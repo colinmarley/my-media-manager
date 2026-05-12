@@ -1,5 +1,5 @@
-import { FBCollection } from '../types/firebase/FBCollection.type';
-import { ImageFile } from '../types/firebase/FBCommon.type';
+import { CatalogCollection } from '../types/catalog/Collection.type';
+import { ImageFile } from '../types/catalog/Common.type';
 import {
   toLegacyError,
   validateNonEmptyArray,

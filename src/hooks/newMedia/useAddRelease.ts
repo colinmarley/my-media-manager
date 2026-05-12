@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { FBRelease, Extra, ImageFile, MovieInfoSmall, SeasonInfoSmall, SeriesInfoSmall, EpisodeInfoSmall } from '../../types/firebase/FBRelease.type';
-import FirestoreService from '../../service/firebase/FirestoreService';
+import { CatalogRelease, Extra, ImageFile, MovieInfoSmall, SeasonInfoSmall, SeriesInfoSmall, EpisodeInfoSmall } from '../../types/catalog/Release.type';
+import { DiscFormat, MediaType } from '../../types/catalog/Common.type';
+import CatalogService from '../../service/catalog/CatalogService';
 
 const useAddRelease = () => {
   const [loading, setLoading] = useState<boolean>(false);
@@ -25,16 +26,16 @@ const useAddRelease = () => {
     setError(null);
 
     try {
-      const release: FBRelease = {
-        id: '', // Firebase will generate the ID
+      const release: CatalogRelease = {
+        id: '',
         title,
         year,
         containsExtras,
         containsInserts,
         discIds,
-        discTypes,
+        discTypes: discTypes as DiscFormat[],
         extras,
-        mediaType,
+        mediaType: mediaType as MediaType,
         images,
         episodeIds,
         movieIds,
@@ -42,7 +43,7 @@ const useAddRelease = () => {
         seriesIds,
       };
 
-      const service = new FirestoreService('releases');
+      const service = new CatalogService('releases');
       await service.addDocument(release);
     } catch (err: any) {
       setError(err.message);

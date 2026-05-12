@@ -1,5 +1,4 @@
-import { collection, doc, getDocs, limit, query, setDoc, where } from 'firebase/firestore';
-import { db } from '../../../firebaseConfig';
+import { api } from '../api/apiClient';
 import { retrieveMediaDataById, retrieveMovieDataByTitle, retrieveShowDataByTitle, searchByText } from '@/service/omdb/OmdbService';
 import TmdbService from '@/service/tmdb/TmdbService';
 import { OmdbResponseFull } from '@/types/OmdbResponse.type';
@@ -20,12 +19,23 @@ export interface ExternalSearchResult {
 }
 
 export interface SaveMetadataResult {
-  status: 'created' | 'exists' | 'error';
+  status: 'created' | 'updated' | 'conflicts' | 'error';
   message: string;
   collection: 'movies' | 'series';
   documentId?: string;
   document?: Record<string, unknown>;
+  conflicts?: FieldConflict[];
+  autoFilledCount?: number;
 }
+
+export interface FieldConflict {
+  field: string;
+  label: string;
+  existing: unknown;
+  incoming: unknown;
+}
+
+export type ConflictResolution = Record<string, 'existing' | 'incoming'>;
 
 const normalizeType = (value: string | undefined): ImportMediaType => {
   if (!value) {
@@ -59,6 +69,22 @@ const splitAndClean = (value: string | undefined): string[] => {
     .filter((part) => part.length > 0);
 };
 
+const stripUndefinedDeep = <T>(value: T): T => {
+  if (Array.isArray(value)) {
+    return value.map((item) => stripUndefinedDeep(item)) as T;
+  }
+
+  if (value && typeof value === 'object') {
+    const cleanedEntries = Object.entries(value as Record<string, unknown>)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, stripUndefinedDeep(entry)]);
+
+    return Object.fromEntries(cleanedEntries) as T;
+  }
+
+  return value;
+};
+
 const toTmdbPosterUrl = (posterPath: string | undefined): string | undefined => {
   if (!posterPath) {
     return undefined;
@@ -89,12 +115,81 @@ const getCollectionName = (mediaType: ImportMediaType): 'movies' | 'series' => {
   return mediaType === 'movie' ? 'movies' : 'series';
 };
 
-const getDbOrThrow = () => {
-  if (!db) {
-    throw new Error('Firebase is not configured. Check .env.local and restart the app.');
+// ---------------------------------------------------------------------------
+// Conflict detection helpers
+// ---------------------------------------------------------------------------
+
+const COMPARABLE_FIELDS: Array<{ field: string; label: string }> = [
+  { field: 'title',         label: 'Title' },
+  { field: 'releaseDate',   label: 'Release Date' },
+  { field: 'runtime',       label: 'Runtime' },
+  { field: 'language',      label: 'Language' },
+  { field: 'countryOfOrigin', label: 'Country' },
+  { field: 'contentRating', label: 'Content Rating' },
+  { field: 'imdbRating',    label: 'IMDB Rating' },
+  { field: 'imdbVotes',     label: 'IMDB Votes' },
+  { field: 'metascore',     label: 'Metascore' },
+  { field: 'awards',        label: 'Awards' },
+  { field: 'boxOffice',     label: 'Box Office' },
+  { field: 'tagline',       label: 'Tagline' },
+  { field: 'plot',          label: 'Plot' },
+  { field: 'genres',        label: 'Genres' },
+  { field: 'totalSeasons',  label: 'Total Seasons' },
+  { field: 'status',        label: 'Status' },
+  { field: 'network',       label: 'Network' },
+];
+
+const isFieldEmpty = (val: unknown): boolean => {
+  if (val === null || val === undefined || val === '') return true;
+  if (Array.isArray(val) && val.length === 0) return true;
+  return false;
+};
+
+const fieldValuesEqual = (a: unknown, b: unknown): boolean => {
+  if (a === b) return true;
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return (
+      JSON.stringify([...a].map(String).sort()) ===
+      JSON.stringify([...b].map(String).sort())
+    );
+  }
+  return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+};
+
+interface DocumentCompareResult {
+  conflicts: FieldConflict[];
+  autoFilledCount: number;
+  merged: Record<string, unknown>;
+}
+
+const compareDocuments = (
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>
+): DocumentCompareResult => {
+  const conflicts: FieldConflict[] = [];
+  let autoFilledCount = 0;
+  const merged: Record<string, unknown> = { ...existing };
+
+  for (const { field, label } of COMPARABLE_FIELDS) {
+    const existingVal = existing[field];
+    const incomingVal = incoming[field];
+
+    if (isFieldEmpty(incomingVal)) continue;
+    if (isFieldEmpty(existingVal)) {
+      merged[field] = incomingVal;
+      autoFilledCount++;
+      continue;
+    }
+    if (!fieldValuesEqual(existingVal, incomingVal)) {
+      conflicts.push({ field, label, existing: existingVal, incoming: incomingVal });
+    }
   }
 
-  return db;
+  // Always refresh the raw metadata blobs
+  if (incoming.omdbData) merged.omdbData = incoming.omdbData;
+  if (incoming.tmdbData) merged.tmdbData = incoming.tmdbData;
+
+  return { conflicts, autoFilledCount, merged };
 };
 
 const mapOmdbResult = (raw: Record<string, unknown>): ExternalSearchResult => {
@@ -169,47 +264,25 @@ const findExistingDocument = async (
   imdbId: string | undefined,
   titleLower: string
 ): Promise<string | null> => {
-  const activeDb = getDbOrThrow();
-
-  if (imdbId) {
-    const externalIdQuery = query(
-      collection(activeDb, collectionName),
-      where('externalIds.imdbId', '==', imdbId),
-      limit(1)
+  try {
+    const params = new URLSearchParams();
+    if (imdbId) params.set('imdbId', imdbId);
+    else params.set('titleLower', titleLower);
+    const result = await api.get<{ id: string } | null>(
+      `/api/catalog/${collectionName}/lookup?${params.toString()}`
     );
-    const externalIdDocs = await getDocs(externalIdQuery);
-    if (!externalIdDocs.empty) {
-      return externalIdDocs.docs[0].id;
-    }
-
-    const legacyOmdbQuery = query(
-      collection(activeDb, collectionName),
-      where('omdbData.imdbID', '==', imdbId),
-      limit(1)
-    );
-    const legacyOmdbDocs = await getDocs(legacyOmdbQuery);
-    if (!legacyOmdbDocs.empty) {
-      return legacyOmdbDocs.docs[0].id;
-    }
+    return result?.id ?? null;
+  } catch {
+    return null;
   }
-
-  const titleQuery = query(
-    collection(activeDb, collectionName),
-    where('titleLower', '==', titleLower),
-    limit(1)
-  );
-  const titleDocs = await getDocs(titleQuery);
-  if (!titleDocs.empty) {
-    return titleDocs.docs[0].id;
-  }
-
-  return null;
 };
 
 const buildMovieDocument = (
   id: string,
   omdbData: OmdbResponseFull,
-  tmdbId?: number
+  tmdbId?: number,
+  tmdbData?: Record<string, unknown>,
+  mediaSubType?: string
 ): Record<string, unknown> => {
   const directors = splitAndClean(omdbData.Director).map((fullName) => ({
     fullName,
@@ -220,6 +293,14 @@ const buildMovieDocument = (
     actor,
     characters: [] as string[]
   }));
+
+  const externalIds: Record<string, unknown> = {};
+  if (omdbData.imdbID && omdbData.imdbID !== 'N/A') {
+    externalIds.imdbId = omdbData.imdbID;
+  }
+  if (typeof tmdbId === 'number') {
+    externalIds.tmdbId = tmdbId;
+  }
 
   return {
     id,
@@ -237,10 +318,15 @@ const buildMovieDocument = (
     isPartOfCollection: false,
     genres: splitAndClean(omdbData.Genre),
     language: omdbData.Language || '',
-    externalIds: {
-      imdbId: omdbData.imdbID !== 'N/A' ? omdbData.imdbID : undefined,
-      tmdbId,
-    },
+    externalIds,
+    awards: omdbData.Awards !== 'N/A' ? omdbData.Awards : undefined,
+    imdbRating: omdbData.imdbRating !== 'N/A' ? omdbData.imdbRating : undefined,
+    imdbVotes: omdbData.imdbVotes !== 'N/A' ? omdbData.imdbVotes : undefined,
+    metascore: omdbData.Metascore !== 'N/A' ? omdbData.Metascore : undefined,
+    contentRating: omdbData.Rated !== 'N/A' ? omdbData.Rated : undefined,
+    boxOffice: omdbData.BoxOffice && omdbData.BoxOffice !== 'N/A' ? omdbData.BoxOffice : undefined,
+    plot: omdbData.Plot !== 'N/A' ? omdbData.Plot : undefined,
+    tmdbData: tmdbData || undefined,
     assignmentSummary: {
       totalFiles: 0,
       assignedFiles: 0,
@@ -249,19 +335,29 @@ const buildMovieDocument = (
       hasPhysicalCopy: false,
       totalFileSize: 0,
       totalFileSizeFormatted: '0 B',
-    }
+    },
+    ...(mediaSubType ? { mediaSubType } : {}),
   };
 };
 
 const buildSeriesDocument = (
   id: string,
   omdbData: OmdbResponseFull,
-  tmdbId?: number
+  tmdbId?: number,
+  tmdbData?: Record<string, unknown>
 ): Record<string, unknown> => {
   const directors = splitAndClean(omdbData.Director).map((fullName) => ({
     fullName,
     title: 'Director'
   }));
+
+  const externalIds: Record<string, unknown> = {};
+  if (omdbData.imdbID && omdbData.imdbID !== 'N/A') {
+    externalIds.imdbId = omdbData.imdbID;
+  }
+  if (typeof tmdbId === 'number') {
+    externalIds.tmdbId = tmdbId;
+  }
 
   return {
     id,
@@ -281,10 +377,20 @@ const buildSeriesDocument = (
     imdbID: omdbData.imdbID,
     genres: splitAndClean(omdbData.Genre),
     language: omdbData.Language || '',
-    externalIds: {
-      imdbId: omdbData.imdbID !== 'N/A' ? omdbData.imdbID : undefined,
-      tmdbId,
-    },
+    externalIds,
+    awards: omdbData.Awards !== 'N/A' ? omdbData.Awards : undefined,
+    imdbRating: omdbData.imdbRating !== 'N/A' ? omdbData.imdbRating : undefined,
+    imdbVotes: omdbData.imdbVotes !== 'N/A' ? omdbData.imdbVotes : undefined,
+    metascore: omdbData.Metascore !== 'N/A' ? omdbData.Metascore : undefined,
+    contentRating: omdbData.Rated !== 'N/A' ? omdbData.Rated : undefined,
+    plot: omdbData.Plot !== 'N/A' ? omdbData.Plot : undefined,
+    totalSeasons: omdbData.TotalSeasons && omdbData.TotalSeasons !== 'N/A' ? Number(omdbData.TotalSeasons) : undefined,
+    status: tmdbData?.['status'] && tmdbData['status'] !== 'N/A' ? tmdbData['status'] : undefined,
+    network: Array.isArray(tmdbData?.['networks']) && (tmdbData['networks'] as Record<string, unknown>[])[0]
+      ? ((tmdbData['networks'] as Record<string, unknown>[])[0] as Record<string, unknown>)['name']
+      : undefined,
+    tagline: tmdbData?.['tagline'] && tmdbData['tagline'] !== 'N/A' ? tmdbData['tagline'] : undefined,
+    tmdbData: tmdbData || undefined,
     assignmentSummary: {
       seasonsWithFiles: 0,
       episodesWithFiles: 0,
@@ -295,7 +401,7 @@ const buildSeriesDocument = (
   };
 };
 
-const fetchBestOmdbData = async (result: ExternalSearchResult): Promise<{ omdbData: OmdbResponseFull; tmdbId?: number; imdbId?: string }> => {
+const fetchBestOmdbData = async (result: ExternalSearchResult): Promise<{ omdbData: OmdbResponseFull; tmdbId?: number; imdbId?: string; tmdbData?: Record<string, unknown> }> => {
   let tmdbId = result.tmdbId;
   let imdbId = result.imdbId;
 
@@ -335,11 +441,11 @@ const fetchBestOmdbData = async (result: ExternalSearchResult): Promise<{ omdbDa
     if (imdbId) {
       try {
         const omdbData = await retrieveMediaDataById(imdbId);
-        return { omdbData, tmdbId, imdbId };
+        return { omdbData, tmdbId, imdbId, tmdbData: detailRecord };
       } catch {
         const fallback = createFallbackOmdbData(result, runtime, genres, language, country);
         fallback.imdbID = imdbId;
-        return { omdbData: fallback, tmdbId, imdbId };
+        return { omdbData: fallback, tmdbId, imdbId, tmdbData: detailRecord };
       }
     }
 
@@ -347,6 +453,7 @@ const fetchBestOmdbData = async (result: ExternalSearchResult): Promise<{ omdbDa
       omdbData: createFallbackOmdbData(result, runtime, genres, language, country),
       tmdbId,
       imdbId,
+      tmdbData: detailRecord,
     };
   }
 
@@ -362,6 +469,22 @@ const fetchBestOmdbData = async (result: ExternalSearchResult): Promise<{ omdbDa
 
   const omdbData = await retrieveShowDataByTitle(result.title);
   return { omdbData, tmdbId, imdbId: omdbData.imdbID };
+};
+
+export const searchExternalMetadataByImdbId = async (
+  imdbId: string,
+  mediaType: ImportMediaType
+): Promise<ExternalSearchResult[]> => {
+  const trimmed = imdbId.trim();
+  if (!trimmed) {
+    return [];
+  }
+
+  const omdbData = await retrieveMediaDataById(trimmed);
+  const result = mapOmdbResult(omdbData as unknown as Record<string, unknown>);
+  // Override mediaType with the caller's selection since OMDB may return 'game' etc.
+  result.mediaType = mediaType;
+  return [result];
 };
 
 export const searchExternalMetadata = async (
@@ -391,11 +514,11 @@ export const searchExternalMetadata = async (
   return tmdbResults.map((entry) => mapTmdbResult(asRecord(entry), mediaType));
 };
 
-export const saveExternalMetadataToFirebase = async (
-  result: ExternalSearchResult
+export const saveExternalMetadataToCatalog = async (
+  result: ExternalSearchResult,
+  mediaSubType?: string
 ): Promise<SaveMetadataResult> => {
   try {
-    const activeDb = getDbOrThrow();
     const collectionName = getCollectionName(result.mediaType);
     const titleLower = result.title.toLowerCase();
 
@@ -403,31 +526,57 @@ export const saveExternalMetadataToFirebase = async (
     const imdbId = resolved.imdbId || (resolved.omdbData.imdbID !== 'N/A' ? resolved.omdbData.imdbID : undefined);
 
     const existingId = await findExistingDocument(collectionName, imdbId, titleLower);
-    if (existingId) {
+
+    const id = existingId ??
+      (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${collectionName}-${Date.now()}`);
+
+    const document = result.mediaType === 'movie'
+      ? buildMovieDocument(id, resolved.omdbData, resolved.tmdbId, resolved.tmdbData, mediaSubType)
+      : buildSeriesDocument(id, resolved.omdbData, resolved.tmdbId, resolved.tmdbData);
+
+    if (!existingId) {
+      const sanitizedDocument = stripUndefinedDeep(document);
+      await api.put(`/api/catalog/${collectionName}/${id}`, sanitizedDocument);
       return {
-        status: 'exists',
-        message: 'This title is already in Firebase.',
+        status: 'created',
+        message: 'Metadata saved to catalog.',
         collection: collectionName,
-        documentId: existingId,
+        documentId: id,
+        document: sanitizedDocument,
       };
     }
 
-    const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${collectionName}-${Date.now()}`;
+    // Existing record — compare and handle conflicts
+    const existingDoc = await api.get<Record<string, unknown>>(
+      `/api/catalog/${collectionName}/${existingId}`
+    );
+    const { conflicts, autoFilledCount, merged } = compareDocuments(existingDoc ?? {}, document);
 
-    const document = result.mediaType === 'movie'
-      ? buildMovieDocument(id, resolved.omdbData, resolved.tmdbId)
-      : buildSeriesDocument(id, resolved.omdbData, resolved.tmdbId);
-
-    await setDoc(doc(collection(activeDb, collectionName), id), document);
+    if (conflicts.length === 0) {
+      const sanitized = stripUndefinedDeep(merged);
+      await api.put(`/api/catalog/${collectionName}/${existingId}`, sanitized);
+      return {
+        status: 'updated',
+        message: autoFilledCount > 0
+          ? `Updated ${autoFilledCount} empty field${autoFilledCount !== 1 ? 's' : ''} with retrieved data.`
+          : 'Record is already up to date.',
+        collection: collectionName,
+        documentId: existingId,
+        document: sanitized,
+        autoFilledCount,
+      };
+    }
 
     return {
-      status: 'created',
-      message: 'Metadata saved to Firebase.',
+      status: 'conflicts',
+      message: `${conflicts.length} field${conflicts.length !== 1 ? 's differ' : ' differs'} from the retrieved data.`,
       collection: collectionName,
-      documentId: id,
-      document,
+      documentId: existingId,
+      document: stripUndefinedDeep(merged),
+      conflicts,
+      autoFilledCount,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to save metadata.';
@@ -436,5 +585,100 @@ export const saveExternalMetadataToFirebase = async (
       message,
       collection: getCollectionName(result.mediaType),
     };
+  }
+};
+
+export const saveManualMovieTitle = async (
+  title: string,
+  year: string,
+  mediaSubType: string
+): Promise<SaveMetadataResult> => {
+  const collection = 'movies';
+  try {
+    const titleTrimmed = title.trim();
+    const titleLower = titleTrimmed.toLowerCase();
+
+    const existingId = await findExistingDocument(collection, undefined, titleLower);
+
+    const id = existingId ??
+      (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `movies-${Date.now()}`);
+
+    const fallbackOmdb: OmdbResponseFull = {
+      Title: titleTrimmed,
+      Year: year || 'N/A',
+      Rated: 'N/A',
+      Released: year ? `01 Jan ${year}` : 'N/A',
+      Runtime: 'N/A',
+      Genre: 'N/A',
+      Director: 'N/A',
+      Writer: 'N/A',
+      Actors: 'N/A',
+      Plot: 'N/A',
+      Language: 'N/A',
+      Country: 'N/A',
+      Awards: 'N/A',
+      Poster: 'N/A',
+      Ratings: [],
+      Metascore: 'N/A',
+      imdbRating: 'N/A',
+      imdbVotes: 'N/A',
+      imdbID: 'N/A',
+      Type: 'movie',
+      Response: 'True',
+    };
+
+    const document = stripUndefinedDeep(buildMovieDocument(id, fallbackOmdb, undefined, undefined, mediaSubType));
+
+    if (existingId) {
+      return {
+        status: 'updated',
+        message: 'A title with that name already exists in your catalog.',
+        collection,
+        documentId: existingId,
+        document,
+      };
+    }
+
+    await api.put(`/api/catalog/${collection}/${id}`, document);
+    return {
+      status: 'created',
+      message: `"${titleTrimmed}" added to your library.`,
+      collection,
+      documentId: id,
+      document,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to save entry.';
+    return { status: 'error', message, collection };
+  }
+};
+
+export const applyConflictResolution = async (
+  documentId: string,
+  collection: 'movies' | 'series',
+  pendingDocument: Record<string, unknown>,
+  conflicts: FieldConflict[],
+  resolution: ConflictResolution
+): Promise<SaveMetadataResult> => {
+  try {
+    const finalDoc: Record<string, unknown> = { ...pendingDocument };
+    for (const conflict of conflicts) {
+      const choice = resolution[conflict.field] ?? 'existing';
+      finalDoc[conflict.field] = choice === 'incoming' ? conflict.incoming : conflict.existing;
+    }
+    const sanitized = stripUndefinedDeep(finalDoc);
+    await api.put(`/api/catalog/${collection}/${documentId}`, sanitized);
+    return {
+      status: 'updated',
+      message: 'Catalog entry updated with your selections.',
+      collection,
+      documentId,
+      document: sanitized,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to apply updates.';
+    return { status: 'error', message, collection };
   }
 };

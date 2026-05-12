@@ -3,7 +3,7 @@
  */
 
 /**
- * Prepares title data for Firestore storage
+ * Prepares title data for database storage
  * Ensures titleLower field is set for efficient case-insensitive search
  * 
  * @param title - The original title
@@ -18,7 +18,7 @@ export function prepareTitleForStorage(title: string): { title: string; titleLow
 }
 
 /**
- * Validates and prepares movie data before saving to Firestore
+ * Validates and prepares movie data before saving to the database
  * Ensures titleLower field is present
  * 
  * @param movieData - Partial movie data
@@ -32,7 +32,7 @@ export function prepareMovieData<T extends { title: string }>(movieData: T): T &
 }
 
 /**
- * Validates and prepares series data before saving to Firestore
+ * Validates and prepares series data before saving to the database
  * Ensures titleLower field is present
  * 
  * @param seriesData - Partial series data

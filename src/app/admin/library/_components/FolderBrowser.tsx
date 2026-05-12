@@ -73,7 +73,7 @@ export default function FolderBrowser({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('http://localhost:8082/api/files/roots');
+      const response = await fetch('/api/backend/api/files/roots');
       if (!response.ok) throw new Error('Failed to load drive roots');
       
       const result = await response.json();
@@ -89,7 +89,7 @@ export default function FolderBrowser({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch('http://localhost:8082/api/files/browse', {
+      const response = await fetch('/api/backend/api/files/browse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ path }),

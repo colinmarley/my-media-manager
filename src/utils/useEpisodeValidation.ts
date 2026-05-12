@@ -1,4 +1,4 @@
-import { FBEpisode } from '../types/firebase/FBEpisode.type';
+import { CatalogEpisode } from '../types/catalog/Episode.type';
 import {
   toLegacyError,
   validateNonEmptyArray,
@@ -27,19 +27,19 @@ const useEpisodeValidation = () => {
     return toLegacyError(validateRequiredText(countryOfOrigin, 'Country of Origin'));
   };
 
-  const validateDirectors = (directors: FBEpisode['directors']): string | null => {
+  const validateDirectors = (directors: CatalogEpisode['directors']): string | null => {
     if (directors.length === 0) {
       return 'At least one director is required';
     }
     for (const director of directors) {
-      if (!director.name) {
+      if (!director.fullName) {
         return 'Director name is required';
       }
     }
     return null;
   };
 
-  const validateImageFiles = (imageFiles: FBEpisode['imageFiles']): string | null => {
+  const validateImageFiles = (imageFiles: CatalogEpisode['imageFiles']): string | null => {
     return toLegacyError(validateNonEmptyArray(imageFiles, 'image file'));
   };
 

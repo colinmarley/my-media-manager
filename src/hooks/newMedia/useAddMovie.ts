@@ -163,6 +163,64 @@ const useAddMovie = () => {
     setPlot({value: '', errors: []});
   }
 
+  const validateAllFields = (): boolean => {
+    const titleErrors = validateTitle(title.value);
+    const countriesErrors = validateCountries(countries.value);
+    const directorsErrors = validateDirectors(directors.value);
+    const genresErrors = validateGenres(genres.value);
+    const imageFilesErrors = validateImageFiles(imageFiles.value);
+    const languagesErrors = validateLanguages(languages.value);
+    const letterboxdLinkErrors = validateLetterboxdLink(letterboxdLink.value);
+    const plexLinkErrors = validatePlexLink(plexLink.value);
+    const releaseDateErrors = validateReleaseDate(releaseDate.value);
+    const releasesErrors = validateReleases(releases.value);
+    const runtimeErrors = validateRuntime(runtime.value);
+    const castErrors = validateCast(cast.value);
+    const writersErrors = validateWriters(writers.value);
+    const ratingsErrors = validateRatings(ratings.value);
+    const imdbIdErrors = validateImdbId(imdbId.value);
+    const certificationErrors = validateCertification(certification.value);
+    const plotErrors = validatePlot(plot.value);
+
+    setTitle({ value: title.value, errors: titleErrors });
+    setCountries({ value: countries.value, errors: countriesErrors });
+    setDirectors({ value: directors.value, errors: directorsErrors });
+    setGenres({ value: genres.value, errors: genresErrors });
+    setImageFiles({ value: imageFiles.value, errors: imageFilesErrors });
+    setLanguages({ value: languages.value, errors: languagesErrors });
+    setLetterboxdLink({ value: letterboxdLink.value, errors: letterboxdLinkErrors });
+    setPlexLink({ value: plexLink.value, errors: plexLinkErrors });
+    setReleaseDate({ value: releaseDate.value, errors: releaseDateErrors });
+    setReleases({ value: releases.value, errors: releasesErrors });
+    setRuntime({ value: runtime.value, errors: runtimeErrors });
+    setCast({ value: cast.value, errors: castErrors });
+    setWriters({ value: writers.value, errors: writersErrors });
+    setRatings({ value: ratings.value, errors: ratingsErrors });
+    setImdbId({ value: imdbId.value, errors: imdbIdErrors });
+    setCertification({ value: certification.value, errors: certificationErrors });
+    setPlot({ value: plot.value, errors: plotErrors });
+
+    return [
+      titleErrors,
+      countriesErrors,
+      directorsErrors,
+      genresErrors,
+      imageFilesErrors,
+      languagesErrors,
+      letterboxdLinkErrors,
+      plexLinkErrors,
+      releaseDateErrors,
+      releasesErrors,
+      runtimeErrors,
+      castErrors,
+      writersErrors,
+      ratingsErrors,
+      imdbIdErrors,
+      certificationErrors,
+      plotErrors,
+    ].some((errors) => errors.length > 0);
+  }
+
   return { 
     loading, setLoading,
     error, setError,
@@ -186,6 +244,7 @@ const useAddMovie = () => {
     imdbId, setImdbIdValue,
     certification, setCertificationValue,
     plot, setPlotValue,
+    validateAllFields,
     clearAll,
    };
 };

@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { Avatar, Button, Menu, MenuItem, Typography } from '@mui/material';
+import { Avatar, Button, Menu, MenuItem } from '@mui/material';
 import { deepOrange } from '@mui/material/colors';
-import useAuth from '../../hooks/useAuth';
+import { useRouter } from 'next/navigation';
 import useAuthenticationStore from '../../store/useAuthenticationStore';
 
 const ProfileAccess = () => {
-  const { handleLogout } = useAuth();
-  const { user } = useAuthenticationStore();
+  const { logout } = useAuthenticationStore();
+  const router = useRouter();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
 
   const handleClick = (event: React.MouseEvent<HTMLElement>) => {
@@ -18,23 +18,15 @@ const ProfileAccess = () => {
   };
 
   const handleLogoutClick = async () => {
-    await handleLogout();
+    await logout();
     handleClose();
+    router.push('/login');
   };
-
-  if (!user) {
-    return null;
-  }
-
-  const displayName = user.displayName || user.email;
 
   return (
     <div>
       <Button onClick={handleClick}>
-        <Avatar sx={Styles.avatar}>{displayName?.charAt(0)}</Avatar>
-        <Typography variant="body1" sx={Styles.displayName}>
-          {displayName}
-        </Typography>
+        <Avatar sx={Styles.avatar}>U</Avatar>
       </Button>
       <Menu
         anchorEl={anchorEl}

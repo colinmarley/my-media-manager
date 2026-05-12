@@ -44,7 +44,6 @@ from uuid import uuid4
 from services.filesystem_manager import FileSystemManager
 from services.metadata_extractor import MetadataExtractor
 from services.media_metadata_extractor import MediaMetadataExtractor
-from services.firestore_service import FirestoreService
 from config.settings import settings
 from utils.exceptions import ScanOperationError
 from utils.logging import log_scan_progress, logger
@@ -129,7 +128,7 @@ class LibraryScanner:
         self.executor = ThreadPoolExecutor(max_workers=settings.scan_worker_threads)
         self.running_scans: Dict[str, ScanProgress] = {}  # Active and completed scans
         self.scan_callbacks: Dict[str, Callable] = {}  # Progress callbacks
-        self.firestore_service = FirestoreService(settings.firebase_project_id)
+        self.firestore_service = None  # Migrated to PostgreSQL (Phase 5)
         
     async def start_scan(
         self, 

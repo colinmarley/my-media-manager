@@ -1,16 +1,25 @@
 /**
  * Media Assignment Search Service
- * Handles combined searching from Firebase collections and OMDB API
+ * Handles combined searching from the catalog API and OMDB API
  */
 
-import { collection, query, where, getDocs, orderBy, limit, startAt, endAt, addDoc } from 'firebase/firestore';
-import { db } from '../../../firebaseConfig';
-import { Movie } from '@/types/collections/Movie.type';
-import { Series } from '@/types/collections/Series.type';
+import { api } from '../api/apiClient';
 import { OmdbSearchResponse, OmdbResponseFull } from '@/types/OmdbResponse.type';
-import { searchByText, retrieveMediaDataById } from '../omdb/OmdbService';
-import { prepareMovieData, prepareSeriesData } from '@/utils/titleUtils';
-import SeriesDataService from './SeriesDataService';
+import {
+  searchByText,
+  retrieveMediaDataById,
+  retrieveMovieDataByTitle,
+  retrieveShowDataByTitle,
+} from '../omdb/OmdbService';
+import TmdbService from '../tmdb/TmdbService';
+
+const generateId = (prefix: string): string => {
+  const maybeCrypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (maybeCrypto && typeof maybeCrypto.randomUUID === 'function') {
+    return maybeCrypto.randomUUID();
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+};
 
 export interface SearchResult {
   id: string;
@@ -19,80 +28,89 @@ export interface SearchResult {
   type: 'movie' | 'series';
   poster: string;
   imdbId: string;
-  source: 'firebase' | 'omdb';
-  data: Movie | Series | OmdbSearchResponse;
+  source: 'catalog' | 'omdb' | 'tmdb';
+  data: Record<string, unknown> | OmdbSearchResponse;
+}
+
+export interface FolderFileStats {
+  fileCount: number;
+  totalFileSize: number;
 }
 
 class MediaAssignmentSearchService {
   /**
-   * Search Firebase collections as user types (autocomplete)
-   * Fast, local search for existing media
+   * Search catalog API as user types (autocomplete)
    */
-  async searchFirebase(
+  async searchCatalog(
     searchQuery: string,
     mediaType: 'movie' | 'series'
   ): Promise<SearchResult[]> {
-    if (!searchQuery || searchQuery.length < 2) {
+    const normalizedQuery = searchQuery.trim().toLowerCase();
+    if (!normalizedQuery || normalizedQuery.length < 2) {
       return [];
     }
 
     const collectionName = mediaType === 'movie' ? 'movies' : 'series';
-    const searchLower = searchQuery.toLowerCase();
 
     try {
-      // Use titleLower field for efficient case-insensitive prefix search
-      const q = query(
-        collection(db, collectionName),
-        orderBy('titleLower'),
-        startAt(searchLower),
-        endAt(searchLower + '\uf8ff'),
-        limit(10)
-      );
+      const all = await api.get<Record<string, unknown>[]>(`/api/catalog/${collectionName}`);
+      return all
+        .map((item) => {
+          const rawTitle = (item.title as string) || '';
+          const title = rawTitle.toLowerCase();
+          const words = title.split(/[^a-z0-9]+/).filter(Boolean);
 
-      const querySnapshot = await getDocs(q);
-      const results: SearchResult[] = querySnapshot.docs.map(doc => {
-        const data = doc.data();
-        return {
-          id: doc.id,
-          title: data.title,
-          year: this.extractYear(data),
+          let matchPriority = 99;
+          if (title === normalizedQuery) {
+            matchPriority = 0;
+          } else if (words.includes(normalizedQuery)) {
+            matchPriority = 1;
+          } else if (title.startsWith(normalizedQuery)) {
+            matchPriority = 2;
+          } else if (title.includes(normalizedQuery)) {
+            matchPriority = 3;
+          }
+
+          return { item, matchPriority, titleLength: rawTitle.length };
+        })
+        .filter(({ matchPriority }) => matchPriority < 4)
+        .sort((a, b) => a.matchPriority - b.matchPriority || a.titleLength - b.titleLength)
+        .map(({ item }) => ({
+          id: item.id as string,
+          title: item.title as string,
+          year: this.extractYear(item),
           type: mediaType,
-          poster: this.extractPoster(data),
-          imdbId: data.externalIds?.imdbId || '',
-          source: 'firebase' as const,
-          data: { id: doc.id, ...data } as Movie | Series
-        };
-      });
-
-      return results;
+          poster: this.extractPoster(item),
+          imdbId: ((item.externalIds as Record<string, string>)?.imdbId) || (item.imdbId as string) || '',
+          source: 'catalog' as const,
+          data: item,
+        }));
     } catch (error) {
-      console.error('Firebase search failed:', error);
+      console.error('Catalog search failed:', error);
       return [];
     }
   }
 
   /**
    * Search OMDB API when user clicks search button
-   * Returns external results not yet in Firebase
    */
   async searchOMDB(
     searchQuery: string,
     mediaType: 'movie' | 'series'
   ): Promise<SearchResult[]> {
-    if (!searchQuery) {
+    const normalizedQuery = searchQuery.trim();
+    if (!normalizedQuery) {
       return [];
     }
 
     try {
-      const results = await searchByText(searchQuery);
-
-      // Filter by type and convert to SearchResult format
-      const filtered = results
-        .filter(result => {
+      const results = await searchByText(normalizedQuery);
+      return results
+        .filter((result) => {
           const resultType = result.Type === 'movie' ? 'movie' : 'series';
           return resultType === mediaType;
         })
-        .map(result => ({
+        .map((result) => ({
           id: result.imdbID,
           title: result.Title,
           year: result.Year,
@@ -100,40 +118,127 @@ class MediaAssignmentSearchService {
           poster: result.Poster,
           imdbId: result.imdbID,
           source: 'omdb' as const,
-          data: result
+          data: result,
         }));
-
-      return filtered;
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'OMDB search failed';
+      const shouldTryExactLookup =
+        normalizedQuery.length <= 3 && /too many results|no omdb search results found/i.test(errorMessage);
+
+      if (shouldTryExactLookup) {
+        try {
+          const exactResult = mediaType === 'movie'
+            ? await retrieveMovieDataByTitle(normalizedQuery)
+            : await retrieveShowDataByTitle(normalizedQuery);
+
+          return [{
+            id: exactResult.imdbID,
+            title: exactResult.Title,
+            year: exactResult.Year,
+            type: mediaType,
+            poster: exactResult.Poster,
+            imdbId: exactResult.imdbID,
+            source: 'omdb' as const,
+            data: exactResult,
+          }];
+        } catch (exactError) {
+          console.error('OMDB exact title lookup failed:', exactError);
+        }
+      }
+
       console.error('OMDB search failed:', error);
       return [];
     }
   }
 
   /**
-   * Combined search: Firebase first, then OMDB
-   * Returns deduplicated results from both sources
+   * Combined search: catalog first, then OMDB; deduplicated by imdbId
    */
   async combinedSearch(
     searchQuery: string,
     mediaType: 'movie' | 'series'
   ): Promise<SearchResult[]> {
-    const [firebaseResults, omdbResults] = await Promise.all([
-      this.searchFirebase(searchQuery, mediaType),
-      this.searchOMDB(searchQuery, mediaType)
+    const [catalogResults, omdbResults] = await Promise.all([
+      this.searchCatalog(searchQuery, mediaType),
+      this.searchOMDB(searchQuery, mediaType),
     ]);
 
-    // Deduplicate by IMDb ID (prefer Firebase results)
-    const firebaseImdbIds = new Set(
-      firebaseResults.map(r => r.imdbId).filter(Boolean)
+    const catalogImdbIds = new Set(catalogResults.map((r) => r.imdbId).filter(Boolean));
+    const uniqueOmdbResults = omdbResults.filter((r) => !catalogImdbIds.has(r.imdbId));
+
+    return [...catalogResults, ...uniqueOmdbResults];
+  }
+
+  /**
+   * Search TMDB API by title
+   */
+  async searchTMDB(
+    searchQuery: string,
+    mediaType: 'movie' | 'series'
+  ): Promise<SearchResult[]> {
+    const normalizedQuery = searchQuery.trim();
+    if (!normalizedQuery) return [];
+
+    try {
+      const payload = mediaType === 'movie'
+        ? await TmdbService.searchMovies(normalizedQuery)
+        : await TmdbService.searchTV(normalizedQuery);
+
+      const results: Array<Record<string, unknown>> = Array.isArray(payload?.results) ? payload.results : [];
+
+      return results.map((item) => {
+        const tmdbId = String(item.id ?? '');
+        const title = mediaType === 'movie'
+          ? String(item.title || item.original_title || '')
+          : String(item.name || item.original_name || '');
+        const dateStr = mediaType === 'movie'
+          ? String(item.release_date || '')
+          : String(item.first_air_date || '');
+        const year = dateStr.slice(0, 4) || 'N/A';
+        const posterPath = typeof item.poster_path === 'string' ? item.poster_path : '';
+        const poster = posterPath ? `https://image.tmdb.org/t/p/w185${posterPath}` : '';
+
+        return {
+          id: `tmdb-${tmdbId}`,
+          title,
+          year,
+          type: mediaType,
+          poster,
+          imdbId: '',
+          source: 'tmdb' as const,
+          data: item,
+        };
+      }).filter((r) => r.title);
+    } catch (error) {
+      console.error('TMDB search failed:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Combined search: catalog first, then TMDB; deduplicated by tmdb id
+   */
+  async combinedSearchTmdb(
+    searchQuery: string,
+    mediaType: 'movie' | 'series'
+  ): Promise<SearchResult[]> {
+    const [catalogResults, tmdbResults] = await Promise.all([
+      this.searchCatalog(searchQuery, mediaType),
+      this.searchTMDB(searchQuery, mediaType),
+    ]);
+
+    const catalogTmdbIds = new Set(
+      catalogResults
+        .map((r) => {
+          const data = r.data as Record<string, unknown>;
+          const extIds = data?.externalIds as Record<string, unknown> | undefined;
+          return extIds?.tmdbId ? `tmdb-${extIds.tmdbId}` : null;
+        })
+        .filter(Boolean)
     );
 
-    const uniqueOmdbResults = omdbResults.filter(
-      r => !firebaseImdbIds.has(r.imdbId)
-    );
-
-    // Firebase results first, then OMDB results
-    return [...firebaseResults, ...uniqueOmdbResults];
+    const uniqueTmdbResults = tmdbResults.filter((r) => !catalogTmdbIds.has(r.id));
+    return [...catalogResults, ...uniqueTmdbResults];
   }
 
   /**
@@ -143,161 +248,167 @@ class MediaAssignmentSearchService {
     return retrieveMediaDataById(imdbId);
   }
 
-  /**
-   * Save OMDB result to Firebase as new movie
-   */
-  async saveMovieToFirebase(omdbData: OmdbResponseFull): Promise<string> {
-    try {
-      // Convert OMDB data to Movie format
-      const movieData = this.convertOMDBToMovie(omdbData);
-      
-      // Add titleLower field
-      const preparedData = prepareMovieData(movieData);
+  async ensureCatalogEntry(
+    result: SearchResult,
+    mediaType: 'movie' | 'series',
+    folderPath?: string,
+    fileStats?: FolderFileStats,
+    movieMediaType: 'movie' | 'documentary' | 'live_performance' = 'movie',
+  ): Promise<{ id: string; title: string }> {
+    const normalizedMediaType = mediaType === 'series' ? 'series' : 'movie';
 
-      // Save to Firebase
-      const docRef = await addDoc(collection(db, 'movies'), preparedData);
-      
-      return docRef.id;
-    } catch (error) {
-      console.error('Error saving movie to Firebase:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Save OMDB result to Firebase as new series
-   * Also creates seasons and episodes from TMDB data
-   */
-  async saveSeriesToFirebase(omdbData: OmdbResponseFull): Promise<string> {
-    try {
-      // Convert OMDB data to Series format
-      const seriesData = this.convertOMDBToSeries(omdbData);
-      
-      // Add titleLower field
-      const preparedData = prepareSeriesData(seriesData);
-
-      // Save to Firebase
-      const docRef = await addDoc(collection(db, 'series'), preparedData);
-      const seriesId = docRef.id;
-      
-      console.log(`Series saved with ID: ${seriesId}`);
-
-      // Create seasons and episodes from TMDB in background
-      // Don't wait for this to complete to avoid blocking the UI
-      SeriesDataService.createSeasonsAndEpisodes(
-        seriesId,
-        omdbData.Title,
-        omdbData.imdbID
-      ).then(result => {
-        console.log(`Background task complete: ${result.seasonsCreated} seasons, ${result.episodesCreated} episodes created`);
-      }).catch(error => {
-        console.error('Failed to create seasons/episodes:', error);
-        // Don't throw - series is already saved successfully
-      });
-      
-      return seriesId;
-    } catch (error) {
-      console.error('Error saving series to Firebase:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Convert OMDB response to Movie type
-   * Note: Creates minimal valid Movie object. Full data should be enriched later.
-   */
-  private convertOMDBToMovie(omdbData: OmdbResponseFull): Omit<Movie, 'id' | 'titleLower'> {
-    return {
-      title: omdbData.Title,
-      countries: omdbData.Country ? omdbData.Country.split(', ') : [],
-      directors: [], // Will need to be enriched with proper directorId and title
-      genres: omdbData.Genre ? omdbData.Genre.split(', ') : [],
-      imageFiles: [], // ImageFile structure is different from OMDB poster
-      languages: omdbData.Language ? omdbData.Language.split(', ') : [],
-      releaseDate: omdbData.Released || '',
-      releases: [],
-      runtime: omdbData.Runtime || '',
-      cast: [], // Will need proper actorId and characters array
-      writers: omdbData.Writer ? omdbData.Writer.split(', ') : [],
-      omdbData: omdbData,
-      externalIds: {
-        imdbId: omdbData.imdbID
-      },
-      contentRatings: omdbData.Rated ? 
-        [{
-          country: 'US',
-          rating: omdbData.Rated,
-          ratingSystem: 'MPAA'
-        }] : [],
-      theatricalRelease: omdbData.Released ? {
-        date: new Date(omdbData.Released),
-        runtime: parseInt(omdbData.Runtime) || 0,
-        runtimeFormatted: omdbData.Runtime
-      } : undefined
-    };
-  }
-
-  /**
-   * Convert OMDB response to Series type
-   * Note: Creates minimal valid Series object. Full data should be enriched later.
-   */
-  private convertOMDBToSeries(omdbData: OmdbResponseFull): Omit<Series, 'id' | 'titleLower'> {
-    return {
-      title: omdbData.Title,
-      countries: omdbData.Country ? omdbData.Country.split(', ') : [],
-      directors: [], // Will need proper directorId and title
-      imageFiles: [], // ImageFile structure is different
-      runningYears: omdbData.Year ? omdbData.Year.split('–').map(y => y.trim()) : [],
-      releases: [],
-      cast: [], // Will need proper actorId and characters array
-      writers: omdbData.Writer ? omdbData.Writer.split(', ') : [],
-      seasons: [],
-      genres: omdbData.Genre ? omdbData.Genre.split(', ') : [],
-      languages: omdbData.Language ? omdbData.Language.split(', ') : [],
-      omdbData: omdbData,
-      seriesSummary: {
-        totalSeasons: omdbData.TotalSeasons ? parseInt(omdbData.TotalSeasons) : 0,
-        totalEpisodes: 0,
-        totalRuntime: 0,
-        firstAired: omdbData.Released ? new Date(omdbData.Released) : new Date(),
-        status: 'returning'
-      },
-      externalIds: {
-        imdbId: omdbData.imdbID
+    if (result.imdbId) {
+      try {
+        const omdbFull = await this.getOMDBFullData(result.imdbId);
+        const id = normalizedMediaType === 'series'
+          ? await this.saveSeriesToCatalog(omdbFull, folderPath, fileStats)
+          : await this.saveMovieToCatalog(omdbFull, folderPath, fileStats, movieMediaType);
+        return { id, title: omdbFull.Title };
+      } catch (error) {
+        console.warn('Falling back to existing catalog entry without OMDB hydration:', error);
       }
-    };
+    }
+
+    if (result.source === 'catalog') {
+      return { id: result.id, title: result.title };
+    }
+
+    throw new Error('Could not resolve a fully hydrated catalog entry for the selected title.');
   }
 
   /**
-   * Extract year from Movie or Series data
+   * Save OMDB movie result to the catalog API
    */
-  private extractYear(data: any): string {
-    if (data.releaseDate) {
-      // Movie: releaseDate format "DayAsNumber-Month-Year"
-      const parts = data.releaseDate.split('-');
-      return parts[2] || '';
+  async saveMovieToCatalog(
+    omdbData: OmdbResponseFull,
+    folderPath?: string,
+    fileStats?: FolderFileStats,
+    movieMediaType: 'movie' | 'documentary' | 'live_performance' = 'movie',
+  ): Promise<string> {
+    const imdbId = omdbData.imdbID;
+    const existing = imdbId
+      ? await api.get<Record<string, unknown> | null>(`/api/catalog/movies/lookup?imdbId=${encodeURIComponent(imdbId)}`)
+      : null;
+    const existingId = existing && typeof existing.id === 'string' ? existing.id : null;
+    const id = existingId ?? generateId('movie');
+
+    const doc: Record<string, unknown> = {
+      ...(existing ?? {}),
+      id,
+      mediaType: movieMediaType,
+      title: omdbData.Title,
+      titleLower: omdbData.Title.toLowerCase(),
+      releaseDate: omdbData.Released || omdbData.Year || '',
+      runtime: omdbData.Runtime || '',
+      genres: omdbData.Genre ? omdbData.Genre.split(', ') : [],
+      countries: omdbData.Country ? omdbData.Country.split(', ') : [],
+      languages: omdbData.Language ? omdbData.Language.split(', ') : [],
+      omdbData,
+      externalIds: { imdbId: omdbData.imdbID },
+      imageFiles: omdbData.Poster && omdbData.Poster !== 'N/A'
+        ? [{ fileName: omdbData.Poster, format: 'jpg', fileSize: 0, resolution: '' }]
+        : ((existing?.imageFiles as unknown[]) || []),
+    };
+    if (folderPath) {
+      doc.folderPath = folderPath;
+      doc.jellyfinInfo = {
+        ...((existing?.jellyfinInfo as Record<string, unknown> | undefined) || {}),
+        folderPath,
+      };
+      doc.libraryStatus = 'available';
     }
-    if (data.runningYears && data.runningYears.length > 0) {
-      // Series: runningYears array
-      return data.runningYears[0];
+    if (fileStats) {
+      doc.fileCount = fileStats.fileCount;
+      doc.assignmentSummary = {
+        totalFiles: fileStats.fileCount,
+        assignedFiles: fileStats.fileCount,
+        unassignedFiles: 0,
+        totalFileSize: fileStats.totalFileSize,
+      };
     }
-    if (data.theatricalRelease?.date) {
-      return new Date(data.theatricalRelease.date).getFullYear().toString();
+    await api.put(`/api/catalog/movies/${id}`, doc);
+    return id;
+  }
+
+  /**
+   * Save OMDB series result to the catalog API
+   */
+  async saveSeriesToCatalog(
+    omdbData: OmdbResponseFull,
+    folderPath?: string,
+    fileStats?: FolderFileStats,
+  ): Promise<string> {
+    const imdbId = omdbData.imdbID;
+    const existing = imdbId
+      ? await api.get<Record<string, unknown> | null>(`/api/catalog/series/lookup?imdbId=${encodeURIComponent(imdbId)}`)
+      : null;
+    const existingId = existing && typeof existing.id === 'string' ? existing.id : null;
+    const id = existingId ?? generateId('series');
+
+    const doc: Record<string, unknown> = {
+      ...(existing ?? {}),
+      id,
+      mediaType: 'series',
+      title: omdbData.Title,
+      titleLower: omdbData.Title.toLowerCase(),
+      genres: omdbData.Genre ? omdbData.Genre.split(', ') : [],
+      countries: omdbData.Country ? omdbData.Country.split(', ') : [],
+      languages: omdbData.Language ? omdbData.Language.split(', ') : [],
+      runningDates: omdbData.Year || '',
+      seasons: Array.isArray((existing as Record<string, unknown> | null)?.seasons)
+        ? ((existing as Record<string, unknown>).seasons as unknown[])
+        : [],
+      omdbData,
+      externalIds: { imdbId: omdbData.imdbID },
+      imageFiles: omdbData.Poster && omdbData.Poster !== 'N/A'
+        ? [{ fileName: omdbData.Poster, format: 'jpg', fileSize: 0, resolution: '' }]
+        : ((existing?.imageFiles as unknown[]) || []),
+    };
+    if (folderPath) {
+      doc.folderPath = folderPath;
+      doc.jellyfinInfo = {
+        ...((existing?.jellyfinInfo as Record<string, unknown> | undefined) || {}),
+        folderPath,
+      };
+      doc.libraryStatus = 'available';
+    }
+    if (fileStats) {
+      doc.fileCount = fileStats.fileCount;
+      doc.assignmentSummary = {
+        totalFiles: fileStats.fileCount,
+        assignedFiles: fileStats.fileCount,
+        unassignedFiles: 0,
+        totalFileSize: fileStats.totalFileSize,
+      };
+    }
+    await api.put(`/api/catalog/series/${id}`, doc);
+    return id;
+  }
+
+  private extractYear(data: Record<string, unknown>): string {
+    const releaseDate = data.releaseDate as string | undefined;
+    if (releaseDate) {
+      const match = releaseDate.match(/(19|20)\d{2}/);
+      if (match) {
+        return match[0];
+      }
+    }
+    const runningYears = data.runningYears as string[] | undefined;
+    if (runningYears?.length) {
+      const match = runningYears[0]?.match(/(19|20)\d{2}/);
+      return match ? match[0] : runningYears[0];
+    }
+    const omdb = data.omdbData as Record<string, string> | undefined;
+    if (omdb?.Year) {
+      const match = omdb.Year.match(/(19|20)\d{2}/);
+      return match ? match[0] : omdb.Year;
     }
     return '';
   }
 
-  /**
-   * Extract poster URL from Movie or Series data
-   */
-  private extractPoster(data: any): string {
-    if (data.imageFiles && data.imageFiles.length > 0) {
-      const primary = data.imageFiles.find((img: any) => img.isPrimary);
-      return primary?.url || data.imageFiles[0]?.url || '';
-    }
-    if (data.omdbData?.Poster && data.omdbData.Poster !== 'N/A') {
-      return data.omdbData.Poster;
-    }
+  private extractPoster(data: Record<string, unknown>): string {
+    const omdb = data.omdbData as Record<string, string> | undefined;
+    if (omdb?.Poster && omdb.Poster !== 'N/A') return omdb.Poster;
     return '';
   }
 }

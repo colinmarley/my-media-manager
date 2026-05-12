@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
-import FirestoreService from '@/service/firebase/FirestoreService';
+import CatalogService from '@/service/catalog/CatalogService';
 import { DirectorInitialEntry } from '@/types/collections/Director.type';
 import { TextField, Button, Box, Modal, Typography } from '@mui/material';
+import useFormStore from '@/store/useFormStore';
 
 interface AddDirectorModuleProps {
   onClose: () => void;
 }
 
 const AddDirectorModule: React.FC<AddDirectorModuleProps> = ({ onClose }) => {
+  const { refreshDirectorOptions } = useFormStore();
   const [formData, setFormData] = useState<DirectorInitialEntry>({
     fullName: '',
     movieIds: [],
@@ -24,9 +26,9 @@ const AddDirectorModule: React.FC<AddDirectorModuleProps> = ({ onClose }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const firestoreService = new FirestoreService('directors');
+    const firestoreService = new CatalogService('directors');
     await firestoreService.addDocument(formData);
-    alert('Director added successfully!');
+    await refreshDirectorOptions();
     onClose();
   };
 

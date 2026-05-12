@@ -151,6 +151,101 @@ Verifies existence of multiple file paths at once.
 
 ---
 
+## Destination Folder Operations (`/api/files/dest-folder`)
+
+### Destination Folder Info
+```http
+GET /api/files/dest-folder
+```
+Returns destination base path and configured media category folders.
+
+### Browse Destination Folder
+```http
+POST /api/files/dest-folder/browse
+Content-Type: application/json
+
+{
+  "path": "/ark/media/jellyfin/movies"
+}
+```
+Returns files and directories for a destination path. Path is restricted to configured destination base.
+
+### Stream Destination File (Video Preview)
+```http
+GET /api/files/dest-folder/stream?path=/ark/media/jellyfin/movies/Title%20(2024)%20[imdbid-tt1234567]/Title.mkv
+Range: bytes=0-
+```
+Streams destination file content with byte-range support for browser seeking.
+
+### Read NFO in Destination Folder
+```http
+POST /api/files/dest-folder/nfo
+Content-Type: application/json
+
+{
+  "folderPath": "/ark/media/jellyfin/movies/Title (2024) [imdbid-tt1234567]"
+}
+```
+Reads and parses first `.nfo` file found in the specified folder.
+
+### Reassign Folder
+```http
+POST /api/files/dest-folder/reassign-folder
+Content-Type: application/json
+
+{
+  "currentFolderPath": "/ark/media/jellyfin/movies/Old Title (2021) [imdbid-tt1111111]",
+  "newTitle": "New Title",
+  "newYear": "2024",
+  "newImdbId": "tt2222222",
+  "allowCustomName": false,
+  "mediaType": "movie"
+}
+```
+
+Notes:
+
+- `mediaType`: `movie | series | documentary | live_performance`
+- `allowCustomName: true` allows save without IMDb id; skips strict IMDb validation and NFO overwrite
+
+### Reassign File
+```http
+POST /api/files/dest-folder/reassign-file
+Content-Type: application/json
+
+{
+  "filePath": "/ark/media/jellyfin/movies/_NeedsReview/clip.mkv",
+  "newTitle": "Custom Name",
+  "newYear": "2023",
+  "newImdbId": null,
+  "allowCustomName": true,
+  "mediaType": "documentary",
+  "fileCategory": "main_feature"
+}
+```
+
+Notes:
+
+- `fileCategory`: `main_feature | special_feature | unknown | episode`
+- In custom-name mode, IMDb id is optional and NFO write/IMDb validation are skipped for main feature moves
+
+### Assign Episode File
+```http
+POST /api/files/dest-folder/assign-episode
+Content-Type: application/json
+
+{
+  "filePath": "/ark/media/jellyfin/TV Shows/Some Show/temp.mkv",
+  "seriesFolderPath": "/ark/media/jellyfin/TV Shows/Some Show (2020) [imdbid-tt3333333]",
+  "seriesTitle": "Some Show",
+  "seasonNumber": 1,
+  "episodeNumber": 2
+}
+```
+Moves/renames file to season/episode Jellyfin naming.
+
+---
+
 ## Library Operations (`/api/library`)
 
 ### Start Library Scan

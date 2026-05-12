@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { OmdbResponseFull, OmdbSearchResponse } from '../types/OmdbResponse.type';
-import FirestoreService from '../service/firebase/FirestoreService';
+import CatalogService from '../service/catalog/CatalogService';
 
-const allMediaService = new FirestoreService('AllMedia');
-const myMediaService = new FirestoreService('MyMedia');
+const allMediaService = new CatalogService('AllMedia');
+const myMediaService = new CatalogService('MyMedia');
 
 const useCreateOmdbResponseFullDocument = () => {
   const [loading, setLoading] = useState<boolean>(false);

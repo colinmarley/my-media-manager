@@ -15,7 +15,7 @@ const addDocumentMock = vi.fn().mockResolvedValue(undefined);
 const getDocumentsByFieldMock = vi.fn().mockResolvedValue([]);
 const addDiscMock = vi.fn().mockResolvedValue(undefined);
 
-vi.mock('../../src/service/firebase/FirestoreService', () => ({
+vi.mock('../../src/service/catalog/CatalogService', () => ({
   default: vi.fn().mockImplementation(() => ({
     addDocument: addDocumentMock,
     getDocumentsByField: getDocumentsByFieldMock,

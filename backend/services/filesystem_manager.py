@@ -75,12 +75,32 @@ class FileSystemManager:
         return checks
     
     def is_file_locked(self, path: str) -> bool:
-        """Check if file is currently locked/in use"""
+        """Check if file is currently locked/in use.
+
+        On Windows and SMB shares, opening a file in append mode raises
+        PermissionError even for files that are perfectly readable (e.g. files
+        opened for reading by another process).  To avoid falsely treating those
+        as locked we attempt a read-only open first and only fall back to the
+        append-mode check on POSIX systems where the semantics are reliable.
+        """
         if not os.path.exists(path):
             return False
-        
+
+        import platform
+        if platform.system() == "Windows":
+            # On Windows use the read-only open; a PermissionError here means
+            # another process has the file open exclusively.
+            try:
+                with open(path, 'rb'):
+                    pass
+                return False
+            except PermissionError:
+                return True
+            except (IOError, OSError):
+                return False
+
         try:
-            # Try to open file in append mode
+            # POSIX: the append-mode trick reliably detects exclusive locks.
             with open(path, 'a'):
                 pass
             return False
@@ -223,7 +243,7 @@ class FileSystemManager:
             raise FileOperationError(f"Move failed: {str(e)}")
     
     def delete_file(self, file_path: str, use_trash: bool = True) -> Dict[str, Any]:
-        """Delete a file safely"""
+        """Delete a file or directory safely."""
         try:
             # Validate security
             if not self.validate_path_security(file_path):
@@ -232,20 +252,26 @@ class FileSystemManager:
             # Check if file exists
             if not os.path.exists(file_path):
                 raise FileOperationError(f"File does not exist: {file_path}")
+
+            is_directory = os.path.isdir(file_path)
             
             # Perform deletion
             if use_trash and settings.use_trash_for_deletes:
                 send2trash(file_path)
                 delete_method = 'trash'
             else:
-                os.remove(file_path)
+                if is_directory:
+                    shutil.rmtree(file_path)
+                else:
+                    os.remove(file_path)
                 delete_method = 'permanent'
             
             result = {
                 'success': True,
                 'deleted_path': file_path,
                 'method': delete_method,
-                'operation': 'delete'
+                'operation': 'delete',
+                'type': 'directory' if is_directory else 'file'
             }
             
             log_file_operation('delete', file_path, True, method=delete_method)

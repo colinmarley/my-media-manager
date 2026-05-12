@@ -29,9 +29,8 @@ class MediaAssignmentService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = process.env.NODE_ENV === 'production'
-      ? 'https://your-api-domain.com/api'
-      : 'http://localhost:8082/api';
+    // Always route through Next.js API proxy to avoid CORS and environment-specific host issues.
+    this.baseUrl = '/api/backend';
   }
 
   /**

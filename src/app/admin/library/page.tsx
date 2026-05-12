@@ -51,9 +51,7 @@ import {
 } from '@mui/icons-material';
 import { LibraryPath, LibrarySettings, DEFAULT_NAMING_CONVENTIONS } from '../../../types/library/LibraryTypes';
 import { DEFAULT_LIBRARY_SETTINGS } from '../../../service/library/LibraryScanner';
-import { firestoreScanService, ScanResultData } from '../../../service/library/FirestoreScanService';
-import { firebaseLibraryService } from '../../../service/library/FirebaseLibraryService';
-import { useFirebaseLibraryPaths } from '../../../hooks/library/useFirebaseLibraryPaths';
+import { useLibraryPaths } from '../../../hooks/library/useLibraryPaths';
 import useAuthenticationStore from '../../../store/useAuthenticationStore';
 import {
   JELLYFIN_ROOT_STORAGE_KEY,
@@ -81,7 +79,8 @@ function TabPanel(props: TabPanelProps) {
 }
 
 const LibraryManagementPage: React.FC = () => {
-  const { user } = useAuthenticationStore();
+  const { authenticated } = useAuthenticationStore();
+
   const {
     libraryPaths,
     selectedPath,
@@ -93,7 +92,7 @@ const LibraryManagementPage: React.FC = () => {
     selectLibraryPath,
     clearError,
     getLibraryStatistics
-  } = useFirebaseLibraryPaths(user);
+  } = useLibraryPaths();
 
   const [currentTab, setCurrentTab] = useState(0);
   const [settings, setSettings] = useState<LibrarySettings>(DEFAULT_LIBRARY_SETTINGS);
@@ -137,20 +136,18 @@ const LibraryManagementPage: React.FC = () => {
     }
   }, []);
 
-  // Load scan results when user changes
+  // Load scan results when tab changes
   useEffect(() => {
-    if (user && currentTab === 1) { // Only load when on Scan Results tab
+    if (currentTab === 1) {
       loadScanResults();
     }
-  }, [user, currentTab]);
+  }, [currentTab]);
 
   const loadScanResults = async () => {
-    if (!user) return;
-    
     try {
       setLoadingScanResults(true);
-      const results = await firebaseLibraryService.getUserScanResults(user);
-      setScanResults(results);
+      // Scan results are managed by the backend; show empty unless a scan just ran
+      setScanResults([]);
     } catch (err) {
       console.error('Error loading scan results:', err);
     } finally {
@@ -180,7 +177,7 @@ const LibraryManagementPage: React.FC = () => {
   };
 
   const handleStartScan = async (path: LibraryPath) => {
-    if (!user) {
+    if (!authenticated) {
       alert('You must be logged in to start a scan');
       return;
     }
@@ -191,15 +188,7 @@ const LibraryManagementPage: React.FC = () => {
     setShowDuplicateReport(false);
     
     try {
-      // Fetch existing files and directories from Firebase before scanning
-      const [existingFiles, existingDirectories] = await Promise.all([
-        firebaseLibraryService.getUserExistingFiles(user),
-        firebaseLibraryService.getUserExistingDirectories(user)
-      ]);
-
-      console.log(`Found ${existingFiles.length} existing files and ${existingDirectories.length} existing directories`);
-
-      // Start the actual backend scan with existing data
+      // Start the backend scan
       const response = await fetch('http://localhost:8082/api/library/scan', {
         method: 'POST',
         headers: {
@@ -208,10 +197,9 @@ const LibraryManagementPage: React.FC = () => {
         body: JSON.stringify({
           libraryPath: path.rootPath,
           extractMetadata: settings.extractMetadata || false,
-          checkDuplicates: true, // Enable duplicate detection
-          userId: user?.uid, // Pass user ID for existing data comparison
-          existingFiles: existingFiles,
-          existingDirectories: existingDirectories
+          checkDuplicates: true,
+          existingFiles: [],
+          existingDirectories: []
         }),
       });
 
@@ -258,16 +246,13 @@ const LibraryManagementPage: React.FC = () => {
                     const resultsResponse = await fetch(`http://localhost:8082/api/library/scan/results/${currentScanId}`);
                     if (resultsResponse.ok) {
                       const resultsData = await resultsResponse.json();
-                      const scanResults: ScanResultData = resultsData.data;
+                      const scanResults = resultsData.data;
                       
                       // Check for duplicate report
-                      if (scanResults.duplicateReport && scanResults.duplicateReport.duplicates && scanResults.duplicateReport.duplicates.length > 0) {
+                      if (scanResults.duplicateReport?.duplicates?.length > 0) {
                         setDuplicateReport(scanResults.duplicateReport);
                         setShowDuplicateReport(true);
                       }
-                      
-                      // Save results to Firestore (only new/updated items will be saved)
-                      await firestoreScanService.saveScanResults(user, scanResults, path.rootPath);
                       
                       // Clean up scan data from backend memory
                       try {
@@ -280,19 +265,17 @@ const LibraryManagementPage: React.FC = () => {
                       
                       setScanStatus('Completed');
                       const duplicateCount = scanResults.duplicateReport?.duplicates?.length || 0;
-                      console.log(`Scan completed and saved: ${scanResults.totalFiles} files, ${scanResults.totalDirectories} directories${duplicateCount > 0 ? `, ${duplicateCount} duplicates detected` : ''}`);
+                      console.log(`Scan completed: ${scanResults.totalFiles} files, ${scanResults.totalDirectories} directories${duplicateCount > 0 ? `, ${duplicateCount} duplicates detected` : ''}`);
                     } else {
                       throw new Error('Failed to fetch scan results');
                     }
                   } catch (saveError) {
-                    console.error('Error saving scan results:', saveError);
+                    console.error('Error processing scan results:', saveError);
                     setScanStatus('Error saving results');
-                    await firestoreScanService.saveScanError(user, currentScanId, path.rootPath, String(saveError));
                   }
                 } else {
                   setScanStatus('Error');
                   console.error('Scan failed:', scanData.errors);
-                  await firestoreScanService.saveScanError(user, currentScanId, path.rootPath, JSON.stringify(scanData.errors));
                 }
                 
                 // Clean up
@@ -320,7 +303,7 @@ const LibraryManagementPage: React.FC = () => {
       setScanStatus('');
       setScanId(null);
       // You might want to show an error message to the user here
-      alert(`Failed to start scan: ${error instanceof Error ? error.message : 'Unknown error'}. ${!user ? 'Please ensure you are logged in.' : ''}`);
+      alert(`Failed to start scan: ${error instanceof Error ? error.message : 'Unknown error'}. ${!authenticated ? 'Please ensure you are logged in.' : ''}`);
     }
   };
 
@@ -373,7 +356,7 @@ const LibraryManagementPage: React.FC = () => {
         Media Library Management
       </Typography>
 
-      {!user && (
+      {!authenticated && (
         <Alert severity="warning" sx={{ mb: 3 }}>
           Please log in to manage your library paths and access scan results.
         </Alert>
@@ -548,7 +531,7 @@ const LibraryManagementPage: React.FC = () => {
             variant="outlined"
             startIcon={<RefreshIcon />}
             onClick={loadScanResults}
-            disabled={loadingScanResults || !user}
+            disabled={loadingScanResults}
           >
             Refresh
           </Button>
@@ -556,7 +539,7 @@ const LibraryManagementPage: React.FC = () => {
         
         <Card>
           <CardContent>
-            {!user ? (
+            {!authenticated ? (
               <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
                 Please log in to view scan results.
               </Typography>
@@ -624,7 +607,7 @@ const LibraryManagementPage: React.FC = () => {
 
         <LibraryMaintenancePanel
           libraryPaths={libraryPaths}
-          disabled={!user}
+          disabled={!authenticated}
         />
       </TabPanel>
 
@@ -795,7 +778,7 @@ const LibraryManagementPage: React.FC = () => {
             label="Global Jellyfin Root Path"
             fullWidth
             variant="outlined"
-            placeholder="/mnt/beelink-media"
+            placeholder="/ark/media/jellyfin"
             value={jellyfinRootPath}
             onChange={(e) => setJellyfinRootPath(e.target.value)}
             InputProps={{

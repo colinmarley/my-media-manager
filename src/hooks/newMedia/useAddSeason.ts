@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { FBSeason, Episode } from '../../types/firebase/FBSeason.type';
-import { DirectorEntry, ImageFile } from '../../types/firebase/FBCommon.type';
-import FirestoreService from '../../service/firebase/FirestoreService';
+import { CatalogSeason, Episode } from '../../types/catalog/Season.type';
+import { DirectorEntry, ImageFile } from '../../types/catalog/Common.type';
+import CatalogService from '../../service/catalog/CatalogService';
 
 const useAddSeason = () => {
   const [loading, setLoading] = useState<boolean>(false);
@@ -33,14 +33,14 @@ const useAddSeason = () => {
     setError(null);
 
     try {
-      const season: FBSeason = {
-        id: '', // Firebase will generate the ID
+      const season: CatalogSeason = {
+        id: '',
         title,
         seriesId,
         number,
-        countryOfOrigin,
+        countryOfOrigin: Array.isArray(countryOfOrigin) ? countryOfOrigin : [countryOfOrigin],
         directors: directors.map(director => ({
-          name: director.name,
+          fullName: director.fullName,
           notes: '',
           portfolio: [],
           otherCollections: [],
@@ -49,21 +49,20 @@ const useAddSeason = () => {
         imageFiles,
         letterboxdLink,
         plexLink,
-        omdbData,
         releaseDate,
-        releases,
+        releaseIds: releases,
         runtime,
-        topCast,
+        topCast: topCast.map(actorName => ({ actorName })),
         writers,
         isPartOfCollection,
         collectionIds,
         episodes,
         genres,
-        language,
+        languages: [language],
         regionCode,
       };
 
-      const service = new FirestoreService('seasons');
+      const service = new CatalogService('seasons');
       await service.addDocument(season);
     } catch (err: any) {
       setError(err.message);

@@ -1,11 +1,11 @@
-import { FBDisc } from '@/types/firebase/FBDisc.type';
-import { FBMovie } from '@/types/firebase/FBMovie.type';
-import { FBRelease } from '@/types/firebase/FBRelease.type';
-import { FBSeries } from '@/types/firebase/FBSeries.type';
+import { CatalogDisc } from '@/types/catalog/Disc.type';
+import { CatalogMovie } from '@/types/catalog/Movie.type';
+import { CatalogRelease } from '@/types/catalog/Release.type';
+import { CatalogSeries } from '@/types/catalog/Series.type';
 
-export type LibraryMedia = FBMovie | FBSeries;
+export type LibraryMedia = CatalogMovie | CatalogSeries;
 
-export type LibraryMediaType = 'movie' | 'series';
+export type LibraryMediaType = 'movie' | 'series' | 'documentary' | 'live_performance' | 'home_video' | 'needs_review';
 
 export interface LibraryMediaWithComputed {
   media: LibraryMedia;
@@ -59,11 +59,52 @@ const getObjectField = (obj: Record<string, unknown>, key: string): Record<strin
   return isObject(value) ? value : undefined;
 };
 
-export const isSeriesMedia = (media: LibraryMedia): media is FBSeries => {
-  return Array.isArray((media as FBSeries).seasons);
+export const isSeriesMedia = (media: LibraryMedia): media is CatalogSeries => {
+  return Array.isArray((media as CatalogSeries).seasons);
 };
 
 export const getMediaType = (media: LibraryMedia): LibraryMediaType => {
+  const mediaRecord = asRecord(media);
+
+  const explicitMediaType = getStringField(mediaRecord, 'mediaType');
+  if (explicitMediaType === 'series' || explicitMediaType === 'episode' || explicitMediaType === 'tv') {
+    return 'series';
+  }
+
+  // Explicit subtype field written by backend pipeline
+  const subType = getStringField(mediaRecord, 'mediaSubType') || getStringField(mediaRecord, 'subType');
+  if (subType === 'documentary') return 'documentary';
+  if (subType === 'live_performance') return 'live_performance';
+  if (subType === 'home_video') return 'home_video';
+
+  const detectTypeFromFolderPath = (folderPath?: string): LibraryMediaType | null => {
+    if (!folderPath) {
+      return null;
+    }
+
+    const normalised = folderPath.replace(/\\/g, '/');
+    if (normalised.includes('_NeedsReview')) return 'needs_review';
+    if (normalised.includes('Documentaries/')) return 'documentary';
+    if (normalised.includes('Live Performances/')) return 'live_performance';
+    if (normalised.includes('Home Videos/')) return 'home_video';
+    if (normalised.includes('/TV Shows/') || normalised.includes('/Shows/')) return 'series';
+    return null;
+  };
+
+  const directFolderPath = getStringField(mediaRecord, 'folderPath');
+  const directType = detectTypeFromFolderPath(directFolderPath);
+  if (directType) {
+    return directType;
+  }
+
+  // Derive type from the organised Jellyfin folder path written back by FileOrganizationService
+  const jellyfinInfo = getObjectField(mediaRecord, 'jellyfinInfo');
+  const jellyfinFolderPath = jellyfinInfo ? getStringField(jellyfinInfo, 'folderPath') : undefined;
+  const jellyfinType = detectTypeFromFolderPath(jellyfinFolderPath);
+  if (jellyfinType) {
+    return jellyfinType;
+  }
+
   return isSeriesMedia(media) ? 'series' : 'movie';
 };
 
@@ -95,7 +136,7 @@ export const getTitleYearLabel = (media: LibraryMedia): string => {
   return media.releaseDate || legacyYear || 'N/A';
 };
 
-const getDiscIdsFromReleases = (releases: FBRelease[] | undefined): string[] => {
+const getDiscIdsFromReleases = (releases: CatalogRelease[] | undefined): string[] => {
   if (!Array.isArray(releases)) {
     return [];
   }
@@ -109,16 +150,7 @@ const getDiscIdsFromReleases = (releases: FBRelease[] | undefined): string[] => 
   });
 };
 
-const getReleaseIds = (media: LibraryMedia): string[] => {
-  const releaseIds = (media as FBMovie | FBSeries).releaseIds;
-  if (Array.isArray(releaseIds)) {
-    return releaseIds.filter((releaseId) => typeof releaseId === 'string' && releaseId.trim().length > 0);
-  }
-
-  return [];
-};
-
-const getFileCountFromDiscIds = (discIds: string[], discMap: Map<string, FBDisc>): number => {
+const getFileCountFromDiscIds = (discIds: string[], discMap: Map<string, CatalogDisc>): number => {
   if (discIds.length === 0) {
     return 0;
   }
@@ -137,7 +169,7 @@ const getFileCountFromDiscIds = (discIds: string[], discMap: Map<string, FBDisc>
   }, 0);
 };
 
-export const getFileCount = (media: LibraryMedia, discMap: Map<string, FBDisc>): number => {
+export const getFileCount = (media: LibraryMedia, discMap: Map<string, CatalogDisc>): number => {
   const mediaRecord = asRecord(media);
   const assignmentSummary = getObjectField(mediaRecord, 'assignmentSummary');
   const assignmentSummaryTotal = assignmentSummary ? getNumberField(assignmentSummary, 'totalFiles') : undefined;
@@ -155,15 +187,10 @@ export const getFileCount = (media: LibraryMedia, discMap: Map<string, FBDisc>):
     return explicitCount;
   }
 
-  const legacyReleases = (mediaRecord.releases as FBRelease[] | undefined);
+  const legacyReleases = (mediaRecord.releases as CatalogRelease[] | undefined);
   const discIdsFromLegacyReleases = getDiscIdsFromReleases(legacyReleases);
   if (discIdsFromLegacyReleases.length > 0) {
     return getFileCountFromDiscIds(discIdsFromLegacyReleases, discMap);
-  }
-
-  const releaseIds = getReleaseIds(media);
-  if (releaseIds.length > 0) {
-    return releaseIds.length;
   }
 
   return 0;
@@ -200,7 +227,7 @@ export const isInLibrary = (media: LibraryMedia, fileCount: number): boolean => 
   return false;
 };
 
-export const toComputedMedia = (media: LibraryMedia, discMap: Map<string, FBDisc>): LibraryMediaWithComputed => {
+export const toComputedMedia = (media: LibraryMedia, discMap: Map<string, CatalogDisc>): LibraryMediaWithComputed => {
   const fileCount = getFileCount(media, discMap);
   const mediaType = getMediaType(media);
 
@@ -240,14 +267,8 @@ export const getNfoMetadata = (media: LibraryMedia): Record<string, unknown> | n
 
 export const getDiscIdsForMedia = (media: LibraryMedia): string[] => {
   const mediaRecord = asRecord(media);
-  const releases = mediaRecord.releases as FBRelease[] | undefined;
-  const discIds = getDiscIdsFromReleases(releases);
-
-  if (discIds.length > 0) {
-    return discIds;
-  }
-
-  return getReleaseIds(media);
+  const releases = mediaRecord.releases as CatalogRelease[] | undefined;
+  return getDiscIdsFromReleases(releases);
 };
 
 export const getDirectorsDisplay = (media: LibraryMedia): string => {
@@ -348,7 +369,7 @@ export const getExternalIds = (media: LibraryMedia): ExternalIdsLike | null => {
   };
 };
 
-const getSeriesEpisodeTotals = (media: FBSeries): { totalSeasons: number; totalEpisodes: number } => {
+const getSeriesEpisodeTotals = (media: CatalogSeries): { totalSeasons: number; totalEpisodes: number } => {
   const mediaRecord = asRecord(media);
   const seriesSummary = getObjectField(mediaRecord, 'seriesSummary');
 
@@ -425,8 +446,8 @@ export const getProcessingSummary = (
     completionPercent: totalFiles > 0 ? Math.round((assignedFiles / totalFiles) * 100) : 0,
   };
 
-  if (mediaType === 'series' && isSeriesMedia(media)) {
-    const totals = getSeriesEpisodeTotals(media);
+  if (mediaType === 'series') {
+    const totals = getSeriesEpisodeTotals(media as CatalogSeries);
     const seasonsWithFiles = assignmentSummary ? getNumberField(assignmentSummary, 'seasonsWithFiles') : undefined;
     const episodesWithFiles = assignmentSummary ? getNumberField(assignmentSummary, 'episodesWithFiles') : undefined;
 

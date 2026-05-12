@@ -20,11 +20,11 @@ from fastapi import APIRouter, HTTPException, Request, Body
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import os
 import uuid
 
 from services.filesystem_manager import FileSystemManager
 from services.media_metadata_extractor import MediaMetadataExtractor
-from services.firestore_service import FirestoreService
 from services.media_resolution_service import MediaResolutionService
 from services.file_organization_service import FileOrganizationService
 from config.settings import settings
@@ -36,11 +36,11 @@ router = APIRouter()
 # Initialize services
 file_manager = FileSystemManager()
 metadata_extractor = MediaMetadataExtractor()
-firestore_service = FirestoreService(settings.firebase_project_id)
+firestore_service = None  # Migrated to PostgreSQL; data endpoints will be updated in Phase 5
 media_resolution_service = None
 file_organization_service = None
 
-def initialize_organization_services(fs_service: FirestoreService):
+def initialize_organization_services(fs_service):
     """Initialize Phase 4 services"""
     global media_resolution_service, file_organization_service
     media_resolution_service = MediaResolutionService(fs_service)
@@ -500,10 +500,41 @@ async def organize_files(assignmentId: str, request: OrganizeFilesRequest):
         
         firestore_service.update_document('media_assignments', assignmentId, final_update)
         
+        # Step 6: Update media document with folder path and file count
+        # This ensures the movie/series appears in My Library with proper metadata
+        logger.info(
+            "Step 6: Updating media document with library info",
+            media_id=media_id,
+            folder_path=organization_result.get("targetPath")
+        )
+        
+        files_moved = organization_result.get("filesMoved", 0)
+        target_path = organization_result.get("targetPath")
+        
+        media_update = {
+            "folderPath": target_path,
+            "fileCount": files_moved,
+            "isOrganized": True,
+            "lastOrganized": datetime.utcnow().isoformat(),
+            "updatedAt": datetime.utcnow().isoformat(),
+        }
+        
+        # Also set jellyfinInfo for better metadata tracking
+        if target_path:
+            media_update["jellyfinInfo"] = {
+                "folderPath": target_path,
+                "folderName": os.path.basename(target_path),
+                "isOrganized": True,
+                "lastOrganized": datetime.utcnow().isoformat(),
+            }
+        
+        firestore_service.update_document(collection, media_id, media_update)
+        
         logger.info(
             "Phase 4 organization completed successfully",
             assignment_id=assignmentId,
-            files_moved=organization_result.get("filesMoved")
+            files_moved=organization_result.get("filesMoved"),
+            media_updated=True
         )
         
         return {

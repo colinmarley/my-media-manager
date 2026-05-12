@@ -45,13 +45,38 @@ class AutoMatcherService:
         omdb_api_key: Optional[str] = None,
         tmdb_api_key: Optional[str] = None,
         firestore_service: Optional[Any] = None,
+        metadata_source: str = "library_then_omdb",
     ):
-        self.omdb_api_key = omdb_api_key or os.environ.get("OMDB_API_KEY", "")
+        self.omdb_api_key = (
+            omdb_api_key
+            or os.environ.get("MEDIA_LIBRARY_OMDB_API_KEY", "")
+            or os.environ.get("OMDB_API_KEY", "")
+        )
         self.omdb_base_url = "http://www.omdbapi.com"
-        self.tmdb_api_key = tmdb_api_key or os.environ.get("TMDB_API_KEY", "")
+        self.tmdb_api_key = (
+            tmdb_api_key
+            or os.environ.get("MEDIA_LIBRARY_TMDB_API_KEY", "")
+            or os.environ.get("TMDB_API_KEY", "")
+        )
         self.tmdb_base_url = "https://api.themoviedb.org/3"
         self.request_timeout = 10
         self.firestore_service = firestore_service
+        self.metadata_source = self._normalize_metadata_source(metadata_source)
+
+    def _normalize_metadata_source(self, source: Optional[str]) -> str:
+        value = (source or "library_then_omdb").strip().lower()
+        aliases = {
+            "omdb": "omdb_only",
+            "tmdb": "tmdb_only",
+            "library": "library_only",
+        }
+        value = aliases.get(value, value)
+        if value not in {"library_then_omdb", "omdb_only", "tmdb_only", "library_only"}:
+            return "library_then_omdb"
+        return value
+
+    def set_metadata_source(self, source: Optional[str]) -> None:
+        self.metadata_source = self._normalize_metadata_source(source)
 
     def search_and_match(
         self, parsed_info: Dict[str, Any]
@@ -70,25 +95,29 @@ class AutoMatcherService:
             return {"status": "no_title", "candidates": []}
 
         candidates: List[MatchCandidate] = []
+        mode = self.metadata_source
 
-        # 1) Always check Firebase first so existing library context is prioritized.
-        try:
-            firebase_candidates = self._search_firebase(title, year, parsed_info)
-            candidates.extend(firebase_candidates)
-        except Exception as exc:
-            logger.warning(
-                "Firebase search failed",
-                title=title,
-                error=str(exc),
-            )
+        firebase_candidates: List[MatchCandidate] = []
+        if mode in ("library_then_omdb", "library_only"):
+            try:
+                firebase_candidates = self._search_firebase(title, year, parsed_info)
+                candidates.extend(firebase_candidates)
+            except Exception as exc:
+                logger.warning(
+                    "Firebase search failed",
+                    title=title,
+                    error=str(exc),
+                )
 
-        # 2) Only hit external providers when Firebase did not return good matches.
-        should_call_external = len(candidates) == 0
+        should_call_omdb = mode in ("library_then_omdb", "omdb_only")
+        if mode == "library_then_omdb":
+            # External lookup when no internal candidates or all are missing imdb ids.
+            should_call_omdb = len(firebase_candidates) == 0 or all(not c.imdb_id for c in firebase_candidates)
 
-        if should_call_external:
+        if should_call_omdb:
             try:
                 if media_type == "episode":
-                    candidates.extend(self._search_series(title, year))
+                    candidates.extend(self._search_series(title, year, season=season, episode=episode))
                 else:
                     candidates.extend(self._search_movie(title, year))
             except Exception as exc:
@@ -98,24 +127,26 @@ class AutoMatcherService:
                     error=str(exc),
                 )
 
-            if not candidates and self.tmdb_api_key:
-                try:
-                    if media_type == "episode":
-                        candidates.extend(self._search_tmdb_series(title, year))
-                    else:
-                        candidates.extend(self._search_tmdb_movie(title, year))
-                    if candidates:
-                        logger.info(
-                            "TMDB fallback returned candidates",
-                            title=title,
-                            count=len(candidates),
-                        )
-                except Exception as exc:
-                    logger.warning(
-                        "TMDB fallback search failed",
+        should_call_tmdb = mode == "tmdb_only" or (mode == "library_then_omdb" and len(candidates) == 0)
+        if should_call_tmdb and self.tmdb_api_key:
+            try:
+                if media_type == "episode":
+                    candidates.extend(self._search_tmdb_series(title, year, season=season, episode=episode))
+                else:
+                    candidates.extend(self._search_tmdb_movie(title, year))
+                if candidates:
+                    logger.info(
+                        "TMDB lookup returned candidates",
                         title=title,
-                        error=str(exc),
+                        count=len(candidates),
+                        mode=mode,
                     )
+            except Exception as exc:
+                logger.warning(
+                    "TMDB lookup failed",
+                    title=title,
+                    error=str(exc),
+                )
 
         # Calculate confidence for each candidate
         for candidate in candidates:
@@ -335,7 +366,7 @@ class AutoMatcherService:
     ) -> List[MatchCandidate]:
         """Search OMDB for movies matching the title."""
         if not self.omdb_api_key:
-            logger.warning("OMDB_API_KEY not configured")
+            logger.warning("OMDB API key not configured (MEDIA_LIBRARY_OMDB_API_KEY)")
             return []
 
         candidates = []
@@ -375,11 +406,15 @@ class AutoMatcherService:
         return candidates
 
     def _search_series(
-        self, title: str, year: Optional[int] = None
+        self,
+        title: str,
+        year: Optional[int] = None,
+        season: Optional[int] = None,
+        episode: Optional[int] = None,
     ) -> List[MatchCandidate]:
         """Search OMDB for TV series matching the title."""
         if not self.omdb_api_key:
-            logger.warning("OMDB_API_KEY not configured")
+            logger.warning("OMDB API key not configured (MEDIA_LIBRARY_OMDB_API_KEY)")
             return []
 
         candidates = []
@@ -408,6 +443,8 @@ class AutoMatcherService:
                     title=result.get("Title", ""),
                     media_type="series",
                     year=self._parse_year(result.get("Year")),
+                    season=season,
+                    episode=episode,
                     imdb_id=result.get("imdbID"),
                     raw_data=result,
                 )
@@ -466,7 +503,11 @@ class AutoMatcherService:
         return candidates
 
     def _search_tmdb_series(
-        self, title: str, year: Optional[int] = None
+        self,
+        title: str,
+        year: Optional[int] = None,
+        season: Optional[int] = None,
+        episode: Optional[int] = None,
     ) -> List[MatchCandidate]:
         """Search TMDB for TV series matching the title."""
         if not self.tmdb_api_key:
@@ -503,6 +544,8 @@ class AutoMatcherService:
                     title=result.get("name", ""),
                     media_type="series",
                     year=first_air_year,
+                    season=season,
+                    episode=episode,
                     raw_data=result,
                 )
                 candidates.append(candidate)
@@ -547,7 +590,9 @@ class AutoMatcherService:
                 score += 10
 
         if candidate.source == "firebase":
-            score += 20
+            # Prefer firebase strongly only when it carries stable external ids.
+            # Sparse rows without imdb ids should not outrank high-quality OMDB matches.
+            score += 20 if candidate.imdb_id else 5
             raw_data = candidate.raw_data or {}
             if raw_data.get("has_existing_files"):
                 score += 15

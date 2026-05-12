@@ -9,8 +9,10 @@ Handles:
 """
 
 import os
+import re
+import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from xml.sax.saxutils import escape
 from config.settings import settings
 from utils.logging import logger
@@ -21,15 +23,22 @@ class FileOrganizationService:
 
     # Base path constants
     ENCODED_SOURCE_PATH = "/data/media/encoded"
-    DEFAULT_JELLYFIN_DEST_BASE = "/mnt/beelink-media"
+    DEFAULT_JELLYFIN_DEST_BASE = "/ark/media/jellyfin"
+    VIDEO_EXTENSIONS = {
+        ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".flv",
+        ".webm", ".m2ts", ".mts", ".ts", ".mpg", ".mpeg", ".iso", ".strm",
+    }
 
     def __init__(
-        self, filesystem_manager: Optional[Any] = None,
+        self,
+        filesystem_manager: Optional[Any] = None,
         firestore_service: Optional[Any] = None,
         jellyfin_dest_base: Optional[str] = None,
+        db_session_factory: Optional[Callable] = None,
     ):
         self.filesystem_manager = filesystem_manager
         self.firestore_service = firestore_service
+        self.db_session_factory = db_session_factory
         self.jellyfin_dest_base = (
             jellyfin_dest_base
             or settings.jellyfin_dest_base
@@ -62,8 +71,29 @@ class FileOrganizationService:
                 media_type,
                 jellyfin_root_override,
             )
+
+            # If the path cannot be resolved, route to the staging folder so no
+            # file is ever silently dropped.
+            needs_review = False
             if not target_path:
-                raise ValueError("Could not calculate target path")
+                source_file_name = (
+                    (assignment.get("sourceFile") or assignment.get("file") or {}).get("fileName")
+                    or "unknown"
+                )
+                stem, ext = os.path.splitext(source_file_name)
+                safe_stem = self._sanitize_path(stem) or "file"
+                needs_review = True
+                target_path = os.path.join(
+                    self.jellyfin_dest_base,
+                    settings.folder_needs_review,
+                )
+                assignment = dict(assignment)
+                assignment["_reviewFileName"] = f"{safe_stem} - NEEDS REVIEW{ext}"
+                logger.warning(
+                    "Could not calculate target path — routing to NeedsReview",
+                    media_type=media_type,
+                    source_file=source_file_name,
+                )
 
             # Get source files from assignment
             source_files = self._get_source_files(assignment)
@@ -104,6 +134,7 @@ class FileOrganizationService:
 
             # Check if all moves succeeded
             all_successful = all(r.get("success", False) for r in move_results)
+            move_errors = [str(r.get("error")) for r in move_results if not r.get("success") and r.get("error")]
 
             # Create local NFO metadata files for Jellyfin when at least one file moved.
             nfo_files_created: List[str] = []
@@ -121,13 +152,28 @@ class FileOrganizationService:
                 "assignmentId": assignment.get("id"),
                 "mediaType": media_type,
                 "targetPath": target_path,
+                "needsReview": needs_review,
                 "filesMoved": sum(1 for r in move_results if r.get("success")),
                 "totalFiles": len(move_results),
                 "folderCreated": folder_result.get("folderPath"),
                 "nfoFilesCreated": nfo_files_created,
                 "operations": move_results,
+                "moveErrors": move_errors,
+                "error": "; ".join(move_errors[:10]) if move_errors else None,
                 "timestamp": datetime.utcnow().isoformat(),
             }
+
+            # Write jellyfinInfo back to the PostgreSQL catalog so My Library reflects
+            # the organized state without needing Firebase.
+            if all_successful and not needs_review and self.db_session_factory:
+                await self._upsert_catalog_jellyfin_info(
+                    media_type=media_type,
+                    media_id=assignment.get("mediaId"),
+                    folder_path=target_path,
+                    organized_at=datetime.utcnow().isoformat(),
+                    media=media,
+                    file_count=result.get("filesMoved"),
+                )
 
             # Update assignment status in Firestore
             if self.firestore_service and self.firestore_service._initialized:
@@ -160,7 +206,11 @@ class FileOrganizationService:
         media_type: str,
         jellyfin_root_override: Optional[str] = None,
     ) -> Optional[str]:
-        """Calculate Jellyfin destination path based on media type."""
+        """Calculate destination path based on media type.
+
+        Supports: movie, episode, documentary, live_performance.
+        Returns None for unrecognised types so the caller can route to _NeedsReview.
+        """
         try:
             target_structure = assignment.get("targetFolderStructure", {})
             library_root = (
@@ -172,57 +222,63 @@ class FileOrganizationService:
             title = media.get("title", "Unknown")
             title_sanitized = self._sanitize_path(title)
 
-            if media_type == "movie":
-                # Format: /mnt/beelink-media/movies/Movie Title (YYYY)/
-                year_str = ""
-                if media.get("year"):
-                    year_str = f" ({media.get('year')})"
-                elif media.get("releaseDate"):
-                    try:
-                        year = int(media["releaseDate"][:4])
-                        year_str = f" ({year})"
-                    except (ValueError, TypeError, IndexError):
-                        pass
+            # Compute year suffix once
+            year_str = ""
+            if media.get("year"):
+                year_str = f" ({media.get('year')})"
+            elif media.get("releaseDate"):
+                try:
+                    year = int(media["releaseDate"][:4])
+                    year_str = f" ({year})"
+                except (ValueError, TypeError, IndexError):
+                    pass
 
-                folder_name = f"{title_sanitized}{year_str}"
-                imdb_info = ""
-                if media.get("imdbId"):
-                    imdb_info = f" [imdbid-{media['imdbId']}]"
+            # Compute IMDb tag once
+            imdb_info = ""
+            if media.get("imdbId"):
+                imdb_info = f" [imdbid-{media['imdbId']}]"
 
-                return f"{library_root}/movies/{folder_name}{imdb_info}"
+            # Map media type to the configured destination subfolder name
+            _folder_map: Dict[str, str] = {
+                "movie":            settings.folder_movies,
+                "episode":          settings.folder_tv_shows,
+                "documentary":      settings.folder_documentaries,
+                "live_performance": settings.folder_live_performances,
+            }
+
+            if media_type in ("movie", "documentary", "live_performance"):
+                subfolder = _folder_map[media_type]
+                folder_name = f"{title_sanitized}{year_str}{imdb_info}"
+                return f"{library_root}/{subfolder}/{folder_name}"
 
             elif media_type == "episode":
-                # Format: /mnt/beelink-media/shows/Series Name (YYYY)/Season XX/
+                subfolder = _folder_map["episode"]
                 series_title = media.get("seriesTitle") or title
                 series_sanitized = self._sanitize_path(series_title)
+                folder_name = f"{series_sanitized}{year_str}{imdb_info}"
 
-                year_str = ""
-                if media.get("year"):
-                    year_str = f" ({media.get('year')})"
-
-                folder_name = f"{series_sanitized}{year_str}"
-                imdb_info = ""
-                if media.get("imdbId"):
-                    imdb_info = f" [imdbid-{media['imdbId']}]"
-
-                season_num_raw = assignment.get("seasonNumber", 1)
+                season_num_raw = assignment.get("seasonNumber")
+                if season_num_raw is None:
+                    season_num_raw = 0 if assignment.get("unknownEpisodeLabel") else 1
                 try:
                     season_num = int(season_num_raw)
                 except (TypeError, ValueError):
-                    season_num = 1
-                if season_num < 1:
-                    season_num = 1
-                season_str = f"Season {season_num:02d}"
+                    season_num = 0 if assignment.get("unknownEpisodeLabel") else 1
+                if season_num < 0:
+                    season_num = 0
 
-                return f"{library_root}/shows/{folder_name}{imdb_info}/{season_str}"
+                # Season 0 uses "Specials" per Jellyfin convention
+                season_str = "Specials" if season_num == 0 else f"Season {season_num:02d}"
+
+                return f"{library_root}/{subfolder}/{folder_name}/{season_str}"
 
             else:
-                logger.error("Unknown media type", media_type=media_type)
+                logger.error("Unknown media type — will route to NeedsReview", media_type=media_type)
                 return None
 
         except Exception as e:
             logger.error(
-                "Error calculating Jellyfin path",
+                "Error calculating destination path",
                 media_type=media_type,
                 error=str(e),
             )
@@ -318,14 +374,7 @@ class FileOrganizationService:
 
             # Build destination path
             destination = os.path.join(target_dir, filename)
-
-            if os.path.exists(destination):
-                # Keep names deterministic while preventing accidental overwrite.
-                source_stem = self._sanitize_path(
-                    os.path.splitext(os.path.basename(source_file))[0]
-                )
-                base, ext = os.path.splitext(filename)
-                destination = os.path.join(target_dir, f"{base} - {source_stem}{ext}")
+            destination = self._resolve_unique_destination(destination, source_file)
 
             # Move file
             result = self.filesystem_manager.move_file(source_file, destination)
@@ -367,6 +416,25 @@ class FileOrganizationService:
                 "error": str(e),
             }
 
+    def _resolve_unique_destination(self, destination: str, source_file: str) -> str:
+        """Return a collision-free destination path without overwriting existing files."""
+        if not os.path.exists(destination):
+            return destination
+
+        base, ext = os.path.splitext(destination)
+        source_stem = self._sanitize_path(os.path.splitext(os.path.basename(source_file))[0]) or "copy"
+
+        preferred = f"{base} - {source_stem}{ext}"
+        if preferred != destination and not os.path.exists(preferred):
+            return preferred
+
+        suffix = 2
+        while True:
+            candidate = f"{base} ({suffix}){ext}"
+            if not os.path.exists(candidate):
+                return candidate
+            suffix += 1
+
     def _build_jellyfin_filename(
         self,
         source_file: str,
@@ -378,14 +446,25 @@ class FileOrganizationService:
         """
         Build a filename aligned with Jellyfin guidance.
 
-        Movies: filename matches movie folder name.
+        Movies / Documentaries / Live Performances: filename matches folder name.
+          If assignment carries isAlternateVersion + versionNumber, a " - Version N" suffix
+          is appended.
         Shows: <Series Folder Name> SxxExx[ Episode Title].ext when episode data exists.
+          If no episode number can be resolved, uses "Unknown Episode N" suffix.
+        NeedsReview: uses the _reviewFileName set on the assignment dict.
         """
         ext = os.path.splitext(source_file)[1]
         source_name = os.path.basename(source_file)
 
-        if media_type == "movie":
+        # Catch-all: file routed to _NeedsReview has a pre-computed name
+        if assignment.get("_reviewFileName"):
+            return str(assignment["_reviewFileName"])
+
+        if media_type in ("movie", "documentary", "live_performance"):
             folder_name = self._sanitize_path(os.path.basename(target_dir))
+            if assignment.get("isAlternateVersion"):
+                version_num = assignment.get("versionNumber", 2)
+                return f"{folder_name} - Version {version_num}{ext}"
             if folder_name:
                 return f"{folder_name}{ext}"
             return source_name
@@ -427,11 +506,44 @@ class FileOrganizationService:
             )
             episode_title = self._sanitize_path(str(episode_title)).strip()
 
-            if series_name and season_num is not None and episode_num is not None:
-                base_name = f"{series_name} S{season_num:02d}E{episode_num:02d}"
+            if series_name and episode_num is not None:
+                if season_num is None:
+                    # Anime absolute-episode numbering: no season available
+                    base_name = f"{series_name} E{episode_num:03d}"
+                    episode_end_raw = (
+                        assignment.get("parsedInfo", {}).get("episode_end")
+                        or assignment.get("episodeEnd")
+                    )
+                    try:
+                        episode_end_num = int(episode_end_raw)
+                        if episode_end_num > episode_num:
+                            base_name = f"{base_name}E{episode_end_num:03d}"
+                    except (TypeError, ValueError):
+                        pass
+                else:
+                    base_name = f"{series_name} S{season_num:02d}E{episode_num:02d}"
+                    # Multi-episode file: append the ending episode number
+                    episode_end_raw = (
+                        assignment.get("parsedInfo", {}).get("episode_end")
+                        or assignment.get("episodeEnd")
+                    )
+                    try:
+                        episode_end_num = int(episode_end_raw)
+                        if episode_end_num > episode_num:
+                            base_name = f"{base_name}E{episode_end_num:02d}"
+                    except (TypeError, ValueError):
+                        pass
                 if episode_title:
                     base_name = f"{base_name} {episode_title}"
                 return f"{base_name}{ext}"
+
+            # Episode number unknown — use pre-computed unknown label if present,
+            # otherwise fall back to a generic suffix.
+            if series_name:
+                unknown_label = assignment.get("unknownEpisodeLabel")
+                if unknown_label:
+                    return f"{self._sanitize_path(str(unknown_label))}{ext}"
+                return f"{series_name} - Unknown Episode{ext}"
 
         return source_name
 
@@ -472,6 +584,283 @@ class FileOrganizationService:
                 error=str(e),
             )
 
+    async def _upsert_catalog_jellyfin_info(
+        self,
+        media_type: str,
+        media_id: Optional[str],
+        folder_path: str,
+        organized_at: str,
+        media: Dict[str, Any],
+        file_count: Optional[int] = None,
+    ) -> None:
+        """Upsert jellyfinInfo into PostgreSQL catalog after a successful move.
+
+        This creates the catalog record when it doesn't already exist, which makes
+        newly organized items appear in My Library without manual seeding.
+        """
+        try:
+            from sqlalchemy import select
+            from db.models import Movie, Series
+
+            # episode type maps to the Series catalog table
+            Model = Series if media_type in ("episode", "series") else Movie
+            canonical_folder_path = folder_path
+            if media_type == "episode":
+                leaf = os.path.basename(folder_path.rstrip("/"))
+                if re.match(r"^Season\s+\d+$", leaf, re.IGNORECASE):
+                    canonical_folder_path = os.path.dirname(folder_path.rstrip("/"))
+
+            title = media.get("seriesTitle") if Model is Series else media.get("title")
+            if not title:
+                title = media.get("title") or "Untitled"
+            imdb_id = media.get("imdbId")
+            year = media.get("year")
+            omdb_data = media.get("omdbData") if isinstance(media.get("omdbData"), dict) else None
+            tmdb_data = media.get("tmdbData") if isinstance(media.get("tmdbData"), dict) else None
+            image_files = media.get("imageFiles") if isinstance(media.get("imageFiles"), list) else None
+            external_ids = media.get("externalIds") if isinstance(media.get("externalIds"), dict) else {}
+            files_moved = int(file_count) if isinstance(file_count, int) and file_count >= 0 else 0
+
+            jellyfin_info = {
+                "folderPath": canonical_folder_path,
+                "organizedAt": organized_at,
+                "isOrganized": True,
+            }
+
+            async with self.db_session_factory() as session:
+                row = None
+                if media_id:
+                    result = await session.execute(select(Model).where(Model.id == media_id))
+                    row = result.scalar_one_or_none()
+
+                if row is None and imdb_id:
+                    result = await session.execute(select(Model).where(Model.imdb_id == imdb_id).limit(1))
+                    row = result.scalar_one_or_none()
+
+                # Last-resort dedupe for sparse auto-matches (no imdb/media id yet):
+                # reuse an existing record with the same title instead of creating one per file.
+                if row is None and title:
+                    result = await session.execute(select(Model).where(Model.title == title).limit(1))
+                    row = result.scalar_one_or_none()
+
+                if row is None:
+                    generated_id = media_id or imdb_id or str(uuid.uuid4())
+                    row = Model(id=generated_id, title=title)
+                    if imdb_id:
+                        row.imdb_id = imdb_id
+                    session.add(row)
+
+                row.title = title or row.title
+                if imdb_id and not row.imdb_id:
+                    row.imdb_id = imdb_id
+
+                existing_jellyfin = dict(row.jellyfin_info or {})
+                existing_jellyfin.update(jellyfin_info)
+                row.jellyfin_info = existing_jellyfin
+
+                linked_video_files = self._collect_video_file_entries(canonical_folder_path)
+                linked_file_paths = [entry["filePath"] for entry in linked_video_files]
+                total_file_size = sum(int(entry.get("fileSize") or 0) for entry in linked_video_files)
+                existing_summary = dict(row.assignment_summary or {})
+
+                raw = dict(row.raw_data or {})
+                raw["id"] = row.id
+                raw["title"] = row.title
+                raw["titleLower"] = (row.title or "").lower()
+                raw["mediaType"] = "series" if Model is Series else "movie"
+                if year is not None:
+                    raw["year"] = year
+                raw["folderPath"] = canonical_folder_path
+                raw["isOrganized"] = True
+                raw["lastOrganized"] = organized_at
+                raw["jellyfinInfo"] = existing_jellyfin
+                raw["linkedVideoFiles"] = linked_video_files
+                raw["videoFiles"] = linked_video_files
+                raw["sourceFiles"] = linked_file_paths
+                raw["primaryVideoPath"] = linked_file_paths[0] if linked_file_paths else None
+
+                if Model is Series:
+                    series_summary_data = self._summarize_series_files(canonical_folder_path)
+                    summary = dict(existing_summary)
+                    summary.update(series_summary_data.get("assignmentSummary") or {})
+                    resolved_total_files = max(
+                        int(summary.get("totalFiles") or 0),
+                        len(linked_video_files),
+                        files_moved,
+                    )
+                    summary.update({
+                        "totalFiles": resolved_total_files,
+                        "assignedFiles": resolved_total_files,
+                        "unassignedFiles": 0,
+                        "totalFileSize": total_file_size,
+                        "linkedFiles": linked_file_paths,
+                        "lastUpdated": organized_at,
+                    })
+                    raw["assignmentSummary"] = summary
+                    raw["seriesSummary"] = series_summary_data.get("seriesSummary") or {}
+                    raw["fileCount"] = resolved_total_files
+                else:
+                    resolved_total_files = max(len(linked_video_files), files_moved)
+                    summary = dict(existing_summary)
+                    summary.update({
+                        "totalFiles": resolved_total_files,
+                        "assignedFiles": resolved_total_files,
+                        "unassignedFiles": 0,
+                        "totalFileSize": total_file_size,
+                        "linkedFiles": linked_file_paths,
+                        "lastUpdated": organized_at,
+                    })
+                    raw["assignmentSummary"] = summary
+                    raw["fileCount"] = resolved_total_files
+
+                merged_external_ids = dict(raw.get("externalIds") or {})
+                merged_external_ids.update(external_ids)
+                if imdb_id:
+                    merged_external_ids["imdbId"] = imdb_id
+                if merged_external_ids:
+                    raw["externalIds"] = merged_external_ids
+
+                if omdb_data:
+                    raw["omdbData"] = omdb_data
+                if tmdb_data:
+                    raw["tmdbData"] = tmdb_data
+
+                if image_files:
+                    raw["imageFiles"] = image_files
+                elif omdb_data:
+                    poster = omdb_data.get("Poster")
+                    if isinstance(poster, str) and poster and poster != "N/A":
+                        raw["imageFiles"] = [{
+                            "fileName": poster,
+                            "fileSize": 0,
+                            "resolution": "",
+                            "format": "jpg",
+                        }]
+
+                row.raw_data = raw
+                row.assignment_summary = raw.get("assignmentSummary") or {}
+                row.jellyfin_info = existing_jellyfin
+                row.image_files = raw.get("imageFiles") or row.image_files
+                if omdb_data:
+                    row.omdb_data = omdb_data
+                if tmdb_data:
+                    row.tmdb_data = tmdb_data
+
+                await session.commit()
+                logger.info(
+                    "Catalog entry upserted after organization",
+                    media_id=row.id,
+                    media_type=media_type,
+                    folder_path=folder_path,
+                )
+        except Exception as exc:
+            # Non-fatal: organization succeeded even if catalog update fails
+            logger.warning(
+                "Failed to upsert catalog jellyfinInfo",
+                media_id=media_id,
+                error=str(exc),
+            )
+
+    def _collect_video_file_entries(self, root_path: str) -> List[Dict[str, Any]]:
+        """Return linked video-file metadata for all organized files under a media root."""
+        entries: List[Dict[str, Any]] = []
+
+        if not root_path or not os.path.isdir(root_path):
+            return entries
+
+        for current_root, _, files in os.walk(root_path):
+            for file_name in sorted(files):
+                ext = os.path.splitext(file_name)[1].lower()
+                if ext not in self.VIDEO_EXTENSIONS:
+                    continue
+
+                file_path = os.path.join(current_root, file_name)
+                try:
+                    file_size = os.path.getsize(file_path)
+                except OSError:
+                    file_size = 0
+
+                entries.append(
+                    {
+                        "fileName": file_name,
+                        "filePath": file_path,
+                        "relativePath": os.path.relpath(file_path, root_path).replace("\\", "/"),
+                        "fileSize": file_size,
+                    }
+                )
+
+        entries.sort(key=lambda item: item.get("relativePath") or item.get("fileName") or "")
+        return entries
+
+    def _summarize_series_files(self, series_root_path: str) -> Dict[str, Any]:
+        """Build assignment/coverage summary by scanning video files under a series root."""
+        total_files = 0
+        seasons_with_files = set()
+        episodes_with_files = set()
+        season_dirs = set()
+
+        if not os.path.isdir(series_root_path):
+            return {
+                "assignmentSummary": {
+                    "totalFiles": 0,
+                    "assignedFiles": 0,
+                    "unassignedFiles": 0,
+                    "seasonsWithFiles": 0,
+                    "episodesWithFiles": 0,
+                },
+                "seriesSummary": {
+                    "totalSeasons": 0,
+                    "totalEpisodes": 0,
+                },
+            }
+
+        for root, dirs, files in os.walk(series_root_path):
+            for d in dirs:
+                m = re.match(r"^Season\s+(\d+)$", d, re.IGNORECASE)
+                if m:
+                    season_dirs.add(int(m.group(1)))
+
+            for file_name in files:
+                ext = os.path.splitext(file_name)[1].lower()
+                if ext not in self.VIDEO_EXTENSIONS:
+                    continue
+
+                total_files += 1
+                normalized_root = root.replace("\\", "/")
+
+                season_from_path = None
+                m_path = re.search(r"/Season\s+(\d+)(?:/|$)", normalized_root, re.IGNORECASE)
+                if m_path:
+                    season_from_path = int(m_path.group(1))
+                    seasons_with_files.add(season_from_path)
+
+                m_episode = re.search(r"[Ss](\d{1,2})[Ee](\d{1,3})", file_name)
+                if m_episode:
+                    season_num = int(m_episode.group(1))
+                    episode_num = int(m_episode.group(2))
+                    seasons_with_files.add(season_num)
+                    episodes_with_files.add((season_num, episode_num))
+                elif season_from_path is not None:
+                    # Episode number couldn't be parsed, but still count the season coverage.
+                    episodes_with_files.add((season_from_path, total_files))
+
+        total_seasons = max(len(season_dirs), len(seasons_with_files))
+        total_episodes = len(episodes_with_files)
+
+        return {
+            "assignmentSummary": {
+                "totalFiles": total_files,
+                "assignedFiles": total_files,
+                "unassignedFiles": 0,
+                "seasonsWithFiles": len(seasons_with_files),
+                "episodesWithFiles": total_episodes,
+            },
+            "seriesSummary": {
+                "totalSeasons": total_seasons,
+                "totalEpisodes": total_episodes,
+            },
+        }
+
     def _create_jellyfin_nfo_files(
         self,
         media_type: str,
@@ -484,7 +873,7 @@ class FileOrganizationService:
         created: List[str] = []
 
         try:
-            if media_type == "movie":
+            if media_type in ("movie", "documentary", "live_performance"):
                 movie_nfo_path = os.path.join(target_path, "movie.nfo")
                 if self._write_nfo_if_missing(movie_nfo_path, self._build_movie_nfo(media)):
                     created.append(movie_nfo_path)

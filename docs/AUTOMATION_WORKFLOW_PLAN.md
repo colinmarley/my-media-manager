@@ -328,8 +328,8 @@ async def process_ingress_file(file_path: str):
   
   // Destination paths (NAS)
   destinationPaths: {
-    movies: string;      // /mnt/beelink-media/movies
-    shows: string;       // /mnt/beelink-media/shows
+      movies: string;      // /ark/media/jellyfin/movies
+      shows: string;       // /ark/media/jellyfin/shows
   };
   
   // Automation settings
@@ -637,8 +637,8 @@ ingress_config:
     movies: "/data/media/encoded/movies"
     shows: "/data/media/encoded/shows"
   destination_paths:
-    movies: "/mnt/beelink-media/movies"
-    shows: "/mnt/beelink-media/shows"
+      movies: "/ark/media/jellyfin/movies"
+      shows: "/ark/media/jellyfin/shows"
   auto_assign_enabled: true
   auto_organize_enabled: true
   confidence_threshold: 80

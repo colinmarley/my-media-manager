@@ -5,6 +5,16 @@ export interface IngressWatcherStatus {
   queue_count: number;
   processed_event_count: number;
   process_existing_queued?: number;
+  process_existing_started?: boolean;
+  initial_queue?: {
+    in_progress: boolean;
+    scanned_files: number;
+    queued_files: number;
+    started_at?: number | null;
+    completed_at?: number | null;
+    last_file?: string | null;
+    last_error?: string | null;
+  };
 }
 
 export interface StartWatcherOptions {
@@ -19,6 +29,8 @@ export interface IngressQueueStatus {
   recent: Array<Record<string, any>>;
 }
 
+export type QueueClassificationOverride = 'auto' | 'main_feature' | 'special_feature' | 'alternate_version';
+
 export interface IngressQueueItem {
   id: string;
   file_path: string;
@@ -32,6 +44,10 @@ export interface IngressQueueItem {
   processed_at?: number;
   media_duration_ms?: number | null;
   proposed_path?: string | null;
+  classification_override?: QueueClassificationOverride | null;
+  is_alternate_version?: boolean;
+  version_number?: number;
+  special_feature_number?: number;
   best_match?: {
     title?: string;
     year?: number;
@@ -48,6 +64,8 @@ export interface IngressQueueItem {
     season?: number;
     episode?: number;
     quality?: string;
+    classification_hint?: string;
+    is_companion?: boolean;
   };
 }
 
@@ -60,8 +78,11 @@ export interface QueueManualAssignPayload {
   imdbId?: string;
   mediaId?: string;
   firebaseMediaId?: string;
+  rawData?: Record<string, unknown>;
+  posterUrl?: string;
   season?: number;
   episode?: number;
+  unknownEpisode?: boolean;
   organizeNow?: boolean;
 }
 
@@ -80,32 +101,46 @@ export interface IngressConfig {
   autoOrganizeEnabled: boolean;
   fileStabilityWaitSeconds: number;
   debounceSeconds: number;
+  jellyfinDestBase: string;
+  defaultMetadataSource: 'library_then_omdb' | 'omdb_only' | 'tmdb_only' | 'library_only';
 }
 
 class IngressAutomationService {
   private readonly baseUrl: string;
 
   constructor() {
-    this.baseUrl = process.env.NODE_ENV === 'production'
-      ? 'https://your-api-domain.com/api/ingress'
-      : 'http://localhost:8082/api/ingress';
+    // Always use the frontend's same-origin proxy to avoid CORS and hardcoded host drift.
+    this.baseUrl = '/api/backend/api/ingress';
   }
 
   private async request(path: string, init?: RequestInit): Promise<any> {
-    const response = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(init?.headers || {}),
-      },
-    });
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
 
-    if (!response.ok) {
-      const errorBody = await response.text();
-      throw new Error(errorBody || `Ingress request failed: ${response.status}`);
+    try {
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(init?.headers || {}),
+        },
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.text();
+        throw new Error(errorBody || `Ingress request failed: ${response.status}`);
+      }
+
+      return response.json();
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw new Error('Ingress request timed out. The backend may still be working.');
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeoutId);
     }
-
-    return response.json();
   }
 
   async getConfig(): Promise<IngressConfig> {
@@ -171,6 +206,14 @@ class IngressAutomationService {
     return result.data;
   }
 
+  async updateClassification(itemId: string, classification: QueueClassificationOverride): Promise<IngressQueueItem> {
+    const result = await this.request('/queue/update-classification', {
+      method: 'POST',
+      body: JSON.stringify({ itemId, classification }),
+    });
+    return result.data;
+  }
+
   async markFailed(itemId: string, reason: string): Promise<IngressQueueItem> {
     const result = await this.request('/queue/mark-failed', {
       method: 'POST',
@@ -183,6 +226,27 @@ class IngressAutomationService {
     const result = await this.request('/queue/manual-assign', {
       method: 'POST',
       body: JSON.stringify(payload),
+    });
+    return result.data;
+  }
+
+  async resetToEncoded(itemId: string): Promise<IngressQueueItem> {
+    const result = await this.request('/queue/reset-to-encoded', {
+      method: 'POST',
+      body: JSON.stringify({ itemId }),
+    });
+    return result.data.item;
+  }
+
+  async resetCompletedToEncoded(): Promise<{
+    itemsAttempted: number;
+    itemsReset: number;
+    filesAttempted: number;
+    filesReset: number;
+    errors: string[];
+  }> {
+    const result = await this.request('/queue/reset-completed-to-encoded', {
+      method: 'POST',
     });
     return result.data;
   }

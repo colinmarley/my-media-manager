@@ -1,78 +1,59 @@
 import { create } from 'zustand';
-import { auth, firebaseConfigError } from '../../firebaseConfig';
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, User } from 'firebase/auth';
+import { api } from '@/service/api/apiClient';
 
 interface AuthState {
-  user: User | null;
+  authenticated: boolean;
   loading: boolean;
   error: string | null;
-  setUser: (user: User | null) => void;
-  setLoading: (loading: boolean) => void;
-  setError: (error: string | null) => void;
-  login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string) => Promise<void>;
+  checkSession: () => Promise<void>;
+  login: (password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
 
-const useAuthenticationStore = create<AuthState>((set: (arg0: { user?: any; loading?: any; error?: any; }) => void) => ({
-  user: null,
+const useAuthenticationStore = create<AuthState>((set) => ({
+  authenticated: false,
   loading: false,
   error: null,
-  setUser: (user: User | null) => set({ user }),
-  setLoading: (loading: boolean) => set({ loading }),
-  setError: (error: string | null) => set({ error }),
-  login: async (email: string, password: string) => {
+
+  checkSession: async () => {
+    try {
+      await api.get('/auth/me');
+      set({ authenticated: true });
+    } catch {
+      set({ authenticated: false });
+    }
+  },
+
+  login: async (password: string) => {
     set({ loading: true, error: null });
     try {
-      if (!auth) {
-        throw new Error(firebaseConfigError || 'Firebase auth is not configured');
+      await api.post('/auth/login', { password });
+      set({ authenticated: true });
+    } catch (err: any) {
+      const message = String(err?.message || 'Sign in failed');
+      if (message.includes('API error 401')) {
+        set({ error: 'Incorrect passphrase. Please try again.' });
+      } else if (message.toLowerCase().includes('timed out')) {
+        set({ error: 'Login timed out. Backend may be starting up; try again in a few seconds.' });
+      } else if (message.toLowerCase().includes('could not reach backend')) {
+        set({ error: 'Backend is unreachable. Check Docker containers and network, then retry.' });
+      } else {
+        set({ error: message });
       }
-      await signInWithEmailAndPassword(auth, email, password);
-      console.log(auth.currentUser);
-      console.log(auth);
-      set({ user: auth.currentUser });
-    } catch (error: any) {
-      set({ error: error.message });
-      throw new Error(error.message, error.code);
+      throw err;
     } finally {
       set({ loading: false });
     }
   },
-  register: async (email, password) => {
-    set({ loading: true, error: null });
-    try {
-      if (!auth) {
-        throw new Error(firebaseConfigError || 'Firebase auth is not configured');
-      }
-      await createUserWithEmailAndPassword(auth, email, password);
-      set({ user: auth.currentUser });
-    } catch (error: any) {
-      set({ error: error.message });
-    } finally {
-      set({ loading: false });
-    }
-  },
+
   logout: async () => {
-    set({ loading: true, error: null });
+    set({ loading: true });
     try {
-      if (!auth) {
-        throw new Error(firebaseConfigError || 'Firebase auth is not configured');
-      }
-      await signOut(auth);
-      set({ user: null });
-    } catch (error: any) {
-      set({ error: error.message });
+      await api.post('/auth/logout', {});
     } finally {
-      set({ loading: false });
+      set({ authenticated: false, loading: false });
     }
   },
 }));
-
-// Initialize auth state listener only when Firebase auth is configured
-if (auth) {
-  onAuthStateChanged(auth, (user) => {
-    useAuthenticationStore.getState().setUser(user);
-  });
-}
 
 export default useAuthenticationStore;

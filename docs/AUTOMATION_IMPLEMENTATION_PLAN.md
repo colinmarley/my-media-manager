@@ -148,5 +148,5 @@ All items from the previous iteration have been completed. See below for what wa
 - Set `MEDIA_LIBRARY_OMDB_API_KEY` and optionally `MEDIA_LIBRARY_TMDB_API_KEY` in the backend `.env` for matching.
 - Set `MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS=/your/encoded/folder` to configure ingress paths.
 - Set `MEDIA_LIBRARY_INGRESS_AUTO_START_WATCHER=true` to auto-start watching on boot.
-- `JELLYFIN_DEST_BASE` env var overrides the `/mnt/beelink-media` destination root.
+- `JELLYFIN_DEST_BASE` env var overrides the `/ark/media/jellyfin` destination root.
 - Manual metadata editing still available through existing admin forms and assignment tools.

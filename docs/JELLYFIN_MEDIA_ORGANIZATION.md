@@ -93,24 +93,41 @@ as part of successful organization.
 - If file move succeeds but NFO write fails, the move remains successful and the
    warning is logged.
 
+## Custom Reassignment Mode
+
+Destination reassignment now supports a custom-name mode for cases where metadata search
+does not return a usable match.
+
+Behavior:
+
+- Custom title can be provided manually
+- Optional year can be included in folder name
+- IMDb id is optional in custom mode
+- Destination category still applies (`movies`, `tv shows`, `documentaries`, `live performances`)
+- Strict IMDb naming validation is skipped in custom mode
+- NFO write/overwrite is skipped in custom mode
+
+This mode is intended for manual correction and ingestion workflows where exact external
+metadata is unavailable but files still need to be placed consistently for Jellyfin.
+
 ## Destination Root
 
 Destination root is controlled by:
 - `JELLYFIN_DEST_BASE`
 - fallback: `MEDIA_LIBRARY_JELLYFIN_DEST_BASE`
-- default: `/mnt/beelink-media`
+- default: `/ark/media/jellyfin`
 
 Example local setup:
-- `JELLYFIN_DEST_BASE=/data/media/jellyfin`
+- `JELLYFIN_DEST_BASE=/ark/media/jellyfin`
 
 ## Practical Examples
 
 Movie input:
 - Source: `/data/media/encoded/movies/Yes_man/Yes Man (2008) - WEBRip.mkv`
-- Target folder: `/data/media/jellyfin/movies/Yes Man (2008) [imdbid-tt1068680]`
-- Output file: `/data/media/jellyfin/movies/Yes Man (2008) [imdbid-tt1068680]/Yes Man (2008) [imdbid-tt1068680].mkv`
+- Target folder: `/ark/media/jellyfin/movies/Yes Man (2008) [imdbid-tt1068680]`
+- Output file: `/ark/media/jellyfin/movies/Yes Man (2008) [imdbid-tt1068680]/Yes Man (2008) [imdbid-tt1068680].mkv`
 
 Show input:
 - Source: `/data/media/encoded/shows/Some Show/some_show_s01e03.mkv`
-- Target folder: `/data/media/jellyfin/shows/Some Show (2024) [imdbid-tt1234567]/Season 01`
-- Output file: `/data/media/jellyfin/shows/Some Show (2024) [imdbid-tt1234567]/Season 01/Some Show (2024) [imdbid-tt1234567] S01E03.mkv`
+- Target folder: `/ark/media/jellyfin/shows/Some Show (2024) [imdbid-tt1234567]/Season 01`
+- Output file: `/ark/media/jellyfin/shows/Some Show (2024) [imdbid-tt1234567]/Season 01/Some Show (2024) [imdbid-tt1234567] S01E03.mkv`

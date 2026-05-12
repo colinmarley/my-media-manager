@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Button, Stack, TextField, Typography } from '@mui/material';
 import Grid from '@mui/material/Grid';
-import { Extra } from '../../../../../types/firebase/FBRelease.type';
+import { Extra } from '../../../../../types/catalog/Release.type';
 
 interface NestedExtrasEditorProps {
   extras: Extra[];

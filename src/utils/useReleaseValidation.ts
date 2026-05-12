@@ -1,4 +1,4 @@
-import { FBRelease } from '../types/firebase/FBRelease.type';
+import { CatalogRelease } from '../types/catalog/Release.type';
 import {
   toLegacyError,
   validateNonEmptyArray,
@@ -23,7 +23,7 @@ const useReleaseValidation = () => {
     return toLegacyError(validateNonEmptyArray(discTypes, 'disc type'));
   };
 
-  const validateExtras = (extras: FBRelease['extras']): string | null => {
+  const validateExtras = (extras: CatalogRelease['extras']): string | null => {
     for (const extra of extras) {
       if (!extra.title) {
         return 'Extra title is required';
@@ -42,7 +42,7 @@ const useReleaseValidation = () => {
     return toLegacyError(validateRequiredText(mediaType, 'Media type'));
   };
 
-  const validateImages = (images: FBRelease['images']): string | null => {
+  const validateImages = (images: CatalogRelease['images']): string | null => {
     return toLegacyError(validateNonEmptyArray(images, 'image'));
   };
 

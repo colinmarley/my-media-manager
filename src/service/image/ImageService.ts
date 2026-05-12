@@ -5,7 +5,7 @@ class ImageService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = 'http://localhost:8082';
+    this.baseUrl = '/proxy-backend';
   }
 
   async searchImages(query: string): Promise<string[]> {

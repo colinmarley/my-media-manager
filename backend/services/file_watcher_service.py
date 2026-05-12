@@ -76,7 +76,7 @@ class FileWatcherService:
         self.file_manager = file_manager or FileSystemManager()
         self.queue_callback = queue_callback
         self.supported_extensions = {
-            extension.lower() for extension in self.file_manager.supported_extensions
+            extension.lower() for extension in settings.supported_video_extensions
         }
 
         self.file_stability_wait_seconds = settings.ingress_file_stability_wait_seconds
@@ -97,6 +97,22 @@ class FileWatcherService:
         self.processing_queue: Deque[QueuedIngressFile] = deque()
         self.queued_file_paths: set[str] = set()
         self.processed_event_count = 0
+        self.initial_queue_status: Dict[str, Any] = {
+            "in_progress": False,
+            "scanned_files": 0,
+            "queued_files": 0,
+            "started_at": None,
+            "completed_at": None,
+            "last_file": None,
+            "last_error": None,
+        }
+
+    @staticmethod
+    def _is_network_path(path: str) -> bool:
+        """Return True if *path* looks like a UNC or SMB network path."""
+        # Normalise backslashes so both UNC forms are caught
+        p = path.replace("\\", "/")
+        return p.startswith("//")
 
     def start_watching(
         self,
@@ -114,12 +130,31 @@ class FileWatcherService:
             if not normalized_paths:
                 raise ScanOperationError("At least one ingress path is required")
 
-            observer_class = PollingObserver if (use_polling if use_polling is not None else self.use_polling_watcher) else Observer
+            use_polling_resolved = use_polling if use_polling is not None else self.use_polling_watcher
+            # Auto-upgrade to polling for any network path (PollingObserver works
+            # over SMB/NFS; the default inotify-backed Observer does not).
+            if not use_polling_resolved:
+                for p in normalized_paths:
+                    if self._is_network_path(p):
+                        use_polling_resolved = True
+                        logger.info(
+                            "Network path detected — switching to PollingObserver",
+                            path=p,
+                        )
+                        break
+
+            if use_polling_resolved:
+                timeout = settings.ingress_polling_observer_timeout_seconds
+                observer_class = lambda: PollingObserver(timeout=timeout)  # noqa: E731
+            else:
+                observer_class = Observer  # type: ignore[assignment]
+            # Wrap in a callable for uniform instantiation below
+            _make_observer = observer_class if use_polling_resolved else lambda: observer_class()
             should_watch_recursively = (
                 recursive if recursive is not None else self.watch_recursive
             )
 
-            self.observer = observer_class()
+            self.observer = _make_observer()
             self.stop_event.clear()
             self.pending_files.clear()
             self.watched_paths = normalized_paths
@@ -144,7 +179,7 @@ class FileWatcherService:
             "File watcher started",
             ingress_paths=normalized_paths,
             recursive=should_watch_recursively,
-            polling=observer_class is PollingObserver,
+            polling=use_polling_resolved,
         )
         return self.get_status()
 
@@ -295,6 +330,44 @@ class FileWatcherService:
             self.queued_file_paths.clear()
             return cleared_count
 
+    def begin_initial_queue_scan(self) -> None:
+        """Mark background queueing of existing files as started."""
+        with self.lock:
+            self.initial_queue_status = {
+                "in_progress": True,
+                "scanned_files": 0,
+                "queued_files": 0,
+                "started_at": time.time(),
+                "completed_at": None,
+                "last_file": None,
+                "last_error": None,
+            }
+
+    def update_initial_queue_scan(
+        self,
+        *,
+        scanned_increment: int = 0,
+        queued_increment: int = 0,
+        last_file: Optional[str] = None,
+        last_error: Optional[str] = None,
+    ) -> None:
+        """Update progress for background queueing of existing files."""
+        with self.lock:
+            self.initial_queue_status["scanned_files"] += max(0, scanned_increment)
+            self.initial_queue_status["queued_files"] += max(0, queued_increment)
+            if last_file is not None:
+                self.initial_queue_status["last_file"] = last_file
+            if last_error is not None:
+                self.initial_queue_status["last_error"] = last_error
+
+    def finish_initial_queue_scan(self, error: Optional[str] = None) -> None:
+        """Mark background queueing of existing files as completed."""
+        with self.lock:
+            self.initial_queue_status["in_progress"] = False
+            self.initial_queue_status["completed_at"] = time.time()
+            if error is not None:
+                self.initial_queue_status["last_error"] = error
+
     def get_status(self) -> Dict[str, Any]:
         """Return the current watcher state."""
         with self.lock:
@@ -305,6 +378,7 @@ class FileWatcherService:
                 "queue_count": len(self.processing_queue),
                 "processed_event_count": self.processed_event_count,
                 "queued_files": [asdict(item) for item in list(self.processing_queue)],
+                "initial_queue": dict(self.initial_queue_status),
             }
 
     @property

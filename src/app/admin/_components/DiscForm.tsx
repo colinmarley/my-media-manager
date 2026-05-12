@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { TextField, Button, Typography, FormControl, FormControlLabel, Checkbox } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import useAddDisc from '../../../hooks/newMedia/useAddDisc';
-import { ImageFile, VideoFile } from '../../../types/firebase/FBCommon.type';
+import { ImageFile, VideoFile } from '../../../types/catalog/Common.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import useDiscValidation from '../../../utils/useDiscValidation';
 import styles from '../_styles/DiscForm.module.css';
