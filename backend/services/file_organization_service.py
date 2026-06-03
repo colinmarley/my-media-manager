@@ -32,12 +32,10 @@ class FileOrganizationService:
     def __init__(
         self,
         filesystem_manager: Optional[Any] = None,
-        firestore_service: Optional[Any] = None,
         jellyfin_dest_base: Optional[str] = None,
         db_session_factory: Optional[Callable] = None,
     ):
         self.filesystem_manager = filesystem_manager
-        self.firestore_service = firestore_service
         self.db_session_factory = db_session_factory
         self.jellyfin_dest_base = (
             jellyfin_dest_base
@@ -176,13 +174,6 @@ class FileOrganizationService:
                 )
 
             # Update assignment status in Firestore
-            if self.firestore_service and self.firestore_service._initialized:
-                await self._update_assignment_status(
-                    assignment.get("id"),
-                    all_successful,
-                    target_path,
-                    result,
-                )
 
             return result
 
@@ -567,9 +558,6 @@ class FileOrganizationService:
             if not success:
                 update_data["organizationError"] = operation_result.get("error", "Unknown error")
 
-            self.firestore_service.db.collection("media_assignments").document(
-                assignment_id
-            ).update(update_data)
 
             logger.info(
                 "Assignment status updated",

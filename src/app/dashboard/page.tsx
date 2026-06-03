@@ -9,6 +9,7 @@ const Dashboard = () => {
     { title: 'Movie Organizer', description: 'Preview and apply Jellyfin extras organization for processed movie folders.', href: '/dashboard/movie-organization' },
     { title: 'TV Organizer', description: 'Preview and apply Jellyfin show episode/special/extras organization for processed TV folders.', href: '/dashboard/show-organization' },
     { title: 'Ingress Automation', description: 'Monitor ingestion queue and automation health.', href: '/ingress-automation' },
+    { title: 'Tape Ingest', description: 'Digitize VHS, VHS-C, and Mini DV tapes — scan, classify, and send to Jellyfin.', href: '/admin/tape-ingest' },
     { title: 'Admin', description: 'Manage records, scanning, and tools.', href: '/admin' },
   ];
 

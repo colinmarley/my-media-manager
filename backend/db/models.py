@@ -1,3 +1,4 @@
+import sqlalchemy as sa
 from sqlalchemy import (
     Column,
     Text,
@@ -5,6 +6,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     ARRAY,
+    Float,
     ForeignKey,
     UniqueConstraint,
 )
@@ -304,7 +306,7 @@ class SeriesDirector(Base):
 class LibraryPath(Base):
     __tablename__ = "library_paths"
 
-    id               = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id               = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     name             = Column(Text, nullable=False)
     root_path        = Column(Text, nullable=False)
     media_type       = Column(Text, nullable=False, default="mixed")
@@ -319,7 +321,7 @@ class LibraryPath(Base):
 class ScanResult(Base):
     __tablename__ = "scan_results"
 
-    id                = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id                = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     library_path_id   = Column(Text, ForeignKey("library_paths.id", ondelete="SET NULL"))
     library_path      = Column(Text, nullable=False)
     status            = Column(Text, nullable=False, default="running")
@@ -335,7 +337,7 @@ class ScanResult(Base):
 class ScannedFile(Base):
     __tablename__ = "scanned_files"
 
-    id               = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id               = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     scan_id          = Column(Text, ForeignKey("scan_results.id", ondelete="CASCADE"))
     library_path_id  = Column(Text, ForeignKey("library_paths.id", ondelete="SET NULL"))
     file_path        = Column(Text, nullable=False)
@@ -354,7 +356,7 @@ class ScannedFile(Base):
 class ScannedDirectory(Base):
     __tablename__ = "scanned_directories"
 
-    id              = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id              = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     scan_id         = Column(Text, ForeignKey("scan_results.id", ondelete="CASCADE"))
     library_path_id = Column(Text, ForeignKey("library_paths.id", ondelete="SET NULL"))
     dir_path        = Column(Text, nullable=False)
@@ -368,7 +370,7 @@ class ScannedDirectory(Base):
 class MediaFile(Base):
     __tablename__ = "media_files"
 
-    id                  = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id                  = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     scan_id             = Column(Text, ForeignKey("scan_results.id", ondelete="SET NULL"))
     library_path_id     = Column(Text, ForeignKey("library_paths.id", ondelete="SET NULL"))
     file_path           = Column(Text, nullable=False, unique=True)
@@ -404,7 +406,7 @@ class MediaFile(Base):
 class MediaAssignment(Base):
     __tablename__ = "media_assignments"
 
-    id                      = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id                      = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     primary_file_id         = Column(Text, ForeignKey("media_files.id", ondelete="SET NULL"))
     media_type              = Column(Text, nullable=False)
     media_id                = Column(Text, nullable=False)
@@ -439,7 +441,7 @@ class AssignmentExtraFile(Base):
 class JellyfinFolder(Base):
     __tablename__ = "jellyfin_folders"
 
-    id               = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id               = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     folder_path      = Column(Text, nullable=False, unique=True)
     folder_name      = Column(Text, nullable=False)
     folder_type      = Column(Text)
@@ -463,10 +465,69 @@ class JellyfinFolder(Base):
     updated_at       = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class ComplianceScan(Base):
+    __tablename__ = "compliance_scans"
+
+    id            = Column(Text, primary_key=True)
+    library_path  = Column(Text, nullable=False)
+    status        = Column(Text, nullable=False, default="running")
+    triggered_by  = Column(Text)
+    summary       = Column(JSONB, default={})
+    started_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at  = Column(DateTime(timezone=True))
+    created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ComplianceFinding(Base):
+    __tablename__ = "compliance_findings"
+
+    id                  = Column(Text, primary_key=True)
+    scan_id             = Column(Text, ForeignKey("compliance_scans.id", ondelete="CASCADE"), nullable=False)
+    media_type          = Column(Text, nullable=False, default="movie")
+    media_id            = Column(Text)
+    folder_path         = Column(Text)
+    file_path           = Column(Text)
+    issue_type          = Column(Text, nullable=False)
+    severity            = Column(Text, nullable=False, default="medium")
+    confidence          = Column(Integer, default=0)
+    current_state       = Column(JSONB, default={})
+    expected_state      = Column(JSONB, default={})
+    rationale           = Column(Text)
+    status              = Column(Text, nullable=False, default="open")
+    created_at          = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at          = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ComplianceAction(Base):
+    __tablename__ = "compliance_actions"
+
+    id            = Column(Text, primary_key=True)
+    finding_id    = Column(Text, ForeignKey("compliance_findings.id", ondelete="CASCADE"), nullable=False)
+    action_type   = Column(Text, nullable=False)
+    source_path   = Column(Text)
+    target_path   = Column(Text)
+    payload       = Column(JSONB, default={})
+    selected      = Column(Boolean, default=True)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ComplianceReviewEvent(Base):
+    __tablename__ = "compliance_review_events"
+
+    id            = Column(Text, primary_key=True)
+    finding_id    = Column(Text, ForeignKey("compliance_findings.id", ondelete="CASCADE"), nullable=False)
+    event_type    = Column(Text, nullable=False)
+    actor         = Column(Text)
+    note          = Column(Text)
+    event_payload = Column(JSONB, default={})
+    created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class MediaMatch(Base):
     __tablename__ = "media_matches"
 
-    id         = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id         = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     file_info  = Column(JSONB, nullable=False)
     confidence = Column(Integer, default=0)
     media_id   = Column(Text)
@@ -484,7 +545,7 @@ class MediaMatch(Base):
 class IngressQueueItem(Base):
     __tablename__ = "ingress_queue"
 
-    id                = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id                = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     file_path         = Column(Text, nullable=False)
     file_name         = Column(Text, nullable=False)
     ingress_path      = Column(Text)
@@ -511,7 +572,7 @@ class IngressQueueItem(Base):
 class IngressProcessingHistory(Base):
     __tablename__ = "ingress_processing_history"
 
-    id            = Column(Text, primary_key=True, server_default=func.gen_random_uuid().cast(Text))
+    id            = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
     queue_item_id = Column(Text)
     snapshot      = Column(JSONB, nullable=False)
     created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -538,3 +599,41 @@ class GenericDataStore(Base):
     data       = Column(JSONB, nullable=False, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+# ---------------------------------------------------------------------------
+# Tape Digitization
+# ---------------------------------------------------------------------------
+
+class TapeSession(Base):
+    __tablename__ = "tape_sessions"
+
+    id               = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
+    created_at       = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at       = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    tape_type        = Column(Text, nullable=False)
+    brand            = Column(Text)
+    condition        = Column(Text)
+    recording_speed  = Column(Text)
+    label_notes      = Column(Text)
+    source_path      = Column(Text, nullable=False)
+    destination_base = Column(Text, nullable=False)
+    apply_ffmpeg     = Column(Boolean, nullable=False, default=False)
+
+
+class TapeSessionFile(Base):
+    __tablename__ = "tape_session_files"
+
+    id                = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
+    session_id        = Column(Text, ForeignKey("tape_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    file_path         = Column(Text, nullable=False)
+    file_name         = Column(Text, nullable=False)
+    content_type      = Column(Text, nullable=False)
+    duration_seconds  = Column(Float)
+    resolution        = Column(Text)
+    codec             = Column(Text)
+    file_size_bytes   = Column(BigInteger)
+    destination_path  = Column(Text)
+    processing_status = Column(Text, nullable=False, default="pending")
+    tape_id           = Column(Text, nullable=True, index=True)
+    metadata_json     = Column(JSONB, default={})

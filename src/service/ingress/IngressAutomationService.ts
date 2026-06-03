@@ -77,7 +77,7 @@ export interface QueueManualAssignPayload {
   source?: string;
   imdbId?: string;
   mediaId?: string;
-  firebaseMediaId?: string;
+  legacyMediaId?: string;
   rawData?: Record<string, unknown>;
   posterUrl?: string;
   season?: number;

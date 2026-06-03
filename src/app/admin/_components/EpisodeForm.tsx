@@ -127,7 +127,7 @@ const EpisodeForm: React.FC = () => {
   };
 
   const handleAddDirector = () => {
-    // TODO: Check that the Director exists in firebase Collection prior to adding
+    // TODO: Validate that the director exists in the catalog before adding
     setDirectors([...directors, { fullName: '', title: '' }]);
   };
 

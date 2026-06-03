@@ -51,6 +51,7 @@ interface PreviewFolder {
   folderName: string;
   moveCount: number;
   moves: PreviewMove[];
+  supportedCategories?: string[];
 }
 
 interface EditableMove extends PreviewMove {

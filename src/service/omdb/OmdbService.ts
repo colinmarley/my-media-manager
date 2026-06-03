@@ -69,6 +69,15 @@ export const retrieveMediaDataById = async (id: string): Promise<OmdbResponseFul
   return fetchFromOmdb(params);
 };
 
-export const searchByText = async (text: string): Promise<OmdbSearchResponse[]> => {
-  return searchOmdb(text);
+export const searchByText = async (text: string, type?: 'movie' | 'series' | 'episode'): Promise<OmdbSearchResponse[]> => {
+  const params = new URLSearchParams({ s: text });
+  if (type) params.set('type', type);
+  const data = await requestOmdb(params);
+  if (data.Response === 'True') return data.Search;
+  return [];
+};
+
+export const retrieveEpisodeData = async (seriesId: string, season: number, episode: number): Promise<OmdbResponseFull> => {
+  const params = new URLSearchParams({ i: seriesId, Season: String(season), Episode: String(episode) });
+  return fetchFromOmdb(params);
 };

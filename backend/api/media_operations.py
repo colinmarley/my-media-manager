@@ -36,14 +36,22 @@ router = APIRouter()
 # Initialize services
 file_manager = FileSystemManager()
 metadata_extractor = MediaMetadataExtractor()
-firestore_service = None  # Migrated to PostgreSQL; data endpoints will be updated in Phase 5
+firestore_service = None  # Migrated to PostgreSQL; use /api/catalog endpoints instead
+
+def _firestore_unavailable():
+    from fastapi import HTTPException
+    raise HTTPException(
+        status_code=503,
+        detail="This endpoint relied on Firestore which has been removed. Use /api/catalog/* instead."
+    )
+
 media_resolution_service = None
 file_organization_service = None
 
 def initialize_organization_services(fs_service):
     """Initialize Phase 4 services"""
     global media_resolution_service, file_organization_service
-    media_resolution_service = MediaResolutionService(fs_service)
+    media_resolution_service = MediaResolutionService()
     file_organization_service = FileOrganizationService(file_manager, fs_service)
 
 # ============================================================================
@@ -159,6 +167,7 @@ async def scan_files_with_metadata(request: ScanFilesRequest):
                 }
                 
                 # Save to Firestore media_files collection
+                _firestore_unavailable()
                 firestore_service.create_document('media_files', file_doc['id'], file_doc)
                 
                 scanned_files.append(file_doc)
@@ -258,9 +267,11 @@ async def assign_files_to_movie(request: AssignToMovieRequest):
             }
             
             # Save assignment to Firestore
+            _firestore_unavailable()
             firestore_service.create_document('media_assignments', assignment_id, assignment_doc)
             
             # Update file document
+            _firestore_unavailable()
             firestore_service.update_document('media_files', file_id, {
                 'isAssigned': True,
                 'assignmentId': assignment_id,
@@ -273,6 +284,7 @@ async def assign_files_to_movie(request: AssignToMovieRequest):
         
         # Update movie with assignment summary
         existing_assignments = movie.get('assignmentSummary', {})
+        _firestore_unavailable()
         firestore_service.update_document('movies', request.movieId, {
             'assignmentSummary': {
                 'totalFiles': existing_assignments.get('totalFiles', 0) + len(assignments),
@@ -343,9 +355,11 @@ async def assign_files_to_episode(request: AssignToEpisodeRequest):
             }
             
             # Save assignment
+            _firestore_unavailable()
             firestore_service.create_document('media_assignments', assignment_id, assignment_doc)
             
             # Update file document
+            _firestore_unavailable()
             firestore_service.update_document('media_files', file_id, {
                 'isAssigned': True,
                 'assignmentId': assignment_id,
@@ -357,6 +371,7 @@ async def assign_files_to_episode(request: AssignToEpisodeRequest):
             logger.info("File assigned to episode", file_id=file_id, assignment_id=assignment_id)
         
         # Update episode with file tracking
+        _firestore_unavailable()
         firestore_service.update_document('episodes', request.episodeId, {
             'hasFile': True,
             'fileId': request.fileIds[0] if request.fileIds else None,  # Primary file
@@ -464,6 +479,7 @@ async def organize_files(assignmentId: str, request: OrganizeFilesRequest):
             logger.error("File organization failed", error=error_msg)
             
             # Update assignment with failure status
+            _firestore_unavailable()
             firestore_service.update_document('media_assignments', assignmentId, {
                 'organizationStatus': 'failed',
                 'organizationError': error_msg,
@@ -498,6 +514,7 @@ async def organize_files(assignmentId: str, request: OrganizeFilesRequest):
             }]
         }
         
+        _firestore_unavailable()
         firestore_service.update_document('media_assignments', assignmentId, final_update)
         
         # Step 6: Update media document with folder path and file count
@@ -528,6 +545,7 @@ async def organize_files(assignmentId: str, request: OrganizeFilesRequest):
                 "lastOrganized": datetime.utcnow().isoformat(),
             }
         
+        _firestore_unavailable()
         firestore_service.update_document(collection, media_id, media_update)
         
         logger.info(
@@ -588,6 +606,7 @@ async def validate_jellyfin_structure(folderId: str):
         }
         
         # Update folder document with validation results
+        _firestore_unavailable()
         firestore_service.update_document('jellyfin_folders', folderId, {
             'validation': validation_results,
             'lastValidated': datetime.utcnow().isoformat()

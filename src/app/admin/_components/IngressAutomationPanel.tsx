@@ -820,7 +820,7 @@ const IngressAutomationPanel: React.FC = () => {
             : selectedAssignResult.source === 'tmdb'
               ? selectedAssignResult.id.replace(/^tmdb-/, '')
               : selectedAssignResult.id,
-          firebaseMediaId: selectedAssignResult.source === 'catalog' ? selectedAssignResult.id : undefined,
+          legacyMediaId: selectedAssignResult.source === 'catalog' ? selectedAssignResult.id : undefined,
           rawData: (selectedAssignResult.data as Record<string, unknown>) || undefined,
           posterUrl: selectedAssignResult.poster || undefined,
           season: assignMediaType === 'episode' && !mapping.unknown ? mapping.season : undefined,

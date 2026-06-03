@@ -94,14 +94,12 @@ class IngressQueueService:
         self,
         parser: Optional[FilenameParser] = None,
         auto_matcher_service: Optional[Any] = None,
-        firestore_service: Optional[Any] = None,
         assignment_orchestrator: Optional[Any] = None,
         auto_assign_threshold: int = 80,
         db_session_factory: Optional[Any] = None,
     ):
         self.parser = parser or FilenameParser()
         self.auto_matcher_service = auto_matcher_service
-        self.firestore_service = firestore_service
         self.assignment_orchestrator = assignment_orchestrator
         self.auto_assign_threshold = max(0, min(auto_assign_threshold, 100))
         self.db_session_factory = db_session_factory
@@ -614,8 +612,7 @@ class IngressQueueService:
             "season": None if unknown_episode else match_payload.get("season"),
             "episode": None if unknown_episode else match_payload.get("episode"),
             "imdb_id": match_payload.get("imdb_id"),
-            "media_id": match_payload.get("media_id") or match_payload.get("firebase_media_id") or match_payload.get("imdb_id"),
-            "firebase_media_id": match_payload.get("firebase_media_id"),
+            "media_id": match_payload.get("media_id") or match_payload.get("imdb_id"),
             "confidence_score": 100,
             "match_reason": "manual_assignment",
             "raw_data": match_payload.get("raw_data") or {},
@@ -1456,17 +1453,6 @@ class IngressQueueService:
                     error=str(exc),
                 )
 
-        if self.firestore_service is None:
-            return
-
-        try:
-            await self.firestore_service.save_ingress_queue_item(item.to_dict())
-        except Exception as exc:
-            logger.warning(
-                "Failed to persist ingress queue item",
-                item_id=item.id,
-                error=str(exc),
-            )
 
     async def _persist_processing_history(self, history_item: Dict[str, Any]) -> None:
         if self.db_session_factory is not None:
@@ -1482,13 +1468,6 @@ class IngressQueueService:
             except Exception as exc:
                 logger.warning("Failed to persist processing history to database", error=str(exc))
 
-        if self.firestore_service is None:
-            return
-
-        try:
-            await self.firestore_service.save_ingress_processing_history(history_item)
-        except Exception as exc:
-            logger.warning("Failed to persist processing history", error=str(exc))
 
     @staticmethod
     def _is_within_path(path: str, parent: str) -> bool:

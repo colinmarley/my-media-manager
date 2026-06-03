@@ -26,8 +26,8 @@ const AddDirectorModule: React.FC<AddDirectorModuleProps> = ({ onClose }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const firestoreService = new CatalogService('directors');
-    await firestoreService.addDocument(formData);
+    const catalogService = new CatalogService('directors');
+    await catalogService.addDocument(formData);
     await refreshDirectorOptions();
     onClose();
   };

@@ -76,7 +76,7 @@ class QueueManualAssignRequest(BaseModel):
     source: str = Field(default="manual")
     imdbId: Optional[str] = None
     mediaId: Optional[str] = None
-    firebaseMediaId: Optional[str] = None
+    legacyMediaId: Optional[str] = None
     rawData: Optional[Dict[str, Any]] = None
     posterUrl: Optional[str] = None
     season: Optional[int] = None
@@ -529,7 +529,7 @@ async def manual_assign_ingress_item(
         "media_type": payload.mediaType,
         "imdb_id": canonical_imdb_id,
         "media_id": payload.mediaId,
-        "firebase_media_id": payload.firebaseMediaId,
+        "legacy_media_id": payload.legacyMediaId,
         "season": None if payload.unknownEpisode else payload.season,
         "episode": None if payload.unknownEpisode else payload.episode,
         "unknown_episode": payload.unknownEpisode,
@@ -560,7 +560,7 @@ async def reset_ingress_item_to_encoded(payload: QueueResetToEncodedRequest, req
     """Move organized files for a queue item back to encoded source paths for retesting."""
     queue_service = req.app.state.ingress_queue_service
     auto_matcher_service = req.app.state.auto_matcher_service
-    firestore_service = req.app.state.firestore_service
+    firestore_service = getattr(req.app.state, "firestore_service", None)
     file_manager = req.app.state.file_manager
 
     with queue_service.lock:
@@ -578,8 +578,6 @@ async def reset_ingress_item_to_encoded(payload: QueueResetToEncodedRequest, req
             "message": "Queue item has no assignment to reset",
             "code": "ASSIGNMENT_NOT_FOUND",
         })
-
-    assignment_ref = firestore_service.db.collection("media_assignments").document(queue_item.assignment_id)
     assignment_doc = assignment_ref.get()
     if not assignment_doc.exists:
         raise HTTPException(status_code=404, detail={
@@ -621,18 +619,7 @@ async def reset_ingress_item_to_encoded(payload: QueueResetToEncodedRequest, req
     media_type = assignment.get("mediaType")
     media_collection = "movies" if media_type == "movie" else "series"
     if media_id:
-        firestore_service.db.collection(media_collection).document(media_id).set({
-            "folderPath": None,
-            "fileCount": 0,
-            "isOrganized": False,
-            "updatedAt": datetime.utcnow().isoformat(),
-            "jellyfinInfo": {
-                "folderPath": None,
-                "folderName": None,
-                "isOrganized": False,
-                "lastOrganized": None,
-            },
-        }, merge=True)
+        pass  # Firestore write removed
 
     with queue_service.lock:
         queue_item.status = "needs_review"
@@ -658,7 +645,7 @@ async def reset_ingress_item_to_encoded(payload: QueueResetToEncodedRequest, req
 async def reset_completed_items_to_encoded(req: Request):
     """Reset all completed organized queue items back to encoded paths."""
     queue_service = req.app.state.ingress_queue_service
-    firestore_service = req.app.state.firestore_service
+    firestore_service = getattr(req.app.state, "firestore_service", None)
     file_manager = req.app.state.file_manager
 
     with queue_service.lock:
@@ -687,7 +674,6 @@ async def reset_completed_items_to_encoded(req: Request):
     errors: List[str] = []
 
     for queue_item in candidate_items:
-        assignment_ref = firestore_service.db.collection("media_assignments").document(queue_item.assignment_id)
         assignment_doc = assignment_ref.get()
         if not assignment_doc.exists:
             errors.append(f"Assignment not found: {queue_item.assignment_id}")
@@ -724,18 +710,8 @@ async def reset_completed_items_to_encoded(req: Request):
         media_type = assignment.get("mediaType")
         media_collection = "movies" if media_type == "movie" else "series"
         if media_id:
-            firestore_service.db.collection(media_collection).document(media_id).set({
-                "folderPath": None,
-                "fileCount": 0,
-                "isOrganized": False,
-                "updatedAt": datetime.utcnow().isoformat(),
-                "jellyfinInfo": {
-                    "folderPath": None,
-                    "folderName": None,
-                    "isOrganized": False,
-                    "lastOrganized": None,
-                },
-            }, merge=True)
+            pass  # Firestore write removed
+
 
         with queue_service.lock:
             queue_item.status = "needs_review"
@@ -958,11 +934,6 @@ async def update_ingress_config(payload: UpdateConfigRequest, req: Request):
     if payload.autoProcessIntervalSeconds is not None:
         runtime_config["autoProcessIntervalSeconds"] = payload.autoProcessIntervalSeconds
 
-    if firestore_service is not None:
-        try:
-            await firestore_service.save_ingress_config(runtime_config)
-        except Exception as exc:
-            logger.warning("Failed to persist ingress config", error=str(exc))
 
     return {
         "success": True,

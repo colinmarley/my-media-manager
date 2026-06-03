@@ -21,7 +21,7 @@ from utils.logging import logger
 class MatchCandidate:
     """A potential match result from an external source."""
 
-    source: str  # omdb, tmdb, firebase
+    source: str  # omdb, tmdb, postgres
     media_id: str
     title: str
     media_type: str  # movie, series, episode
@@ -44,7 +44,6 @@ class AutoMatcherService:
         self,
         omdb_api_key: Optional[str] = None,
         tmdb_api_key: Optional[str] = None,
-        firestore_service: Optional[Any] = None,
         metadata_source: str = "library_then_omdb",
     ):
         self.omdb_api_key = (
@@ -60,7 +59,6 @@ class AutoMatcherService:
         )
         self.tmdb_base_url = "https://api.themoviedb.org/3"
         self.request_timeout = 10
-        self.firestore_service = firestore_service
         self.metadata_source = self._normalize_metadata_source(metadata_source)
 
     def _normalize_metadata_source(self, source: Optional[str]) -> str:
@@ -97,22 +95,7 @@ class AutoMatcherService:
         candidates: List[MatchCandidate] = []
         mode = self.metadata_source
 
-        firebase_candidates: List[MatchCandidate] = []
-        if mode in ("library_then_omdb", "library_only"):
-            try:
-                firebase_candidates = self._search_firebase(title, year, parsed_info)
-                candidates.extend(firebase_candidates)
-            except Exception as exc:
-                logger.warning(
-                    "Firebase search failed",
-                    title=title,
-                    error=str(exc),
-                )
-
-        should_call_omdb = mode in ("library_then_omdb", "omdb_only")
-        if mode == "library_then_omdb":
-            # External lookup when no internal candidates or all are missing imdb ids.
-            should_call_omdb = len(firebase_candidates) == 0 or all(not c.imdb_id for c in firebase_candidates)
+        should_call_omdb = mode in ("library_then_omdb", "omdb_only", "library_only")
 
         if should_call_omdb:
             try:
@@ -164,129 +147,6 @@ class AutoMatcherService:
             "best_match": best_candidate.to_dict() if best_candidate else None,
         }
 
-    def _search_firebase(
-        self,
-        title: str,
-        year: Optional[int],
-        parsed_info: Dict[str, Any],
-    ) -> List[MatchCandidate]:
-        """Search internal Firebase records before external providers."""
-        if not self.firestore_service:
-            return []
-
-        if not getattr(self.firestore_service, "_initialized", False):
-            return []
-
-        media_type = parsed_info.get("media_type")
-        if media_type == "episode":
-            return self._search_firebase_series(title, year, parsed_info)
-
-        return self._search_firebase_movies(title, year)
-
-    def _search_firebase_movies(
-        self,
-        title: str,
-        year: Optional[int],
-    ) -> List[MatchCandidate]:
-        candidates: List[MatchCandidate] = []
-
-        try:
-            docs = self.firestore_service.db.collection("movies").limit(120).get()
-            for doc in docs:
-                payload = doc.to_dict() or {}
-                candidate_title = payload.get("title") or ""
-                if not candidate_title:
-                    continue
-
-                title_similarity = self._fuzzy_match_titles(title, candidate_title)
-                if title_similarity < 0.6:
-                    continue
-
-                candidate_year = self._extract_year_from_doc(payload)
-                file_count = self._extract_file_association_count(payload)
-
-                candidate = MatchCandidate(
-                    source="firebase",
-                    media_id=doc.id,
-                    title=candidate_title,
-                    media_type="movie",
-                    year=candidate_year,
-                    imdb_id=self._extract_imdb_id(payload),
-                    match_reason=(
-                        "firebase_title_match"
-                        if file_count <= 0
-                        else "firebase_title_match_with_existing_files"
-                    ),
-                    raw_data={
-                        "collection": "movies",
-                        "has_existing_files": file_count > 0,
-                        "associated_file_count": file_count,
-                    },
-                )
-                candidates.append(candidate)
-        except Exception as exc:
-            logger.warning("Firebase movie search failed", title=title, error=str(exc))
-
-        return candidates
-
-    def _search_firebase_series(
-        self,
-        title: str,
-        year: Optional[int],
-        parsed_info: Dict[str, Any],
-    ) -> List[MatchCandidate]:
-        candidates: List[MatchCandidate] = []
-        season = parsed_info.get("season")
-        episode = parsed_info.get("episode")
-
-        try:
-            docs = self.firestore_service.db.collection("series").limit(120).get()
-            for doc in docs:
-                payload = doc.to_dict() or {}
-                candidate_title = payload.get("title") or ""
-                if not candidate_title:
-                    continue
-
-                title_similarity = self._fuzzy_match_titles(title, candidate_title)
-                if title_similarity < 0.6:
-                    continue
-
-                candidate_year = self._extract_year_from_doc(payload)
-                total_file_count = self._extract_file_association_count(payload)
-                episode_file_count = self._count_episode_level_assignments(
-                    series_id=doc.id,
-                    season=season,
-                    episode=episode,
-                )
-
-                has_existing_files = total_file_count > 0 or episode_file_count > 0
-                candidate = MatchCandidate(
-                    source="firebase",
-                    media_id=doc.id,
-                    title=candidate_title,
-                    media_type="series",
-                    year=candidate_year,
-                    season=season,
-                    episode=episode,
-                    imdb_id=self._extract_imdb_id(payload),
-                    match_reason=(
-                        "firebase_series_match"
-                        if not has_existing_files
-                        else "firebase_series_match_with_existing_files"
-                    ),
-                    raw_data={
-                        "collection": "series",
-                        "has_existing_files": has_existing_files,
-                        "associated_file_count": total_file_count,
-                        "associated_episode_file_count": episode_file_count,
-                    },
-                )
-                candidates.append(candidate)
-        except Exception as exc:
-            logger.warning("Firebase series search failed", title=title, error=str(exc))
-
-        return candidates
-
     def _count_episode_level_assignments(
         self,
         series_id: str,
@@ -296,19 +156,7 @@ class AutoMatcherService:
         if season is None or episode is None:
             return 0
 
-        try:
-            docs = (
-                self.firestore_service.db.collection("media_assignments")
-                .where("mediaType", "==", "episode")
-                .where("seriesId", "==", series_id)
-                .where("seasonNumber", "==", season)
-                .where("episodeNumber", "==", episode)
-                .limit(50)
-                .get()
-            )
-            return len(docs)
-        except Exception:
-            return 0
+        return 0  # Postgres episode count not yet implemented
 
     def _extract_file_association_count(self, payload: Dict[str, Any]) -> int:
         assignment_summary = payload.get("assignmentSummary") or {}
@@ -589,8 +437,8 @@ class AutoMatcherService:
             if parsed_episode is not None:
                 score += 10
 
-        if candidate.source == "firebase":
-            # Prefer firebase strongly only when it carries stable external ids.
+        if candidate.source == "postgres":
+            # Prefer internal DB candidates when they carry stable external ids.
             # Sparse rows without imdb ids should not outrank high-quality OMDB matches.
             score += 20 if candidate.imdb_id else 5
             raw_data = candidate.raw_data or {}

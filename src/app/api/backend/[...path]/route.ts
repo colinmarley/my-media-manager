@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const BACKEND_URL = process.env.BACKEND_URL ?? 'http://127.0.0.1:8082';
 
 // Parse a raw Set-Cookie header string into name, value, and cookie options.
-function parseSetCookie(raw: string): Parameters<NextResponse['cookies']['set']>[0] {
+function parseSetCookie(raw: string): [string, string, Record<string, unknown>] {
   const [nameVal, ...parts] = raw.split(';').map(s => s.trim());
   const eq = nameVal.indexOf('=');
   const name = nameVal.slice(0, eq);
@@ -24,7 +24,7 @@ function parseSetCookie(raw: string): Parameters<NextResponse['cookies']['set']>
     else if (k === 'samesite') opts.sameSite = v.toLowerCase() as 'lax' | 'strict' | 'none';
     else if (k === 'expires') opts.expires = new Date(v);
   }
-  return opts as Parameters<NextResponse['cookies']['set']>[0];
+  return [name, value, opts];
 }
 
 async function proxy(request: NextRequest): Promise<NextResponse> {
@@ -79,7 +79,8 @@ async function proxy(request: NextRequest): Promise<NextResponse> {
     if (single) rawCookies.push(single);
   }
   for (const raw of rawCookies) {
-    proxiedResponse.cookies.set(parseSetCookie(raw));
+    const [name, value, options] = parseSetCookie(raw);
+    proxiedResponse.cookies.set(name, value, options);
   }
 
   return proxiedResponse;

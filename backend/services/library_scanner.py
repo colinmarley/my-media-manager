@@ -128,7 +128,6 @@ class LibraryScanner:
         self.executor = ThreadPoolExecutor(max_workers=settings.scan_worker_threads)
         self.running_scans: Dict[str, ScanProgress] = {}  # Active and completed scans
         self.scan_callbacks: Dict[str, Callable] = {}  # Progress callbacks
-        self.firestore_service = None  # Migrated to PostgreSQL (Phase 5)
         
     async def start_scan(
         self, 
@@ -261,8 +260,8 @@ class LibraryScanner:
                             duplicate_paths.add(diff_item.get('path', ''))
                         
                         # Also get paths that have exact duplicates (no differences)
-                        existing_files = await self.firestore_service.get_existing_file_paths(user_id)
-                        existing_dirs = await self.firestore_service.get_existing_directory_paths(user_id)
+                        existing_files = {}  # Firestore removed; Postgres duplicate detection not yet implemented
+                        existing_dirs = {}
                         
                         for result in scan_results:
                             result_path = result.get('path', '')
@@ -580,8 +579,8 @@ class LibraryScanner:
             }
             
             # Get existing files and directories from Firestore
-            existing_files = await self.firestore_service.get_existing_file_paths(user_id)
-            existing_dirs = await self.firestore_service.get_existing_directory_paths(user_id)
+            existing_files = {}  # Firestore removed; Postgres duplicate detection not yet implemented
+            existing_dirs = {}
             
             new_items = 0
             duplicates_found = 0
@@ -841,8 +840,8 @@ class LibraryScanner:
             }
             
             # Get existing files and directories from Firestore
-            existing_files = await self.firestore_service.get_existing_file_paths(user_id)
-            existing_dirs = await self.firestore_service.get_existing_directory_paths(user_id)
+            existing_files = {}  # Firestore removed; Postgres duplicate detection not yet implemented
+            existing_dirs = {}
             
             # Create composite keys for existing data (libraryPath:path)
             existing_file_keys = {}
@@ -909,60 +908,3 @@ class LibraryScanner:
                 "differences": [],
                 "error": str(e)
             }
-    
-    async def _save_scan_results_to_database(self, scan_id: str, library_path: str, scan_results: List[Dict[str, Any]], progress: ScanProgress):
-        """Save scan results to Firestore database"""
-        try:
-            # Try to initialize Firestore service
-            await self.firestore_service.initialize()
-            
-            # Separate files and directories
-            files = [item for item in scan_results if item.get('type') == 'file']
-            directories = [item for item in scan_results if item.get('type') == 'directory']
-            
-            logger.info("Saving scan results to database", 
-                       scan_id=scan_id, 
-                       files_count=len(files), 
-                       directories_count=len(directories))
-            
-            # Save scan summary
-            scan_result = {
-                'scanId': scan_id,
-                'libraryPath': library_path,
-                'status': progress.status,
-                'totalItems': progress.total_items,
-                'processedItems': progress.processed_items,
-                'filesFound': len(files),
-                'directoriesFound': len(directories),
-                'startTime': progress.start_time,
-                'endTime': progress.end_time,
-                'elapsedTime': progress.elapsed_time,
-                'errors': progress.errors
-            }
-            
-            await self.firestore_service.save_scan_result(scan_result)
-            
-            # Save files to database
-            if files:
-                await self.firestore_service.save_media_files(files, scan_id)
-            
-            # Save directories to database  
-            if directories:
-                await self.firestore_service.save_media_directories(directories, scan_id)
-            
-            # Update library path scan status
-            await self.firestore_service.update_library_path_scan_status(
-                library_path, scan_id, progress.status
-            )
-            
-            logger.info("Scan results saved to database successfully", scan_id=scan_id)
-            
-        except Exception as e:
-            logger.warning(f"Failed to save scan results to database: {str(e)}")
-            logger.info("Scan completed successfully but results were not saved to database")
-            # Don't fail the scan if database save fails
-            progress.errors.append({
-                'type': 'database_save_error',
-                'message': str(e),
-                'timestamp': time.time()
-            })

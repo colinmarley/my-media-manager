@@ -27,8 +27,8 @@ const AddActorModule: React.FC<AddActorModuleProps> = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const firestoreService = new CatalogService('actors');
-    await firestoreService.addDocument(formData);
+    const catalogService = new CatalogService('actors');
+    await catalogService.addDocument(formData);
     refreshActorOptions();
     closeAddActorModal();
   };

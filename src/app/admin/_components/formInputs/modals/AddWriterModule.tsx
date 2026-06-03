@@ -31,8 +31,8 @@ const AddWriterModule: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const firestoreService = new CatalogService('writers');
-    await firestoreService.addDocument(formData);
+    const catalogService = new CatalogService('writers');
+    await catalogService.addDocument(formData);
     await refreshWriterOptions();
     closeAddWriterModal();
   };

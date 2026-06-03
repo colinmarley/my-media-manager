@@ -19,12 +19,10 @@ class AssignmentOrchestrator:
 
     def __init__(
         self,
-        firestore_service: Optional[Any] = None,
         file_organization_service: Optional[Any] = None,
         auto_organize_enabled: bool = True,
         db_session_factory: Optional[Any] = None,
     ):
-        self.firestore_service = firestore_service
         self.file_organization_service = file_organization_service
         self.auto_organize_enabled = auto_organize_enabled
         self.db_session_factory = db_session_factory
@@ -37,7 +35,7 @@ class AssignmentOrchestrator:
         """
         Create an automatic assignment for a queue item when confidence is high.
 
-        Works with or without a Firestore service.  When Firestore is available
+        Creates assignments and persists them to PostgreSQL.
         the assignment document is persisted there; otherwise the assignment lives
         only in memory for the duration of the organize call.
 
@@ -99,7 +97,7 @@ class AssignmentOrchestrator:
             "mediaType": media_type,
             # Prefer explicit selected catalog ID when available. This keeps
             # manual assignments linked to the intended catalog row even when
-            # Firestore lookup is unavailable or disabled.
+
             "mediaId": resolved_media.get("id") if resolved_media else (explicit_media_id or imdb_id),
             "organizationStatus": "pending",
             "dateAssigned": datetime.utcnow().isoformat(),
@@ -163,11 +161,7 @@ class AssignmentOrchestrator:
 
         organization_result = None
         try:
-            # Persist to Firestore when available (optional)
-            firestore_ok = (
-                self.firestore_service is not None
-                and getattr(self.firestore_service, "_initialized", False)
-            )
+            # Persist to PostgreSQL
             if self.db_session_factory is not None:
                 async with self.db_session_factory() as session:
                     db_assignment = await session.get(DBMediaAssignment, assignment_id)
@@ -193,21 +187,12 @@ class AssignmentOrchestrator:
                     db_assignment.match_data = assignment_doc.get("match") or {}
                     await session.commit()
 
-            if firestore_ok:
-                self.firestore_service.db.collection("media_assignments").document(
-                    assignment_id
-                ).set(assignment_doc)
-                logger.info(
-                    "Auto-assignment persisted to Firestore",
-                    assignment_id=assignment_id,
-                )
-            else:
-                logger.info(
-                    "Auto-assignment created",
-                    assignment_id=assignment_id,
-                    queue_item_id=queue_item.get("id"),
-                    media_type=media_type,
-                )
+            logger.info(
+                "Auto-assignment created",
+                assignment_id=assignment_id,
+                queue_item_id=queue_item.get("id"),
+                media_type=media_type,
+            )
 
             should_organize = force_organize or self.auto_organize_enabled
             if should_organize and self.file_organization_service is not None:
@@ -228,55 +213,6 @@ class AssignmentOrchestrator:
                             db_assignment.operations = organization_result.get("operations") or []
                             await session.commit()
 
-                if firestore_ok and organization_result:
-                    if organization_result.get("success"):
-                        target_path = organization_result.get("targetPath")
-                        files_moved = organization_result.get("filesMoved", 0)
-                        media_collection = "movies" if media_type in ("movie", "documentary", "live_performance") else "series"
-
-                        media_update = {
-                            "folderPath": target_path,
-                            "fileCount": files_moved,
-                            "isOrganized": True,
-                            "lastOrganized": datetime.utcnow().isoformat(),
-                            "updatedAt": datetime.utcnow().isoformat(),
-                            "jellyfinInfo": {
-                                "folderPath": target_path,
-                                "folderName": target_path.replace("\\", "/").rstrip("/").split("/")[-1] if target_path else None,
-                                "isOrganized": True,
-                                "lastOrganized": datetime.utcnow().isoformat(),
-                            },
-                        }
-
-                        if not resolved_media:
-                            media_title = media_payload.get("title") or ""
-                            media_imdb_id = media_payload.get("imdbId")
-                            media_year = media_payload.get("year")
-
-                            if media_title:
-                                media_update["title"] = media_title
-                                media_update["titleLower"] = media_title.lower()
-                            if media_imdb_id:
-                                media_update["externalIds"] = {"imdbId": media_imdb_id}
-                            if media_year is not None:
-                                media_update["year"] = media_year
-
-                        self.firestore_service.db.collection(media_collection).document(
-                            assignment_doc["mediaId"]
-                        ).set(media_update, merge=True)
-
-                    self.firestore_service.db.collection("media_assignments").document(
-                        assignment_id
-                    ).update(
-                        {
-                            "organizationStatus": (
-                                "completed" if organization_result.get("success") else "failed"
-                            ),
-                            "organizationResult": organization_result,
-                            "isOrganized": bool(organization_result.get("success")),
-                            "updatedAt": datetime.utcnow().isoformat(),
-                        }
-                    )
 
             return {
                 "assignment_id": assignment_id,
@@ -333,27 +269,6 @@ class AssignmentOrchestrator:
         payload["seriesTitle"] = canonical_title
         return payload
 
-    def _find_existing_media(self, media_type: str, imdb_id: str) -> Optional[Dict[str, Any]]:
-        """Best-effort lookup of existing movie/series by imdb id."""
-        if not self.firestore_service or not getattr(self.firestore_service, "_initialized", False):
-            return None
-        try:
-            collection = "movies" if media_type in ("movie", "documentary", "live_performance") else "series"
-            docs = (
-                self.firestore_service.db.collection(collection)
-                .where("externalIds.imdbId", "==", imdb_id)
-                .limit(1)
-                .get()
-            )
-            if not docs:
-                return None
-
-            doc = docs[0]
-            payload = doc.to_dict() or {}
-            return {
-                "collection": collection,
-                "id": doc.id,
-                "title": payload.get("title"),
-            }
-        except Exception:
-            return None
+    def _find_existing_media(self, media_type: str, imdb_id: str):
+        """Media resolution via Firestore was removed; Postgres lookup not yet implemented."""
+        return None

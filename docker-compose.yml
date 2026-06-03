@@ -54,6 +54,7 @@ services:
         NEXT_OUTPUT: standalone
         NEXT_IGNORE_LINT: "true"
         NEXT_IGNORE_TYPE_ERRORS: "true"
+        NEXT_PUBLIC_DISC_RIPPER_URL: http://192.168.0.227:8083
     container_name: media-manager-frontend
     restart: unless-stopped
     depends_on:
@@ -62,6 +63,7 @@ services:
       NEXT_OUTPUT: standalone
       NEXT_PUBLIC_API_URL: http://localhost:8082
       BACKEND_URL: http://media-manager-backend:8082
+      NEXT_PUBLIC_DISC_RIPPER_URL: http://192.168.0.227:8083
     ports:
       - "${FRONTEND_PORT:-3010}:3000"
 

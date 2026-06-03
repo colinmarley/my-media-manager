@@ -508,12 +508,9 @@ async def get_scanned_files(request: GetScannedFilesRequest, req: Request):
     try:
         library_scanner = req.app.state.library_scanner
         
-        files = await library_scanner.firestore_service.get_scanned_files(
-            scan_id=request.scanId,
-            library_path=request.libraryPath,
-            limit=request.limit,
-            offset=request.offset
-        )
+        # Firestore replaced by PostgreSQL - return empty list
+        # TODO: implement Postgres-backed scan file retrieval
+        files = []
         
         result = {
             "files": files,
@@ -542,12 +539,9 @@ async def get_scanned_directories(request: GetScannedDirectoriesRequest, req: Re
     try:
         library_scanner = req.app.state.library_scanner
         
-        directories = await library_scanner.firestore_service.get_scanned_directories(
-            scan_id=request.scanId,
-            library_path=request.libraryPath,
-            limit=request.limit,
-            offset=request.offset
-        )
+        # Firestore replaced by PostgreSQL - return empty list
+        # TODO: implement Postgres-backed scan directory retrieval
+        directories = []
         
         result = {
             "directories": directories,

@@ -40,6 +40,9 @@ from api.catalog import router as catalog_router
 from api.generic_data import router as generic_data_router
 from api.library_paths import router as library_paths_router
 from api.posters import router as posters_router
+from api.library_compliance import router as library_compliance_router
+from api.tape_ingest import router as tape_ingest_router
+from api.tape_settings import router as tape_settings_router
 from db.database import engine, Base, AsyncSessionLocal
 from db.models import AppConfig
 from services.filesystem_manager import FileSystemManager
@@ -50,6 +53,7 @@ from services.assignment_orchestrator import AssignmentOrchestrator
 from services.file_organization_service import FileOrganizationService
 from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
+from services.library_compliance_service import LibraryComplianceService
 from services.task_manager import AsyncTaskManager
 from utils.logging import logger
 
@@ -63,6 +67,7 @@ ingress_queue_service = None
 auto_matcher_service = None
 assignment_orchestrator = None
 ingress_auto_processor_task = None
+library_compliance_service = None
 
 
 async def run_ingress_auto_processor(app: FastAPI):
@@ -117,7 +122,7 @@ async def lifespan(app: FastAPI):
         Control to the running application
     """
     # Startup
-    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service, ingress_queue_service, auto_matcher_service, assignment_orchestrator, ingress_auto_processor_task
+    global file_manager, metadata_extractor, library_scanner, task_manager, file_watcher_service, ingress_queue_service, auto_matcher_service, assignment_orchestrator, ingress_auto_processor_task, library_compliance_service
     
     logger.info("Starting Media Library Backend")
     
@@ -125,11 +130,12 @@ async def lifespan(app: FastAPI):
     file_manager = FileSystemManager()
     metadata_extractor = MetadataExtractor()
     library_scanner = LibraryScanner(file_manager, metadata_extractor)
+    library_compliance_service = LibraryComplianceService(
+        db_session_factory=AsyncSessionLocal,
+        file_manager=file_manager,
+    )
     task_manager = AsyncTaskManager(max_workers=settings.scan_worker_threads)
 
-    # Initialize PostgreSQL schema (idempotent; Alembic manages production migrations)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
 
     # Auto-seed password from env var if no hash is stored yet.
     # By default we preserve user-set passwords across restarts.
@@ -161,24 +167,20 @@ async def lifespan(app: FastAPI):
     auto_matcher_service = AutoMatcherService(
         omdb_api_key=settings.omdb_api_key,
         tmdb_api_key=settings.tmdb_api_key,
-        firestore_service=None,
         metadata_source="library_then_omdb",
     )
     file_organization_service = FileOrganizationService(
         filesystem_manager=file_manager,
-        firestore_service=None,
         jellyfin_dest_base=settings.jellyfin_dest_base,
         db_session_factory=AsyncSessionLocal,
     )
     assignment_orchestrator = AssignmentOrchestrator(
-        firestore_service=None,
         file_organization_service=file_organization_service,
         auto_organize_enabled=settings.ingress_auto_organize_enabled,
         db_session_factory=AsyncSessionLocal,
     )
     ingress_queue_service = IngressQueueService(
         auto_matcher_service=auto_matcher_service,
-        firestore_service=None,
         assignment_orchestrator=assignment_orchestrator,
         auto_assign_threshold=settings.ingress_auto_assign_threshold,
         db_session_factory=AsyncSessionLocal,
@@ -256,6 +258,7 @@ async def lifespan(app: FastAPI):
     app.state.metadata_extractor = metadata_extractor
     app.state.library_scanner = library_scanner
     app.state.task_manager = task_manager
+    app.state.library_compliance_service = library_compliance_service
     app.state.file_watcher_service = file_watcher_service
     app.state.ingress_queue_service = ingress_queue_service
     app.state.auto_matcher_service = auto_matcher_service
@@ -329,6 +332,9 @@ app.include_router(catalog_router)
 app.include_router(generic_data_router)
 app.include_router(library_paths_router)
 app.include_router(posters_router)
+app.include_router(library_compliance_router)
+app.include_router(tape_ingest_router)
+app.include_router(tape_settings_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
 
 @app.get("/")
@@ -368,7 +374,6 @@ async def health_check():
             "file_watcher_service": app.state.file_watcher_service is not None,
             "ingress_queue_service": app.state.ingress_queue_service is not None,
             "auto_matcher_service": app.state.auto_matcher_service is not None,
-            "firestore_service": getattr(app.state, "firestore_service", None) is not None,
             "assignment_orchestrator": app.state.assignment_orchestrator is not None,
         }
     }
