@@ -75,3 +75,9 @@ venv/
 *.key
 *.p12
 mcp_server.log
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
