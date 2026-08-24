@@ -173,25 +173,6 @@ class LibrarySettings(BaseSettings):
         validation_alias=AliasChoices("TAPE_INGEST_FFMPEG_PRESET", "MEDIA_LIBRARY_TAPE_INGEST_FFMPEG_PRESET"),
     )
 
-
-    # Tape ingest
-    tape_ingest_ingress_folder: str = Field(
-        default="",
-        validation_alias=AliasChoices("TAPE_INGEST_INGRESS_FOLDER", "MEDIA_LIBRARY_TAPE_INGEST_INGRESS_FOLDER"),
-    )
-    tape_ingest_default_destination: str = Field(
-        default="/ark/media/jellyfin",
-        validation_alias=AliasChoices("TAPE_INGEST_DESTINATION", "MEDIA_LIBRARY_TAPE_INGEST_DEFAULT_DESTINATION"),
-    )
-    tape_ingest_ffmpeg_crf: int = Field(
-        default=20,
-        validation_alias=AliasChoices("TAPE_INGEST_FFMPEG_CRF", "MEDIA_LIBRARY_TAPE_INGEST_FFMPEG_CRF"),
-    )
-    tape_ingest_ffmpeg_preset: str = Field(
-        default="medium",
-        validation_alias=AliasChoices("TAPE_INGEST_FFMPEG_PRESET", "MEDIA_LIBRARY_TAPE_INGEST_FFMPEG_PRESET"),
-    )
-
     tape_archive_path: str = Field(
         default="/ark/media/tape-archive",
         validation_alias=AliasChoices("TAPE_ARCHIVE_PATH", "MEDIA_LIBRARY_TAPE_ARCHIVE_PATH"),

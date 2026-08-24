@@ -9,7 +9,10 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from sqlalchemy import select
+
 from db.models import MediaAssignment as DBMediaAssignment
+from db.models import MediaFile as DBMediaFile
 from services.metadata_enrichment_service import metadata_enrichment_service
 from utils.logging import logger
 
@@ -164,6 +167,8 @@ class AssignmentOrchestrator:
             # Persist to PostgreSQL
             if self.db_session_factory is not None:
                 async with self.db_session_factory() as session:
+                    media_file = await self._upsert_media_file(session, queue_item, media_type)
+
                     db_assignment = await session.get(DBMediaAssignment, assignment_id)
                     if db_assignment is None:
                         db_assignment = DBMediaAssignment(
@@ -175,6 +180,7 @@ class AssignmentOrchestrator:
 
                     db_assignment.media_type = media_type
                     db_assignment.media_id = str(assignment_doc.get("mediaId") or "")
+                    db_assignment.primary_file_id = media_file.id if media_file else None
                     db_assignment.series_id = assignment_doc.get("seriesId")
                     db_assignment.season_id = assignment_doc.get("seasonId")
                     db_assignment.season_number = assignment_doc.get("seasonNumber")
@@ -185,6 +191,12 @@ class AssignmentOrchestrator:
                     db_assignment.confidence = queue_item.get("confidence_score") or 0
                     db_assignment.is_manual_assignment = (best_match.get("source") == "manual")
                     db_assignment.match_data = assignment_doc.get("match") or {}
+
+                    if media_file is not None:
+                        media_file.assigned_to_type = media_type
+                        media_file.assigned_to_id = db_assignment.media_id
+                        media_file.assignment_status = "assigned"
+
                     await session.commit()
 
             logger.info(
@@ -205,12 +217,21 @@ class AssignmentOrchestrator:
                     async with self.db_session_factory() as session:
                         db_assignment = await session.get(DBMediaAssignment, assignment_id)
                         if db_assignment is not None:
-                            db_assignment.organization_status = (
-                                "completed" if organization_result.get("success") else "failed"
-                            )
+                            organized_ok = bool(organization_result.get("success"))
+                            db_assignment.organization_status = "completed" if organized_ok else "failed"
                             db_assignment.organization_date = datetime.utcnow()
                             db_assignment.organization_error = organization_result.get("error")
                             db_assignment.operations = organization_result.get("operations") or []
+
+                            if db_assignment.primary_file_id:
+                                media_file = await session.get(DBMediaFile, db_assignment.primary_file_id)
+                                if media_file is not None:
+                                    media_file.organization_status = "completed" if organized_ok else "failed"
+                                    media_file.needs_organization = not organized_ok
+                                    target_path = organization_result.get("targetPath")
+                                    if target_path:
+                                        media_file.target_path = target_path
+
                             await session.commit()
 
 
@@ -272,3 +293,33 @@ class AssignmentOrchestrator:
     def _find_existing_media(self, media_type: str, imdb_id: str):
         """Media resolution via Firestore was removed; Postgres lookup not yet implemented."""
         return None
+
+    async def _upsert_media_file(
+        self, session: Any, queue_item: Dict[str, Any], media_type: str
+    ) -> Optional[DBMediaFile]:
+        """
+        Create or update the MediaFile row for this queue item's file, keyed on
+        the unique file_path column. This is the file-level record that
+        media_assignments.primary_file_id, assignment_extra_files.media_file_id,
+        and catalog Disc/Tape linking (media_files.disc_id/tape_id) all depend
+        on — without it those tables have nothing to reference.
+        """
+        file_path = queue_item.get("file_path")
+        if not file_path:
+            return None
+
+        result = await session.execute(select(DBMediaFile).where(DBMediaFile.file_path == file_path))
+        media_file = result.scalar_one_or_none()
+
+        if media_file is None:
+            media_file = DBMediaFile(id=str(uuid.uuid4()), file_path=file_path)
+            session.add(media_file)
+
+        media_file.file_name = queue_item.get("file_name") or media_file.file_name
+        media_file.file_size = queue_item.get("file_size")
+        media_file.detected_media_type = media_type
+        media_file.confidence = queue_item.get("confidence_score") or 0
+        media_file.parsed_info = queue_item.get("parsed_info") or {}
+
+        await session.flush()
+        return media_file

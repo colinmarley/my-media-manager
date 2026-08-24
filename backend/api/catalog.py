@@ -540,6 +540,56 @@ async def delete_tape(tape_id: str, db: AsyncSession = Depends(get_db)) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Source Media Linking
+# ---------------------------------------------------------------------------
+
+@router.post("/link-source")
+async def link_source_media(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    """
+    Link delivered file paths to the disc/tape they were ripped/digitized from.
+
+    Called by disc-ripper-service right after delivery (see its
+    services/catalog_client.py) since it's the only place that knows which
+    physical disc a rip job was linked to — delivery itself is filesystem-only
+    (no other push from disc-ripper to here), so this is the one point where
+    that link gets recorded. Upserts a MediaFile row per path (by the unique
+    file_path column) rather than requiring the ingest watcher to have
+    processed the file first — assignment_orchestrator's own upsert-by-path
+    later fills in the rest without disturbing disc_id/tape_id set here.
+
+    Body: { filePaths: string[], discId?: string, tapeId?: string }
+    """
+    file_paths: list[str] = body.get("filePaths") or []
+    disc_id: str | None = body.get("discId")
+    tape_id: str | None = body.get("tapeId")
+
+    if not file_paths:
+        raise HTTPException(status_code=400, detail="filePaths must not be empty")
+    if not disc_id and not tape_id:
+        raise HTTPException(status_code=400, detail="discId or tapeId is required")
+
+    linked: list[str] = []
+    for file_path in file_paths:
+        result = await db.execute(select(MediaFile).where(MediaFile.file_path == file_path))
+        media_file = result.scalar_one_or_none()
+        if media_file is None:
+            media_file = MediaFile(
+                id=str(uuid.uuid4()),
+                file_path=file_path,
+                file_name=os.path.basename(file_path),
+            )
+            db.add(media_file)
+        if disc_id:
+            media_file.disc_id = disc_id
+        if tape_id:
+            media_file.tape_id = tape_id
+        linked.append(file_path)
+
+    await db.commit()
+    return {"linked": linked, "discId": disc_id, "tapeId": tape_id}
+
+
+# ---------------------------------------------------------------------------
 # Disc Reassignment
 # ---------------------------------------------------------------------------
 
