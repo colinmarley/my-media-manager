@@ -220,7 +220,7 @@ make test-db-down      # stop and wipe
 
 3. **Different port, different database name.** The test database uses port `5433` and database name `media_manager_test`. There is no configuration that points the test suite at port `5432` or `media_manager`.
 
-For the full testing workflow, see [docs/TESTING.md](docs/TESTING.md).
+For the full testing workflow, see [docs/guides/TESTING.md](docs/guides/TESTING.md).
 
 ---
 
@@ -281,7 +281,7 @@ Daily check    →  if image changed, append new version (old is kept)
 
 The `poster_cache` named volume is defined in `docker-compose.yml` and only deleted by `docker compose down -v`. To use a custom path set `MEDIA_LIBRARY_POSTER_CACHE_DIR` in your environment.
 
-For the full technical details, see [docs/POSTER_CACHE.md](docs/POSTER_CACHE.md).
+For the full technical details, see [docs/guides/POSTER_CACHE.md](docs/guides/POSTER_CACHE.md).
 
 ---
 

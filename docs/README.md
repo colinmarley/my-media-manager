@@ -2,21 +2,35 @@
 
 Comprehensive documentation for the Media Library Management System.
 
+Folder layout: `architecture/` — current-state technical references;
+`api/` — endpoint reference; `guides/` — how-to docs for contributors;
+`completed/` — implementation logs for finished work, kept for history.
+
 ## Table of Contents
+
+### Architecture (current state)
+- **[Database Tables Reference](./architecture/DATABASE_TABLES_REFERENCE.md)** — Full schema reference
+- **[Naming Conventions](./architecture/NAMING_CONVENTIONS.md)** — Full rip→ingest→Jellyfin naming pipeline, including disc-ripper-service and the extras taxonomy
+- **[Jellyfin Media Organization](./architecture/JELLYFIN_MEDIA_ORGANIZATION.md)** — Folder naming conventions and Jellyfin layout
 
 ### API Documentation
 - **[API Endpoints Reference](./api/)** — All available backend endpoints
 
-### Features & Workflows
-- **[Jellyfin Media Organization](./JELLYFIN_MEDIA_ORGANIZATION.md)** — Folder naming conventions and Jellyfin layout
-- **[My Library Destination Enhancements](./MY_LIBRARY_DESTINATION_ENHANCEMENTS.md)** — Drawer navigation, destination preview, reassignment, and poster fallback updates
-- **[Poster Cache](./POSTER_CACHE.md)** — How poster images are downloaded, cached, and served
-- **[NAS Ingest Implementation](./NAS_INGEST_IMPLEMENTATION.md)** — Automated ingress from NAS / encoding pipeline
-- **[Automation Workflow Plan](./AUTOMATION_WORKFLOW_PLAN.md)** — End-to-end automated ingress workflow
-- **[Testing](./TESTING.md)** — Isolated test environments, how to run tests
+### Guides
+- **[Testing](./guides/TESTING.md)** — Isolated test environments, how to run tests
+- **[Poster Cache](./guides/POSTER_CACHE.md)** — How poster images are downloaded, cached, and served
+- **[Ingress Assignment Reference](./guides/INGRESS_ASSIGNMENT_REFERENCE.md)** — Auto-matching and confidence scoring
 
-### Migration History
-- **[Firebase → PostgreSQL Migration](./FIREBASE_TO_POSTGRES_MIGRATION.md)** — How the data layer was migrated from Firestore to PostgreSQL
+### Completed Work (implementation logs, kept for history)
+- **[Firebase → PostgreSQL Migration](./completed/FIREBASE_TO_POSTGRES_MIGRATION.md)** — How the data layer was migrated from Firestore to PostgreSQL
+- **[Firebase Model Improvements](./completed/FIREBASE_MODEL_IMPROVEMENTS.md)**
+- **[Admin Forms Revamp](./completed/ADMIN_FORMS_REVAMP_IMPLEMENTATION.md)**
+- **[Automation Implementation Plan](./completed/AUTOMATION_IMPLEMENTATION_PLAN.md)**
+- **[Automation Workflow Plan](./completed/AUTOMATION_WORKFLOW_PLAN.md)** — End-to-end automated ingress workflow
+- **[NAS Ingest Implementation](./completed/NAS_INGEST_IMPLEMENTATION.md)** — Automated ingress from NAS / encoding pipeline
+- **[UI Consolidation Plan](./completed/UI_CONSOLIDATION_PLAN.md)**
+- **[My Library Destination Enhancements](./completed/MY_LIBRARY_DESTINATION_ENHANCEMENTS.md)** — Drawer navigation, destination preview, reassignment, and poster fallback updates
+- **[Library Compliance Audit Plan](./completed/LIBRARY_COMPLIANCE_AUDIT_PLAN.md)**
 
 ---
 
@@ -101,11 +115,11 @@ From any media detail page (`/dashboard/my-library/{type}/{id}`), individual dis
 
 ### Poster Cache
 
-Poster images are downloaded from OMDB/TMDB CDN on first request and stored in a persistent Docker volume. Daily re-checks append new versions if the upstream image changes. See [POSTER_CACHE.md](./POSTER_CACHE.md).
+Poster images are downloaded from OMDB/TMDB CDN on first request and stored in a persistent Docker volume. Daily re-checks append new versions if the upstream image changes. See [guides/POSTER_CACHE.md](./guides/POSTER_CACHE.md).
 
 ### Automated Ingress (NAS)
 
-A file-watcher monitors configured NAS/local paths. New files are queued, matched against the catalog via `AutoMatcherService`, and organised into the correct Jellyfin folder structure. Manual assignment and override are available when auto-matching confidence is insufficient. See [NAS_INGEST_IMPLEMENTATION.md](./NAS_INGEST_IMPLEMENTATION.md) and [AUTOMATION_WORKFLOW_PLAN.md](./AUTOMATION_WORKFLOW_PLAN.md).
+A file-watcher monitors configured NAS/local paths. New files are queued, matched against the catalog via `AutoMatcherService`, and organised into the correct Jellyfin folder structure. Manual assignment and override are available when auto-matching confidence is insufficient. See [completed/NAS_INGEST_IMPLEMENTATION.md](./completed/NAS_INGEST_IMPLEMENTATION.md) and [completed/AUTOMATION_WORKFLOW_PLAN.md](./completed/AUTOMATION_WORKFLOW_PLAN.md).
 
 ### Physical Media Tracking
 
@@ -115,17 +129,17 @@ Blu-ray and DVD releases are modelled as `Release` → `Disc` → `VideoFile` ch
 
 ## Database Migrations
 
-Migrations are plain `.sql` files in `backend/db/init/`. Docker applies them automatically on first container start. All migrations use `IF NOT EXISTS` guards and are safe to re-run against a live database.
+Schema changes are managed with Alembic (`backend/alembic/versions/`), not
+hand-written SQL — `backend/db/init/*.sql` is seed data run by Postgres on
+first container start, not the migration mechanism.
 
 ```bash
-# Apply a migration to a running instance
-docker compose exec -T postgres psql -U media_user -d media_manager \
-  -f /dev/stdin < backend/db/init/002_add_rating_columns.sql
+cd backend && source venv/bin/activate
+export DATABASE_URL=postgresql+asyncpg://media_user:changeme_strong_password@localhost:5432/media_manager
+alembic upgrade head                              # apply pending migrations
+alembic check                                      # verify no schema drift
+alembic revision --autogenerate -m "description"   # after changing db/models.py
 ```
-
-| File | Description |
-|---|---|
-| `002_add_rating_columns.sql` | Adds `imdb_rating`, `metascore`, `content_rating`, `tmdb_data`, `total_seasons`, etc. to `movies` and `series` |
 
 ---
 
@@ -145,5 +159,5 @@ docker compose exec -T postgres psql -U media_user -d media_manager \
 
 - [Root README](../README.md) — Getting started, stack, testing overview
 - [Backend README](../backend/README.md) — API modules, DB schema, env vars
-- [Testing](./TESTING.md) — Isolated environments, how to run tests
+- [Testing](./guides/TESTING.md) — Isolated environments, how to run tests
 

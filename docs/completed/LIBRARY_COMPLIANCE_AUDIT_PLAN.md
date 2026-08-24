@@ -24,8 +24,8 @@ Current system components already support most of the plumbing:
   - backend/services/library_scanner.py
   - backend/api/library_operations.py
 - Existing naming/classification behavior used for ingress organization:
-  - docs/JELLYFIN_MEDIA_ORGANIZATION.md
-  - docs/INGRESS_ASSIGNMENT_REFERENCE.md
+  - docs/architecture/JELLYFIN_MEDIA_ORGANIZATION.md
+  - docs/guides/INGRESS_ASSIGNMENT_REFERENCE.md
 - Existing review-queue interaction patterns:
   - src/app/admin/_components/IngressAutomationPanel.tsx
   - src/service/ingress/IngressAutomationService.ts
