@@ -9,6 +9,7 @@ as the payload, with the PostgreSQL primary-key `id` guaranteed to be set.
 
 import os
 import shutil
+import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, or_
@@ -332,6 +333,60 @@ async def delete_series(series_id: str, db: AsyncSession = Depends(get_db)) -> d
 async def list_discs(db: AsyncSession = Depends(get_db)) -> list[dict]:
     result = await db.execute(select(Disc).order_by(Disc.title))
     return [_row_to_dict(row) for row in result.scalars().all()]
+
+
+@router.get("/discs/search")
+async def search_discs(
+    title: str | None = Query(default=None),
+    barcode: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """
+    Look up existing discs by title and/or barcode. Used by disc-ripper-service
+    (and the disc-ripper UI's "link to existing disc" flow) to find a
+    previously-catalogued disc before creating a new one.
+    """
+    if not title and not barcode:
+        return []
+
+    conditions = []
+    if title:
+        conditions.append(Disc.title.ilike(f"%{title}%"))
+    if barcode:
+        conditions.append(Disc.barcode == barcode)
+
+    result = await db.execute(
+        select(Disc).where(or_(*conditions)).order_by(Disc.title).limit(25)
+    )
+    return [_row_to_dict(row) for row in result.scalars().all()]
+
+
+@router.post("/discs")
+async def create_disc(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    """
+    Create a new disc record with a server-generated id. Unlike PUT /discs/{id}
+    (which requires the caller to supply an id, awkward for service-to-service
+    creation from disc-ripper-service), this is a plain create.
+
+    Deliberately NOT behind require_session: this endpoint's primary caller is
+    disc-ripper-service (a trusted LAN service with no browser session), and
+    this codebase has no service-to-service auth mechanism (API keys, etc.) to
+    build on. This matches the existing trust model of the read endpoints
+    (GET /discs, GET /discs/{id} are also unauthenticated) rather than the
+    require_session pattern used for browser-driven mutations (PUT/DELETE).
+    """
+    row = Disc(
+        id=str(uuid.uuid4()),
+        title=body.get("title") or "Untitled",
+        format=body.get("format"),
+        barcode=body.get("barcode"),
+        condition=body.get("condition"),
+        raw_data=body,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _row_to_dict(row)
 
 
 @router.get("/discs/{disc_id}")

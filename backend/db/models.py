@@ -394,6 +394,7 @@ class MediaFile(Base):
     assignment_status   = Column(Text, default="unassigned")
     assigned_to_type    = Column(Text)
     assigned_to_id      = Column(Text)
+    disc_id             = Column(Text, ForeignKey("discs.id", ondelete="SET NULL"))
     needs_organization  = Column(Boolean, default=False)
     target_path         = Column(Text)
     organization_status = Column(Text)
