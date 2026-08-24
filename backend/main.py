@@ -42,6 +42,7 @@ from api.generic_data import router as generic_data_router
 from api.library_paths import router as library_paths_router
 from api.posters import router as posters_router
 from api.library_compliance import router as library_compliance_router
+from api.extras import router as extras_router
 from api.tape_ingest import router as tape_ingest_router
 from api.tape_settings import router as tape_settings_router
 from db.database import engine, Base, AsyncSessionLocal
@@ -391,6 +392,7 @@ app.include_router(generic_data_router)
 app.include_router(library_paths_router)
 app.include_router(posters_router)
 app.include_router(library_compliance_router)
+app.include_router(extras_router)
 app.include_router(tape_ingest_router)
 app.include_router(tape_settings_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])

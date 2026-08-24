@@ -40,7 +40,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
   React.useEffect(() => {
     const requestedView = new URLSearchParams(window.location.search).get('view');
     if (!requestedView) return;
-    const validViews = new Set(['Movie','Release','Series','Season','Episode','Disc','Collection','ImageManager','LibraryCompliance']);
+    const validViews = new Set(['Movie','Release','Series','Season','Episode','Disc','Collection','ImageManager','LibraryCompliance','ExtrasReview']);
     if (validViews.has(requestedView) && requestedView !== selectedType) {
       setSelectedType(requestedView);
     }
@@ -97,6 +97,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
           <Tab label="Collection" value="Collection" />
           <Tab label="Image Manager" value="ImageManager" />
           <Tab label="Library Compliance" value="LibraryCompliance" />
+          <Tab label="Extras Review" value="ExtrasReview" />
         </Tabs>
       )}
 
