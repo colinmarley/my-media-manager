@@ -34,6 +34,41 @@ def _row_to_dict(row, id_field: str = "id") -> dict:
     return data
 
 
+def _apply_disc_fields(row: Disc, body: dict[str, Any]) -> None:
+    """Sync the flattened Disc columns from body, used by both create and
+    edit — search_discs() filters on these columns directly, not raw_data,
+    so an edit that only touched raw_data would silently go stale there."""
+    row.title = body.get("title") or "Untitled"
+    row.format = body.get("format")
+    row.barcode = body.get("barcode")
+    row.condition = body.get("condition")
+    row.region_code = body.get("regionCode") or body.get("region_code")
+    row.disc_number = body.get("discNumber") or body.get("disc_number")
+    row.language = body.get("language")
+    row.purchase_date = body.get("purchaseDate") or body.get("purchase_date")
+    row.release_date = body.get("releaseDate") or body.get("release_date")
+    row.is_part_of_set = bool(body.get("isPartOfSet") or body.get("is_part_of_set") or False)
+    row.is_rental_disc = bool(body.get("isRentalDisc") or body.get("is_rental_disc") or False)
+    row.contains_special_features = bool(
+        body.get("containsSpecialFeatures") or body.get("contains_special_features") or False
+    )
+    row.raw_data = body
+
+
+def _apply_tape_fields(row: Tape, body: dict[str, Any]) -> None:
+    """Sync the flattened Tape columns from body — same rationale as
+    _apply_disc_fields (search_tapes() filters on tape_label directly)."""
+    row.title = body.get("title") or "Untitled"
+    row.tape_type = body.get("tapeType") or body.get("tape_type")
+    row.tape_label = body.get("tapeLabel") or body.get("tape_label")
+    row.brand = body.get("brand")
+    row.condition = body.get("condition")
+    row.recording_speed = body.get("recordingSpeed") or body.get("recording_speed")
+    row.label_notes = body.get("labelNotes") or body.get("label_notes")
+    row.purchase_date = body.get("purchaseDate") or body.get("purchase_date")
+    row.raw_data = body
+
+
 def _media_file_to_dict(row: MediaFile) -> dict:
     return {
         "id": row.id,
@@ -389,14 +424,8 @@ async def create_disc(body: dict[str, Any], db: AsyncSession = Depends(get_db)) 
     (GET /discs, GET /discs/{id} are also unauthenticated) rather than the
     require_session pattern used for browser-driven mutations (PUT/DELETE).
     """
-    row = Disc(
-        id=str(uuid.uuid4()),
-        title=body.get("title") or "Untitled",
-        format=body.get("format"),
-        barcode=body.get("barcode"),
-        condition=body.get("condition"),
-        raw_data=body,
-    )
+    row = Disc(id=str(uuid.uuid4()))
+    _apply_disc_fields(row, body)
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -428,9 +457,7 @@ async def upsert_disc(disc_id: str, body: dict[str, Any], db: AsyncSession = Dep
         row = Disc(id=disc_id)
         db.add(row)
 
-    row.title    = body.get("title") or "Untitled"
-    row.format   = body.get("format")
-    row.raw_data = body
+    _apply_disc_fields(row, body)
 
     await db.commit()
     await db.refresh(row)
@@ -483,16 +510,8 @@ async def create_tape(body: dict[str, Any], db: AsyncSession = Depends(get_db)) 
     behind require_session — matches the discs endpoints' trust model
     (see create_disc's docstring).
     """
-    row = Tape(
-        id=str(uuid.uuid4()),
-        title=body.get("title") or "Untitled",
-        tape_type=body.get("tapeType") or body.get("tape_type"),
-        tape_label=body.get("tapeLabel") or body.get("tape_label"),
-        brand=body.get("brand"),
-        condition=body.get("condition"),
-        recording_speed=body.get("recordingSpeed") or body.get("recording_speed"),
-        raw_data=body,
-    )
+    row = Tape(id=str(uuid.uuid4()))
+    _apply_tape_fields(row, body)
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -524,8 +543,7 @@ async def upsert_tape(tape_id: str, body: dict[str, Any], db: AsyncSession = Dep
         row = Tape(id=tape_id)
         db.add(row)
 
-    row.title    = body.get("title") or "Untitled"
-    row.raw_data = body
+    _apply_tape_fields(row, body)
 
     await db.commit()
     await db.refresh(row)
@@ -587,6 +605,78 @@ async def link_source_media(body: dict[str, Any], db: AsyncSession = Depends(get
 
     await db.commit()
     return {"linked": linked, "discId": disc_id, "tapeId": tape_id}
+
+
+@router.get("/media-files/search")
+async def search_media_files(
+    q: str | None = Query(default=None),
+    unlinked: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """
+    Search scanned/ingested files by filename — backs the "connect an
+    existing file to this disc/tape" picker on the physical-media detail
+    page. `unlinked=true` restricts to files with no disc_id and no tape_id
+    set yet, the common case (avoids re-linking a file already attached
+    elsewhere without realizing it).
+    """
+    conditions = []
+    if q:
+        conditions.append(MediaFile.file_name.ilike(f"%{q}%"))
+    if unlinked:
+        conditions.append(MediaFile.disc_id.is_(None))
+        conditions.append(MediaFile.tape_id.is_(None))
+
+    stmt = select(MediaFile)
+    if conditions:
+        stmt = stmt.where(*conditions)
+    stmt = stmt.order_by(MediaFile.file_name).limit(50)
+
+    result = await db.execute(stmt)
+    return [_media_file_to_dict(row) for row in result.scalars().all()]
+
+
+@router.patch("/media-files/{file_id}/link", dependencies=[Depends(require_session)])
+async def link_media_file(file_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    """
+    Connect or disconnect a single existing MediaFile to/from a disc or tape.
+
+    Body: { discId?: string | null, tapeId?: string | null }
+    Passing null (or omitting a key entirely) clears that link — this is
+    "disconnect". Passing a real id sets it — "connect". Setting discId
+    also clears tapeId and vice versa (a file only comes from one physical
+    source), unless both are explicitly passed as null (fully disconnect).
+    """
+    result = await db.execute(select(MediaFile).where(MediaFile.id == file_id))
+    media_file = result.scalar_one_or_none()
+    if media_file is None:
+        raise HTTPException(status_code=404, detail="Media file not found")
+
+    if "discId" in body:
+        disc_id = body["discId"]
+        if disc_id:
+            disc_result = await db.execute(select(Disc.id).where(Disc.id == disc_id))
+            if disc_result.scalar_one_or_none() is None:
+                raise HTTPException(status_code=404, detail=f"Disc not found: {disc_id}")
+            media_file.disc_id = disc_id
+            media_file.tape_id = None
+        else:
+            media_file.disc_id = None
+
+    if "tapeId" in body:
+        tape_id = body["tapeId"]
+        if tape_id:
+            tape_result = await db.execute(select(Tape.id).where(Tape.id == tape_id))
+            if tape_result.scalar_one_or_none() is None:
+                raise HTTPException(status_code=404, detail=f"Tape not found: {tape_id}")
+            media_file.tape_id = tape_id
+            media_file.disc_id = None
+        else:
+            media_file.tape_id = None
+
+    await db.commit()
+    await db.refresh(media_file)
+    return _media_file_to_dict(media_file)
 
 
 # ---------------------------------------------------------------------------
