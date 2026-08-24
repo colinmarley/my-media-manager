@@ -23,6 +23,7 @@ Version: 1.0.0
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from homelab_logging import CorrelationMiddleware
 from contextlib import asynccontextmanager
 import asyncio
 import os
@@ -373,6 +374,10 @@ app.add_middleware(
     allow_methods=["*"],  # Allow all HTTP methods (GET, POST, PUT, DELETE, etc.)
     allow_headers=["*"],  # Allow all headers
 )
+
+# Binds correlation_id/session_id to contextvars for the request lifetime so every
+# log line emitted while handling this request carries the same searchable ID.
+app.add_middleware(CorrelationMiddleware)
 
 # Include API routers with prefixes and tags for OpenAPI documentation
 app.include_router(file_router, prefix="/api/files", tags=["File Operations"])

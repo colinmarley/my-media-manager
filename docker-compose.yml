@@ -23,6 +23,10 @@ services:
       dockerfile: Dockerfile
     container_name: media-manager-backend
     restart: unless-stopped
+    labels:
+      logging: "promtail"
+      logging_project: "my-media-manager"
+      logging_service: "backend"
     env_file:
       - ./backend/.env
     depends_on:
@@ -37,6 +41,10 @@ services:
       # Auto-seed the login password on first startup if not already set.
       # Change this to your desired passcode.
       APP_DEFAULT_PASSWORD: "C0d!ngC@rdsC0ff33"
+      HOST_ID: ai-workstation
+      LOG_PROJECT: my-media-manager
+      LOG_SERVICE: backend
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
     ports:
       - "8082:8082"
     volumes:
@@ -57,6 +65,10 @@ services:
         NEXT_PUBLIC_DISC_RIPPER_URL: http://192.168.0.227:8083
     container_name: media-manager-frontend
     restart: unless-stopped
+    labels:
+      logging: "promtail"
+      logging_project: "my-media-manager"
+      logging_service: "frontend"
     depends_on:
       - backend
     environment:
@@ -64,6 +76,10 @@ services:
       NEXT_PUBLIC_API_URL: http://localhost:8082
       BACKEND_URL: http://media-manager-backend:8082
       NEXT_PUBLIC_DISC_RIPPER_URL: http://192.168.0.227:8083
+      HOST_ID: ai-workstation
+      LOG_PROJECT: my-media-manager
+      LOG_SERVICE: frontend
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
     ports:
       - "${FRONTEND_PORT:-3010}:3000"
 

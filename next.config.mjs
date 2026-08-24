@@ -1,6 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: process.env.NEXT_OUTPUT === 'standalone' ? 'standalone' : undefined,
+  serverExternalPackages: ['pino'],
   eslint: {
     ignoreDuringBuilds: process.env.NEXT_IGNORE_LINT === 'true',
   },

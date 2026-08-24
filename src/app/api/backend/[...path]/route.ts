@@ -35,7 +35,7 @@ async function proxy(request: NextRequest): Promise<NextResponse> {
 
   // Forward headers that the backend needs (content-type, cookie, user-agent)
   const forwardHeaders: Record<string, string> = {};
-  const forward = ['content-type', 'cookie', 'user-agent', 'accept', 'authorization'];
+  const forward = ['content-type', 'cookie', 'user-agent', 'accept', 'authorization', 'x-correlation-id'];
   for (const key of forward) {
     const val = request.headers.get(key);
     if (val) forwardHeaders[key] = val;
