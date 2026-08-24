@@ -74,7 +74,7 @@ class TestLogin:
         app.dependency_overrides[get_db] = override
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                resp = await ac.post("/auth/login", json={"password": "correct-passphrase"})
+                resp = await ac.post("/api/auth/login", json={"password": "correct-passphrase"})
             assert resp.status_code == 200
             assert resp.json()["authenticated"] is True
             assert "session_id" in resp.cookies
@@ -93,7 +93,7 @@ class TestLogin:
         app.dependency_overrides[get_db] = override
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                resp = await ac.post("/auth/login", json={"password": "wrong"})
+                resp = await ac.post("/api/auth/login", json={"password": "wrong"})
             assert resp.status_code == 401
             assert "session_id" not in resp.cookies
         finally:
@@ -111,7 +111,7 @@ class TestLogin:
         app.dependency_overrides[get_db] = override
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                resp = await ac.post("/auth/login", json={"password": "anything"})
+                resp = await ac.post("/api/auth/login", json={"password": "anything"})
             assert resp.status_code == 500
         finally:
             app.dependency_overrides.clear()
@@ -128,7 +128,7 @@ class TestLogin:
         app.dependency_overrides[get_db] = override
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                await ac.post("/auth/login", json={"password": "secret"})
+                await ac.post("/api/auth/login", json={"password": "secret"})
             db.add.assert_called_once()
             db.commit.assert_awaited_once()
         finally:
@@ -153,7 +153,7 @@ class TestMe:
         app.dependency_overrides[get_db] = override
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                resp = await ac.get("/auth/me", cookies={"session_id": str(uuid.uuid4())})
+                resp = await ac.get("/api/auth/me", cookies={"session_id": str(uuid.uuid4())})
             assert resp.status_code == 200
             assert resp.json()["authenticated"] is True
         finally:
@@ -171,7 +171,7 @@ class TestMe:
         app.dependency_overrides[get_db] = override
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                resp = await ac.get("/auth/me")
+                resp = await ac.get("/api/auth/me")
             assert resp.status_code == 401
         finally:
             app.dependency_overrides.clear()
@@ -188,7 +188,7 @@ class TestMe:
         app.dependency_overrides[get_db] = override
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                resp = await ac.get("/auth/me", cookies={"session_id": str(uuid.uuid4())})
+                resp = await ac.get("/api/auth/me", cookies={"session_id": str(uuid.uuid4())})
             assert resp.status_code == 401
         finally:
             app.dependency_overrides.clear()
@@ -212,7 +212,7 @@ class TestLogout:
         app.dependency_overrides[get_db] = override
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                resp = await ac.post("/auth/logout", cookies={"session_id": str(uuid.uuid4())})
+                resp = await ac.post("/api/auth/logout", cookies={"session_id": str(uuid.uuid4())})
             assert resp.status_code == 200
             assert resp.json() == {"authenticated": False}
         finally:
@@ -230,7 +230,7 @@ class TestLogout:
         app.dependency_overrides[get_db] = override
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                resp = await ac.post("/auth/logout")
+                resp = await ac.post("/api/auth/logout")
             assert resp.status_code == 200
             assert resp.json() == {"authenticated": False}
         finally:
