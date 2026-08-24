@@ -11,6 +11,7 @@ import {
   MediaSearchParams, 
   MediaSuggestion, 
   NamingFormat, 
+  ScannedFile,
   DEFAULT_NAMING_FORMATS,
   FolderStructureTemplate,
   DEFAULT_FOLDER_STRUCTURES,
@@ -21,7 +22,6 @@ import {
   BatchOperationResult,
   BatchOperationSummary
 } from '../../types/library/MediaAssignment';
-import { ScannedFile } from './LibraryBrowserService';
 import { OmdbResponseFull, OmdbSearchResponse } from '../../types/OmdbResponse.type';
 import { searchByText, retrieveMediaDataById, retrieveMovieDataByTitle, retrieveShowDataByTitle } from '../omdb/OmdbService';
 
@@ -29,9 +29,8 @@ class MediaAssignmentService {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = process.env.NODE_ENV === 'production'
-      ? 'https://your-api-domain.com/api'
-      : 'http://localhost:8082/api';
+    // Always route through Next.js API proxy to avoid CORS and environment-specific host issues.
+    this.baseUrl = '/api/backend';
   }
 
   /**

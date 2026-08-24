@@ -1,60 +1,48 @@
-import { FBDisc } from '../types/firebase/FBDisc.type';
+import { CatalogDisc } from '../types/catalog/Disc.type';
+import {
+  toLegacyError,
+  validateNonEmptyArray,
+  validateOptionalIsoDate,
+  validateOptionalNonEmptyArray,
+  validateOptionalTextNotEmpty,
+  validateRequiredText,
+} from './validation/commonValidation';
 
 const useDiscValidation = () => {
   const validateTitle = (title: string): string | null => {
-    if (!title) {
-      return 'Title is required';
-    }
-    return null;
+    return toLegacyError(validateRequiredText(title, 'Title'));
   };
 
-  const validateVideoFiles = (videoFiles: FBDisc['videoFiles']): string | null => {
-    if (videoFiles.length === 0) {
-      return 'At least one video file is required';
-    }
-    return null;
+  const validateVideoFiles = (videoFiles: CatalogDisc['videoFiles']): string | null => {
+    return toLegacyError(validateNonEmptyArray(videoFiles, 'video file'));
   };
 
-  const validateImageFiles = (imageFiles: FBDisc['imageFiles']): string | null => {
-    if (imageFiles.length === 0) {
-      return 'At least one image file is required';
-    }
-    return null;
+  const validateImageFiles = (imageFiles: CatalogDisc['imageFiles']): string | null => {
+    return toLegacyError(validateNonEmptyArray(imageFiles, 'image file'));
   };
 
   const validateReleaseDate = (releaseDate?: string): string | null => {
-    if (releaseDate && !/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)) {
-      return 'Release Date must be in the format YYYY-MM-DD';
-    }
-    return null;
+    return toLegacyError(validateOptionalIsoDate(releaseDate, 'Release Date'));
   };
 
   const validateGenre = (genre?: string): string | null => {
-    if (genre && genre.length === 0) {
-      return 'Genre cannot be empty';
-    }
-    return null;
+    return toLegacyError(validateOptionalTextNotEmpty(genre, 'Genre'));
   };
 
   const validateLanguage = (language?: string): string | null => {
-    if (language && language.length === 0) {
-      return 'Language cannot be empty';
-    }
-    return null;
+    return toLegacyError(validateOptionalTextNotEmpty(language, 'Language'));
   };
 
   const validateSubtitles = (subtitles?: string[]): string | null => {
-    if (subtitles && subtitles.length === 0) {
+    const subtitleErrors = validateOptionalNonEmptyArray(subtitles, 'subtitle');
+    if (subtitleErrors.length > 0) {
       return 'Subtitles cannot be empty';
     }
     return null;
   };
 
   const validateRegionCode = (regionCode?: string): string | null => {
-    if (regionCode && regionCode.length === 0) {
-      return 'Region Code cannot be empty';
-    }
-    return null;
+    return toLegacyError(validateOptionalTextNotEmpty(regionCode, 'Region Code'));
   };
 
   return {

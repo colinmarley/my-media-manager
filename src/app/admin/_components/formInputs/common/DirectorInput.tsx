@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { TextField, Button } from '@mui/material';
+import { TextField, Button, Autocomplete } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import { MovieDirector } from '@/types/collections/Common.type';
+import useFormStore from '@/store/useFormStore';
 
 interface DirectorInputProps {
   onAddDirector: (newDirector: MovieDirector) => void;
@@ -14,7 +15,12 @@ const InitialMovieDirector: MovieDirector = {
 };
 
 const DirectorInput: React.FC<DirectorInputProps> = ({ onAddDirector }) => {
+  const { directorOptions, openAddDirectorModal, refreshDirectorOptions } = useFormStore();
   const [newDirector, setNewDirector] = useState<MovieDirector>(InitialMovieDirector);
+
+  React.useEffect(() => {
+    void refreshDirectorOptions();
+  }, [refreshDirectorOptions]);
 
   const resetNewDirectorFields = () => {
     setNewDirector(InitialMovieDirector);
@@ -37,11 +43,21 @@ const DirectorInput: React.FC<DirectorInputProps> = ({ onAddDirector }) => {
   return (
     <Grid container spacing={2}>
       <Grid size={4}>
-        <TextField
-          label="Name"
-          value={newDirector.name}
-          onChange={(e) => setNewDirector({ ...newDirector, name: e.target.value })}
-          fullWidth
+        <Autocomplete
+          options={directorOptions}
+          getOptionLabel={(option) => option.label || ''}
+          onChange={(event, value) => {
+            if (value) {
+              if (value.id === 'new') {
+                openAddDirectorModal();
+              } else {
+                setNewDirector({ ...newDirector, name: value.label, directorId: value.id });
+              }
+            }
+          }}
+          renderInput={(params) => (
+            <TextField {...params} label="Name" fullWidth />
+          )}
         />
       </Grid>
       <Grid size={4}>

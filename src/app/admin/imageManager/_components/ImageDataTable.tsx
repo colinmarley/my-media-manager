@@ -47,7 +47,7 @@ const ImageDataTable: React.FC<ImageDataTableProps> = ({ images, handleRename })
           {images.map((image, ind) => (
             <TableRow key={image.name}>
               <TableCell>
-                <img src={`http://localhost:8082${image.url}`} alt={image.name} style={{ width: '150px', height: '90px' }} />
+                <img src={`/api/backend${image.url}`} alt={image.name} style={{ width: '150px', height: '90px' }} />
               </TableCell>
               <TableCell>
                 {editingName === image.name ? (

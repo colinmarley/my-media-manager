@@ -15,14 +15,14 @@ const MovieList = ({ onAddToCollection, onExpand }: MovieListProps) => {
     <Container>
       {searchResults.map((searchResult: OmdbSearchResponse, index: number) => {
         return (
-          <>
+          <div key={`${searchResult.imdbID}-wrapper`}>
             {(index > 0) && <Divider sx={Styles.divider}/>}
             <MovieCard
               key={searchResult.imdbID}
               mediaSearchResult={searchResult}
               onAddToCollection={onAddToCollection}
               onExpand={onExpand} />
-          </>
+          </div>
         );
       })}
     </Container>

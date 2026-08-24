@@ -7,7 +7,29 @@
  */
 
 import { OmdbResponseFull, OmdbSearchResponse } from '../OmdbResponse.type';
-import { ScannedFile } from '../../service/library/LibraryBrowserService';
+
+export interface ScannedFile {
+  id: string;
+  path: string;
+  name: string;
+  extension: string;
+  media_type: string;
+  scanId: string;
+  libraryPath?: string;
+  discoveredAt: Date;
+  status: string;
+  metadata?: {
+    size: number;
+    modified_time: string;
+  };
+  media_metadata?: any;
+  parsed_info?: {
+    title: string;
+    year?: number;
+    season?: number;
+    episode?: number;
+  };
+}
 
 /**
  * Assignment status for a file

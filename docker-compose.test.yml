@@ -1,0 +1,39 @@
+# =============================================================================
+# docker-compose.test.yml  —  Isolated test database
+#
+# Provides a throwaway PostgreSQL instance for the test suite.
+# Data lives in a tmpfs (RAM) so it is automatically wiped when the
+# container stops — no cleanup step required.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml up -d   # start
+#   # run tests …
+#   docker compose -f docker-compose.test.yml down     # stop + wipe
+#
+# Or use the Makefile shortcut:  make test-integration
+# =============================================================================
+
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: media-manager-db-test
+    restart: "no"
+    environment:
+      POSTGRES_DB: media_manager_test
+      POSTGRES_USER: media_user
+      POSTGRES_PASSWORD: test_password
+    ports:
+      # Port 5433 avoids clashing with a dev/prod Postgres on 5432.
+      - "5433:5432"
+    tmpfs:
+      # In-memory storage — fast and automatically discarded on container stop.
+      - /var/lib/postgresql/data
+    volumes:
+      # Run the same schema-init scripts used in production so the test DB
+      # always has an identical schema.
+      - ./backend/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U media_user -d media_manager_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 15

@@ -1,166 +1,230 @@
-# Media Library Backend
+# Backend
 
-FastAPI backend service for media library management, file operations, and metadata extraction.
+Python FastAPI service that provides the REST API, database access, media file operations, and ingress processing pipeline.
 
-## Features
+## Stack
 
-- **File Operations**: Secure file/folder operations with path validation
-- **Library Scanning**: Async scanning of media directories with progress tracking
-- **Metadata Extraction**: FFmpeg-based metadata extraction from media files
-- **Security**: Path traversal protection and operation validation
-- **Async Support**: Non-blocking operations for large libraries
+| Component | Technology |
+|---|---|
+| Framework | FastAPI (async) |
+| ORM | SQLAlchemy (async, `asyncpg` driver) |
+| Database | PostgreSQL 16 |
+| Auth | HTTP-only session cookie, bcrypt passphrase |
+| File watching | `watchdog` `PollingObserver` (SMB/NAS-compatible) |
 
-## Quick Start
+## Running Locally
 
-### Prerequisites
-
-- Python 3.8+
-- FFmpeg installed and accessible in PATH
-
-### Installation
-
-1. **Install FFmpeg**:
-   - Windows: Download from [FFmpeg.org](https://ffmpeg.org/download.html)
-   - macOS: `brew install ffmpeg`
-   - Linux: `sudo apt install ffmpeg`
-
-2. **Install Python Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Configure Environment** (optional):
-   ```bash
-   export MEDIA_LIBRARY_ALLOWED_BASE_PATHS="/path/to/media,/another/path"
-   export MEDIA_LIBRARY_TEMP_DIRECTORY="/tmp/media_manager"
-   export MEDIA_LIBRARY_MAX_FILE_SIZE_MB="1000"
-   ```
-
-### Running the Server
-
-**Option 1: Using the startup script** (recommended):
 ```bash
-python start.py
+cd backend
+python3 -m venv venv
+source venv/bin/activate      # Windows: venv\Scripts\activate
+pip install -r requirements-dev.txt
+
+# Copy and fill in environment variables
+cp .env.example .env
+
+python start.py               # listens on :8082
+# or with auto-reload:
+uvicorn main:app --reload --host 0.0.0.0 --port 8082
 ```
 
-**Option 2: Direct uvicorn**:
-```bash
-uvicorn main:app --host localhost --port 8082 --reload
-```
+Interactive API docs: <http://localhost:8082/docs>
 
-The server will start on `http://localhost:8082`
+## Project Structure
 
-## API Documentation
-
-Once running, visit:
-- **Interactive API docs**: `http://localhost:8082/docs`
-- **ReDoc documentation**: `http://localhost:8082/redoc`
-- **OpenAPI JSON**: `http://localhost:8082/openapi.json`
-
-## API Endpoints
-
-### Health Check
-- `GET /health` - Server health status
-- `GET /health/detailed` - Detailed system status
-
-### File Operations
-- `POST /api/files/rename` - Rename files/folders
-- `POST /api/files/move` - Move files/folders
-- `DELETE /api/files/delete` - Delete files/folders
-- `GET /api/files/metadata/{file_path}` - Get file metadata
-- `POST /api/files/validate` - Validate file operations
-
-### Library Operations
-- `POST /api/library/scan` - Start library scan
-- `GET /api/library/scan/status/{scan_id}` - Get scan progress
-- `POST /api/library/scan/stop` - Stop running scan
-- `GET /api/library/scans` - List all scans
-- `POST /api/library/verify` - Verify file existence
-
-### Metadata Operations
-- `POST /api/metadata/extract` - Extract metadata from file
-- `POST /api/metadata/batch` - Batch metadata extraction
-- `GET /api/metadata/formats` - Get supported formats
-
-## Configuration
-
-The backend uses environment variables for configuration:
-
-| Variable | Description | Default |
-|----------|-------------|----------|
-| `MEDIA_LIBRARY_ALLOWED_BASE_PATHS` | Comma-separated allowed paths | Current directory |
-| `MEDIA_LIBRARY_TEMP_DIRECTORY` | Temporary files directory | `/tmp/media_manager` |
-| `MEDIA_LIBRARY_MAX_FILE_SIZE_MB` | Max file size for operations | `1000` |
-| `MEDIA_LIBRARY_LOG_LEVEL` | Logging level | `INFO` |
-
-## Security
-
-- **Path Validation**: All file operations validate paths against allowed base paths
-- **Size Limits**: File size limits prevent resource exhaustion
-- **Operation Validation**: Dangerous operations are blocked
-- **CORS**: Configured for frontend integration
-
-## Frontend Integration
-
-This backend is designed to work with the Next.js frontend `FileSystemService`. The frontend makes HTTP requests to these endpoints for:
-
-- File browser operations
-- Library scanning and management
-- Media metadata extraction
-- File system operations
-
-## Development
-
-### Running Tests
-```bash
-pytest
-```
-
-### Code Formatting
-```bash
-black .
-flake8 .
-```
-
-### Project Structure
 ```
 backend/
-├── main.py                 # FastAPI application
-├── start.py               # Startup script
-├── requirements.txt       # Python dependencies
-├── api/                   # API route handlers
-│   ├── file_operations.py
-│   ├── library_operations.py
-│   └── metadata_operations.py
-├── services/              # Business logic
-│   ├── file_manager.py
-│   ├── library_scanner.py
-│   └── metadata_extractor.py
-├── utils/                 # Utilities
-│   ├── exceptions.py
-│   └── logging.py
-└── config/               # Configuration
-    └── settings.py
+├── main.py                     # App factory, lifespan, router registration
+├── start.py                    # Convenience entry-point (uvicorn wrapper)
+├── api/
+│   ├── auth.py                 # Login, logout, session dependency
+│   ├── catalog.py              # CRUD + reassignment for movies/series/discs
+│   ├── file_browser.py         # Directory listing and file browsing
+│   ├── file_operations.py      # Move, rename, delete file operations
+│   ├── generic_data.py         # Generic key-value config store
+│   ├── ingress_operations.py   # Ingress queue management and health
+│   ├── library_operations.py   # Library scan and path management
+│   ├── library_paths.py        # Library path CRUD
+│   ├── media_operations.py     # Media file inspection
+│   ├── metadata_operations.py  # ffprobe metadata extraction
+│   └── posters.py              # Poster cache serving
+├── config/
+│   └── settings.py             # Pydantic-settings config (env vars)
+├── db/
+│   ├── database.py             # Engine, session factory, Base
+│   ├── models.py               # SQLAlchemy ORM models
+│   └── init/                   # SQL files run by Docker on first start
+│       └── 002_add_rating_columns.sql
+├── services/
+│   ├── assignment_orchestrator.py    # Coordinates match → organise pipeline
+│   ├── auto_matcher_service.py       # Filename → catalog entry matching
+│   ├── file_organization_service.py  # Builds Jellyfin folder structures
+│   ├── file_watcher_service.py       # PollingObserver for SMB/NAS paths
+│   ├── filename_parser.py            # Filename → title/year/S/E extraction
+│   ├── filesystem_manager.py         # Safe path validation, file I/O
+│   ├── ingress_queue_service.py      # In-memory ingress queue with enrichment
+│   ├── library_scanner.py            # Recursive directory scanner
+│   ├── media_metadata_extractor.py   # ffprobe wrapper
+│   ├── metadata_extractor.py         # Higher-level metadata extraction
+│   ├── poster_cache_service.py       # Download + serve poster images
+│   └── task_manager.py               # Background task tracking
+├── utils/
+│   ├── exceptions.py           # Typed application exceptions
+│   └── logging.py              # Structured logging setup
+└── tests/
+    ├── conftest.py             # Fixtures, test DB setup
+    ├── test_auth.py
+    ├── test_catalog.py
+    ├── test_generic_data.py
+    └── test_library_paths.py
 ```
 
-## Troubleshooting
+## API Modules
 
-### Common Issues
+### `catalog.py` — `/api/catalog`
 
-1. **FFmpeg not found**:
-   - Ensure FFmpeg is installed and in PATH
-   - Test with: `ffprobe -version`
+CRUD for the three main domain types plus disc reassignment.
 
-2. **Permission denied errors**:
-   - Check file permissions
-   - Ensure allowed base paths are configured correctly
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/catalog/movies` | List all movies |
+| `GET` | `/api/catalog/movies/lookup` | Find by `imdbId` or `titleLower` |
+| `GET` | `/api/catalog/movies/{id}` | Get one movie |
+| `PUT` | `/api/catalog/movies/{id}` | Create or update a movie |
+| `DELETE` | `/api/catalog/movies/{id}` | Delete a movie |
+| `GET` | `/api/catalog/series` | List all series |
+| `GET` | `/api/catalog/series/lookup` | Find by `imdbId` or `titleLower` |
+| `GET` | `/api/catalog/series/{id}` | Get one series |
+| `PUT` | `/api/catalog/series/{id}` | Create or update a series |
+| `DELETE` | `/api/catalog/series/{id}` | Delete a series |
+| `GET/PUT/DELETE` | `/api/catalog/discs/{id}` | Disc CRUD |
+| `POST` | `/api/catalog/reassign-discs` | Move disc records between catalog entries |
 
-3. **Path security errors**:
-   - Configure `MEDIA_LIBRARY_ALLOWED_BASE_PATHS`
-   - Ensure paths are absolute and within allowed directories
+#### Upsert behaviour (`PUT /movies/{id}` and `PUT /series/{id}`)
 
-4. **Large file timeouts**:
-   - Increase `MEDIA_LIBRARY_MAX_FILE_SIZE_MB`
-   - Use batch operations for large datasets
+The upsert handler extracts every significant field from the request body into a dedicated column rather than relying solely on the `raw_data` JSONB blob. Extracted columns include:
 
-For more help, check the logs or API documentation at `/docs`.
+- Core: `title`, `release_date`, `runtime`, `genres`, `languages`, `countries`
+- OMDB: `awards`, `content_rating`, `imdb_rating`, `imdb_votes`, `metascore`, `box_office`
+- TMDB: `tagline`, `tmdb_rating`, `tmdb_vote_count`, `tmdb_id`
+- Series only: `status`, `network`, `total_seasons`, `total_episodes`
+- Relations: `omdb_data` (full OMDB payload), `tmdb_data` (full TMDB payload), `id` fields
+
+OMDB's `"N/A"` sentinel is coerced to `NULL` before storage.
+
+#### Disc reassignment (`POST /api/catalog/reassign-discs`)
+
+```json
+{
+  "discIds":     ["disc-uuid-1", "disc-uuid-2"],
+  "fromMediaId": "source-catalog-id",
+  "toMediaId":   "target-catalog-id",
+  "toMediaType": "movie"
+}
+```
+
+- Removes `discIds` entries from the source entry's `releases[].discIds`
+- Adds them to a `_reassigned` release slot on the target entry
+- Updates each `Disc` row's `raw_data.mediaId` / `raw_data.mediaType`
+
+### `ingress_operations.py` — `/api/ingress`
+
+Manages the in-memory ingress queue, health check (including NAS TCP connectivity), and manual assignment endpoint.
+
+### `posters.py` — `/api/posters`
+
+Serves cached poster images. On first request the image is downloaded from the OMDB/TMDB CDN and written to the `poster_cache` volume. Subsequent requests are served from disk. A daily re-check appends updated versions without deleting old ones.
+
+## Database Schema
+
+All tables live in the `public` schema. The ORM models are defined in `db/models.py`.
+
+### Key tables
+
+| Table | Purpose |
+|---|---|
+| `movies` | Movie catalog entries |
+| `series` | TV series catalog entries |
+| `seasons` | Season records linked to a series |
+| `episodes` | Episode records linked to a season |
+| `releases` | Physical release records (Blu-ray, DVD sets) |
+| `discs` | Individual disc records linked to a release |
+| `release_movies` | M2M — releases ↔ movies |
+| `release_series` | M2M — releases ↔ series |
+
+### Rating / metadata columns (added in migration `002`)
+
+Both `movies` and `series` have these columns in addition to the base schema:
+
+```
+imdb_rating      TEXT        -- OMDB imdbRating
+imdb_votes       TEXT        -- OMDB imdbVotes
+metascore        TEXT        -- OMDB Metascore
+content_rating   TEXT        -- OMDB Rated  (PG-13, TV-MA, …)
+tagline          TEXT        -- TMDB tagline
+tmdb_rating      TEXT        -- TMDB vote_average
+tmdb_vote_count  INTEGER     -- TMDB vote_count
+tmdb_data        JSONB       -- Full TMDB detail response
+```
+
+`movies` additionally has: `box_office`, `collection_id/name/order`
+
+`series` additionally has: `total_seasons`, `total_episodes`, `status`, `network`
+
+### Database migrations
+
+Migrations are plain SQL files placed in `db/init/`. They use `IF NOT EXISTS` / `IF EXISTS` guards so they are safe to re-run. Docker applies them automatically on first container start (alphabetical order).
+
+To apply a migration to an already-running instance:
+
+```bash
+docker compose exec -T postgres psql -U media_user -d media_manager \
+  -f /dev/stdin < backend/db/init/002_add_rating_columns.sql
+```
+
+## Environment Variables
+
+See `.env.example` for the full list. Key variables:
+
+| Variable | Description |
+|---|---|
+| `DATABASE_URL` | `postgresql+asyncpg://user:pass@host:5432/db` |
+| `SESSION_SECRET_KEY` | Strong random string for cookie signing |
+| `MEDIA_LIBRARY_OMDB_API_KEY` | From https://www.omdbapi.com |
+| `MEDIA_LIBRARY_TMDB_API_KEY` | From https://www.themoviedb.org |
+| `JELLYFIN_DEST_BASE` | Destination root for organized media (e.g. `/ark/media/jellyfin`) |
+| `MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS` | Watched ingress folders (e.g. `["/ark/media/ingest"]`) |
+| `NAS_HOST` | NAS hostname or IP (optional) |
+| `MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH` | NAS mount health-check path (e.g. `/ark/media`) |
+| `MEDIA_LIBRARY_POSTER_CACHE_DIR` | Override poster cache directory |
+
+## Tests
+
+```bash
+# Unit tests only (no database required)
+cd backend
+source venv/bin/activate
+python -m pytest tests/ -v
+
+# Integration tests (requires test DB on port 5433)
+# See the root README Testing section
+```
+
+Tests use the database URL `postgresql+asyncpg://media_user:changeme@localhost:5433/media_manager_test` set by `conftest.py` before any application modules are imported, so the production database is never touched.
+
+## Movie Folder Reorganization Utility
+
+To normalize already-processed movie folders for Jellyfin extras detection:
+
+```bash
+cd backend
+python scripts/organize_processed_movies.py --dry-run
+python scripts/organize_processed_movies.py --apply
+```
+
+What it does:
+
+- Keeps/normalizes main-feature naming to match the movie folder.
+- Classifies extras by Jellyfin suffix rules (for example `-featurette`, `.trailer`, `-behindthescenes`).
+- Moves extras into supported Jellyfin extras folders (for example `trailers`, `featurettes`, `behind the scenes`, `extras`).
+- Renames alternate versions to use Jellyfin's required `Movie Name - Label.ext` pattern.

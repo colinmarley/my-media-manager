@@ -1,0 +1,88 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: media-manager-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: media_manager
+      POSTGRES_USER: media_user
+      POSTGRES_PASSWORD: changeme_strong_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U media_user -d media_manager"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: media-manager-backend
+    restart: unless-stopped
+    labels:
+      logging: "promtail"
+      logging_project: "my-media-manager"
+      logging_service: "backend"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://media_user:changeme_strong_password@postgres:5432/media_manager
+      JELLYFIN_DEST_BASE: /ark/media/jellyfin
+      MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS: '["/ark/media/jellyfin/ingest"]'
+      MEDIA_LIBRARY_INGRESS_AUTO_START_WATCHER: "true"
+      MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH: /ark/media
+      # Auto-seed the login password on first startup if not already set.
+      # Change this to your desired passcode.
+      APP_DEFAULT_PASSWORD: "C0d!ngC@rdsC0ff33"
+      HOST_ID: ai-workstation
+      LOG_PROJECT: my-media-manager
+      LOG_SERVICE: backend
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    ports:
+      - "8082:8082"
+    volumes:
+      # Mount your media directories so the backend can scan them.
+      # With native Docker daemon on Linux, direct paths work without restrictions.
+      - /ark:/ark:rw
+      - /media/colin:/media/colin:rw
+      - poster_cache:/data/media_manager/posters
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_OUTPUT: standalone
+        NEXT_IGNORE_LINT: "true"
+        NEXT_IGNORE_TYPE_ERRORS: "true"
+        NEXT_PUBLIC_DISC_RIPPER_URL: http://192.168.0.227:8083
+    container_name: media-manager-frontend
+    restart: unless-stopped
+    labels:
+      logging: "promtail"
+      logging_project: "my-media-manager"
+      logging_service: "frontend"
+    depends_on:
+      - backend
+    environment:
+      NEXT_OUTPUT: standalone
+      NEXT_PUBLIC_API_URL: http://localhost:8082
+      BACKEND_URL: http://media-manager-backend:8082
+      NEXT_PUBLIC_DISC_RIPPER_URL: http://192.168.0.227:8083
+      HOST_ID: ai-workstation
+      LOG_PROJECT: my-media-manager
+      LOG_SERVICE: frontend
+      LOG_LEVEL: "${LOG_LEVEL:-info}"
+    ports:
+      - "${FRONTEND_PORT:-3010}:3000"
+
+volumes:
+  postgres_data:
+  poster_cache:

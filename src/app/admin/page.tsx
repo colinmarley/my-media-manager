@@ -9,8 +9,9 @@ import ReleaseForm from './_components/ReleaseForm';
 import SeasonForm from './_components/SeasonForm';
 import SeriesForm from './_components/SeriesForm';
 import ImageManager from './imageManager/_components/ImageManager';
-import LibraryBrowser from './libraryBrowser/_components/LibraryBrowser';
-import { Box, SelectChangeEvent } from '@mui/material';
+import LibraryCompliancePanel from './_components/LibraryCompliancePanel';
+import ExtrasReviewPanel from './_components/ExtrasReviewPanel';
+import { Box } from '@mui/material';
 import useAdminStore from '../../store/useAdminStore';
 
 const AdminPage: React.FC = () => {
@@ -45,8 +46,10 @@ const AdminFormComponent: React.FC<AdminFormComponentProps> = ({ type }) => {
       return <EpisodeForm />;
     case 'ImageManager':
       return <ImageManager />;
-    case 'LibraryBrowser':
-      return <LibraryBrowser />;
+    case 'LibraryCompliance':
+      return <LibraryCompliancePanel />;
+    case 'ExtrasReview':
+      return <ExtrasReviewPanel />;
     default:
       return null;
   }

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import FirestoreService from '@/service/firebase/FirestoreService';
+import CatalogService from '@/service/catalog/CatalogService';
 import { ActorInitialEntry } from '@/types/collections/Actor.type';
 import { TextField, Button, Box, Modal, Typography } from '@mui/material';
 import useFormStore from '@/store/useFormStore';
@@ -27,8 +27,8 @@ const AddActorModule: React.FC<AddActorModuleProps> = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const firestoreService = new FirestoreService('actors');
-    await firestoreService.addDocument(formData);
+    const catalogService = new CatalogService('actors');
+    await catalogService.addDocument(formData);
     refreshActorOptions();
     closeAddActorModal();
   };

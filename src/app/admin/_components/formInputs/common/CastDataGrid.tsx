@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { ActorPreview } from '@/types/collections/Common.type';
 import { Button, TextField, Box, Autocomplete } from '@mui/material';
@@ -13,6 +13,12 @@ interface CastDataGridProps {
 }
 
 const CastDataGrid: React.FC<CastDataGridProps> = ({ castList, onAddCastMember }) => {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const columns: GridColDef[] = [
     { field: 'name', headerName: 'Name', width: 200 },
     { field: 'actorId', headerName: 'Actor ID', width: 200 },
@@ -21,11 +27,13 @@ const CastDataGrid: React.FC<CastDataGridProps> = ({ castList, onAddCastMember }
 
   return (
     <Box>
-      <DataGrid
-        rows={castList.map((actor, index) => ({ id: index, ...actor }))}
-        columns={columns}
-        disableRowSelectionOnClick
-      />
+      {isMounted && (
+        <DataGrid
+          rows={castList.map((actor, index) => ({ id: index, ...actor }))}
+          columns={columns}
+          disableRowSelectionOnClick
+        />
+      )}
       <CastInput
         castList={castList}
         onAddCastMember={onAddCastMember} />

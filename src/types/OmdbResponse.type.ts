@@ -32,6 +32,9 @@ export interface OmdbResponseFull {
     Website?: string; // Optional field for movies
     Response: string;
     TotalSeasons?: string; // Optional field for series
+    Season?: string; // Optional field for episodes
+    Episode?: string; // Optional field for episodes
+    seriesID?: string; // Optional field for episodes — parent series IMDb ID
 }
 
 export interface Rating {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button, TextField, Box, Autocomplete } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import { ActorPreview } from '@/types/collections/Common.type';
@@ -10,9 +10,13 @@ interface CastInputProps {
 }
 
 const CastInput: React.FC<CastInputProps> = ({ castList, onAddCastMember }) => {
-  const { actorOptions, openAddActorModal } = useFormStore();
+  const { actorOptions, openAddActorModal, refreshActorOptions } = useFormStore();
 
   const [newActor, setNewActor] = useState<ActorPreview>({ name: '', actorId: '', characters: [] });
+
+  useEffect(() => {
+    void refreshActorOptions();
+  }, [refreshActorOptions]);
 
   const handleAddActor = () => {
     if (newActor.name && newActor.actorId && newActor.characters.length > 0) {

@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { TextField, Button, Typography, FormControl, FormControlLabel, Checkbox } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import useAddDisc from '../../../hooks/newMedia/useAddDisc';
-import { ImageFile, VideoFile } from '../../../types/firebase/FBCommon.type';
+import { ImageFile, VideoFile } from '../../../types/catalog/Common.type';
 import ImageSearch from '../imageManager/_components/ImageSearch';
 import useDiscValidation from '../../../utils/useDiscValidation';
 import styles from '../_styles/DiscForm.module.css';
 import SubmitButton from '@/app/_components/SubmitButton';
+import { FieldLabel, FormSection, FormSectionStack } from './forms/common';
 
 interface DiscValidation {
   title: string | null;
@@ -19,7 +20,7 @@ interface DiscValidation {
   regionCode: string | null;
 }
 
-const FormTextField = (props: { label: string, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, error?: string | null }) => (
+const FormTextField = (props: { label: React.ReactNode, value: string, onChange: (e: React.ChangeEvent<HTMLInputElement>) => void, error?: string | null }) => (
   <TextField
     label={props.label}
     value={props.value}
@@ -115,99 +116,101 @@ const AddDiscForm: React.FC = () => {
           <Typography variant="h4" color="white">Add New Disc</Typography>
         </Grid>
         <Grid size={12}>
-          <FormTextField label="Title" value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
-        </Grid>
-        <Grid size={12}>
-          <label>Video Files:</label>
-          <input type="file" multiple onChange={(e) => {
-            const files = Array.from(e.target.files || []);
-            const videoFiles = files.map(file => ({
-              fileName: file.name,
-              fileSize: file.size,
-              duration: 0, // Placeholder, you might want to handle this differently
-              resolution: '', // Placeholder, you might want to handle this differently
-              format: file.type,
-            }));
-            setVideoFiles(videoFiles);
-          }} />
-        </Grid>
-        <Grid size={12}>
-          <label>Image Files:</label>
-          <input type="file" multiple onChange={(e) => {
-            const files = Array.from(e.target.files || []);
-            const imageFiles = files.map(file => ({
-              fileName: file.name,
-              fileSize: file.size,
-              resolution: '', // Placeholder, you might want to handle this differently
-              format: file.type,
-            }));
-            setImageFiles(imageFiles);
-          }} />
-        </Grid>
-        <Grid size={12}>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={isPartOfSet}
-                onChange={(e) => setIsPartOfSet(e.target.checked)}
+          <FormSectionStack>
+            <FormSection title="Identity" description="Core disc information." titleTooltip="Use this section for the disc title and any existing linked media identifier.">
+              <FormTextField label={<FieldLabel label="Title" tooltip="Required. Use a clear physical-disc label, such as Blade Runner (Disc 1)." />} value={title} onChange={(e) => setTitle(e.target.value)} error={errors.title} />
+              <FormTextField label={<FieldLabel label="Resource ID" tooltip="Optional legacy link to a related media record. New records should prefer mediaId and mediaType." />} value={resourceId || ''} onChange={(e) => setResourceId(e.target.value)} />
+            </FormSection>
+
+            <FormSection title="Physical and Flags" description="Disc physical classification." titleTooltip="Track whether this disc belongs to a set, is a rental, or includes special features.">
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={isPartOfSet}
+                    onChange={(e) => setIsPartOfSet(e.target.checked)}
+                  />
+                }
+                label={<FieldLabel label="Is Part of Set" tooltip="Check this when the disc belongs to a multi-disc boxed set or release package." />}
               />
-            }
-            label="Is Part of Set"
-          />
-        </Grid>
-        <Grid size={12}>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={isRentalDisc}
-                onChange={(e) => setIsRentalDisc(e.target.checked)}
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={isRentalDisc}
+                    onChange={(e) => setIsRentalDisc(e.target.checked)}
+                  />
+                }
+                label={<FieldLabel label="Is Rental Disc" tooltip="Check this when the disc is a rental copy rather than part of the permanent library." />}
               />
-            }
-            label="Is Rental Disc"
-          />
-        </Grid>
-        <Grid size={12}>
-          <FormControlLabel
-            control={
-              <Checkbox
-                checked={containsSpecialFeatures}
-                onChange={(e) => setContainsSpecialFeatures(e.target.checked)}
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={containsSpecialFeatures}
+                    onChange={(e) => setContainsSpecialFeatures(e.target.checked)}
+                  />
+                }
+                label={<FieldLabel label="Contains Special Features" tooltip="Check this when the disc includes extras, supplements, or bonus features." />}
               />
-            }
-            label="Contains Special Features"
-          />
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Resource ID" value={resourceId || ''} onChange={(e) => setResourceId(e.target.value)} />
-        </Grid>
-        <Grid size={12}>
-          <TextField
-            label="Release Date"
-            type="date"
-            value={releaseDate || ''}
-            onChange={(e) => setReleaseDate(e.target.value)}
-            fullWidth
-            InputLabelProps={{
-              shrink: true,
-            }}
-            error={!!errors.releaseDate}
-            helperText={errors.releaseDate}
-          />
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Genre" value={genre || ''} onChange={(e) => setGenre(e.target.value)} error={errors.genre} />
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Language" value={language || ''} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Subtitles" value={subtitles?.join(', ') || ''} onChange={(e) => setSubtitles(e.target.value.split(', '))} error={errors.subtitles} />
-        </Grid>
-        <Grid size={12}>
-          <FormTextField label="Region Code" value={regionCode || ''} onChange={(e) => setRegionCode(e.target.value)} error={errors.regionCode} />
-        </Grid>
-        <Grid size={12}>
-          <ImageSearch />
+            </FormSection>
+
+            <FormSection title="Video Files" description="Associate video files with this disc." titleTooltip="Add one or more encoded files stored on this physical disc. These entries drive file-level metadata and playback info.">
+              <div>
+                <label>Video Files:</label>
+                <input type="file" multiple onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  const videoFiles = files.map(file => ({
+                    fileName: file.name,
+                    fileSize: file.size,
+                    duration: 0,
+                    resolution: '',
+                    format: file.type,
+                  }));
+                  setVideoFiles(videoFiles);
+                }} />
+              </div>
+              {errors.videoFiles && (
+                <Typography variant="body2" color="error">{errors.videoFiles}</Typography>
+              )}
+            </FormSection>
+
+            <FormSection title="Image Files" description="Associate cover art and images." titleTooltip="Attach scans or artwork for this disc edition, including covers, inserts, or menu captures.">
+              <div>
+                <label>Image Files:</label>
+                <input type="file" multiple onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  const imageFiles = files.map(file => ({
+                    fileName: file.name,
+                    fileSize: file.size,
+                    resolution: '',
+                    format: file.type,
+                  }));
+                  setImageFiles(imageFiles);
+                }} />
+              </div>
+              {errors.imageFiles && (
+                <Typography variant="body2" color="error">{errors.imageFiles}</Typography>
+              )}
+              <ImageSearch />
+            </FormSection>
+
+            <FormSection title="Optional Metadata" description="Additional disc details." titleTooltip="Fill in supplemental disc attributes like release date, language, subtitles, and region coding.">
+              <TextField
+                label={<FieldLabel label="Release Date" tooltip="The release date of this physical disc edition." />}
+                type="date"
+                value={releaseDate || ''}
+                onChange={(e) => setReleaseDate(e.target.value)}
+                fullWidth
+                InputLabelProps={{
+                  shrink: true,
+                }}
+                error={!!errors.releaseDate}
+                helperText={errors.releaseDate}
+              />
+              <FormTextField label={<FieldLabel label="Genre" tooltip="Legacy field retained for compatibility. Prefer storing genre on the linked media record instead." />} value={genre || ''} onChange={(e) => setGenre(e.target.value)} error={errors.genre} />
+              <FormTextField label={<FieldLabel label="Language" tooltip="Primary playback language for this disc." />} value={language || ''} onChange={(e) => setLanguage(e.target.value)} error={errors.language} />
+              <FormTextField label={<FieldLabel label="Subtitles" tooltip="Comma-separated subtitle languages available on the disc." />} value={subtitles?.join(', ') || ''} onChange={(e) => setSubtitles(e.target.value.split(', '))} error={errors.subtitles} />
+              <FormTextField label={<FieldLabel label="Region Code" tooltip="Physical disc region code, such as 1, 2, A, or B." />} value={regionCode || ''} onChange={(e) => setRegionCode(e.target.value)} error={errors.regionCode} />
+            </FormSection>
+          </FormSectionStack>
         </Grid>
         <Grid size={12}>
           <SubmitButton

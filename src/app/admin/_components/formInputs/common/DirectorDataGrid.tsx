@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { DataGrid, GridColDef } from '@mui/x-data-grid';
 import { Button, TextField, Box, Autocomplete } from '@mui/material';
 import Grid from '@mui/material/Grid';
@@ -15,6 +15,12 @@ interface DirectorDataGridProps {
 }
 
 const DirectorDataGrid: React.FC<DirectorDataGridProps> = ({ directorList, onAddDirector }) => {
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
   const columns: GridColDef[] = [
     { field: 'fullName', headerName: 'Name', width: 200 },
     { field: 'title', headerName: 'Title', width: 200 },
@@ -23,11 +29,13 @@ const DirectorDataGrid: React.FC<DirectorDataGridProps> = ({ directorList, onAdd
 
   return (
     <Box>
-      <DataGrid
-        rows={directorList.map((director, index) => ({ ...director, id: index }))}
-        columns={columns}
-        disableRowSelectionOnClick
-      />
+      {isMounted && (
+        <DataGrid
+          rows={directorList.map((director, index) => ({ ...director, id: index }))}
+          columns={columns}
+          disableRowSelectionOnClick
+        />
+      )}
 
       <Box mt={2}>
         <DirectorInput onAddDirector={onAddDirector} />

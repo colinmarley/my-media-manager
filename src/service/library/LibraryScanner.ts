@@ -46,7 +46,7 @@ export class LibraryScanner {
   private baseUrl: string;
   private activeScanId: string | null = null;
 
-  constructor(settings: LibrarySettings, baseUrl: string = 'http://localhost:8082') {
+  constructor(settings: LibrarySettings, baseUrl: string = '/api/backend') {
     this.settings = settings;
     this.baseUrl = baseUrl;
   }

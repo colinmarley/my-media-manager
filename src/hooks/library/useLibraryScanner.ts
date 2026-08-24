@@ -28,7 +28,7 @@ export const useLibraryScanner = () => {
 
   // Initialize services
   useEffect(() => {
-    const scanner = new LibraryScanner(state.settings, 'http://localhost:8082');
+    const scanner = new LibraryScanner(state.settings, '/proxy-backend');
 
     setState(prev => ({
       ...prev,

@@ -1,12 +1,12 @@
-import FirestoreService from '@/service/firebase/FirestoreService';
-import { FBMovie } from '../types/firebase/FBMovie.type';
+import CatalogService from '@/service/catalog/CatalogService';
+import { CatalogMovie } from '../types/catalog/Movie.type';
 import { TopCastEntry } from '@/types/inputs/MovieInputs';
 import { ActorPreview, MovieDirector, RatingEntry } from '@/types/collections/Common.type';
 import { ImageFile, ReleasePreview } from '@/types/collections/Common.type';
 import { MediaCertification, MediaGenre, ReleaseType } from '@/types/enums/MediaEnums';
 import { OmdbResponseFull } from '@/types/OmdbResponse.type';
 
-const movieCollection = new FirestoreService('movies');
+const movieCollection = new CatalogService('movies');
 
 const useMovieValidation = () => {
 
@@ -49,7 +49,7 @@ const useMovieValidation = () => {
       return ['At least one director is required'];
     }
     let errorList: string[] = [];
-    const directorsCollection = new FirestoreService('directors');
+    const directorsCollection = new CatalogService('directors');
     directors.forEach((director, ind) => {
       const dirId = director?.directorId;
       if (dirId && dirId.length === 20 && /^[a-zA-Z0-9]+$/.test(dirId)) {
@@ -254,7 +254,7 @@ const useMovieValidation = () => {
     }
 
     let errorList: string[] = [];
-    const actorsCollection = new FirestoreService('actors');
+    const actorsCollection = new CatalogService('actors');
 
     cast.forEach((actor, ind) => {
       const actorId = actor?.actorId;

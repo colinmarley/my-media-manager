@@ -31,7 +31,7 @@ const ImageSearch: React.FC = () => {
         {searchResults.map((file, index) => (
           <ImageListItem key={index}>
             <img
-              src={`http://localhost:8082${file}`}
+              src={`/api/backend${file}`}
               alt={file}
               loading="lazy"
             />

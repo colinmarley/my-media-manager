@@ -6,7 +6,7 @@ import { MediaFileInfo, FolderStructure } from '../../types/library/LibraryTypes
 export class FileSystemService {
   private baseUrl: string;
 
-  constructor(baseUrl: string = 'http://localhost:8082') {
+  constructor(baseUrl: string = '/proxy-backend') {
     this.baseUrl = baseUrl;
   }
 

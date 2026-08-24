@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from 'react';
 import TestLibraryScanner from './_components/TestLibraryScanner';
+import FolderBrowser from './_components/FolderBrowser';
+import LibraryMaintenancePanel from './_components/LibraryMaintenancePanel';
 import {
   Box,
   Typography,
@@ -49,10 +51,12 @@ import {
 } from '@mui/icons-material';
 import { LibraryPath, LibrarySettings, DEFAULT_NAMING_CONVENTIONS } from '../../../types/library/LibraryTypes';
 import { DEFAULT_LIBRARY_SETTINGS } from '../../../service/library/LibraryScanner';
-import { firestoreScanService, ScanResultData } from '../../../service/library/FirestoreScanService';
-import { firebaseLibraryService } from '../../../service/library/FirebaseLibraryService';
-import { useFirebaseLibraryPaths } from '../../../hooks/library/useFirebaseLibraryPaths';
+import { useLibraryPaths } from '../../../hooks/library/useLibraryPaths';
 import useAuthenticationStore from '../../../store/useAuthenticationStore';
+import {
+  JELLYFIN_ROOT_STORAGE_KEY,
+  LIBRARY_SETTINGS_STORAGE_KEY,
+} from '../../../constants/librarySettings';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -75,7 +79,8 @@ function TabPanel(props: TabPanelProps) {
 }
 
 const LibraryManagementPage: React.FC = () => {
-  const { user } = useAuthenticationStore();
+  const { authenticated } = useAuthenticationStore();
+
   const {
     libraryPaths,
     selectedPath,
@@ -87,17 +92,20 @@ const LibraryManagementPage: React.FC = () => {
     selectLibraryPath,
     clearError,
     getLibraryStatistics
-  } = useFirebaseLibraryPaths(user);
+  } = useLibraryPaths();
 
   const [currentTab, setCurrentTab] = useState(0);
   const [settings, setSettings] = useState<LibrarySettings>(DEFAULT_LIBRARY_SETTINGS);
   const [showAddPathDialog, setShowAddPathDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showFolderBrowser, setShowFolderBrowser] = useState(false);
+  const [folderBrowserMode, setFolderBrowserMode] = useState<'libraryPath' | 'jellyfinRoot'>('libraryPath');
   const [newPathForm, setNewPathForm] = useState({
     name: '',
     rootPath: '',
     mediaType: 'mixed' as 'mixed' | 'movies' | 'series'
   });
+  const [jellyfinRootPath, setJellyfinRootPath] = useState('');
   const [isScanning, setIsScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState<number>(0);
   const [scanId, setScanId] = useState<string | null>(null);
@@ -109,20 +117,37 @@ const LibraryManagementPage: React.FC = () => {
 
   const statistics = getLibraryStatistics();
 
-  // Load scan results when user changes
+  // Load persisted settings on first render
   useEffect(() => {
-    if (user && currentTab === 1) { // Only load when on Scan Results tab
+    if (typeof window === 'undefined') return;
+
+    try {
+      const savedLibrarySettings = window.localStorage.getItem(LIBRARY_SETTINGS_STORAGE_KEY);
+      if (savedLibrarySettings) {
+        setSettings(JSON.parse(savedLibrarySettings));
+      }
+
+      const savedJellyfinRoot = window.localStorage.getItem(JELLYFIN_ROOT_STORAGE_KEY);
+      if (savedJellyfinRoot) {
+        setJellyfinRootPath(savedJellyfinRoot);
+      }
+    } catch (storageError) {
+      console.error('Failed to load saved library settings:', storageError);
+    }
+  }, []);
+
+  // Load scan results when tab changes
+  useEffect(() => {
+    if (currentTab === 1) {
       loadScanResults();
     }
-  }, [user, currentTab]);
+  }, [currentTab]);
 
   const loadScanResults = async () => {
-    if (!user) return;
-    
     try {
       setLoadingScanResults(true);
-      const results = await firebaseLibraryService.getUserScanResults(user);
-      setScanResults(results);
+      // Scan results are managed by the backend; show empty unless a scan just ran
+      setScanResults([]);
     } catch (err) {
       console.error('Error loading scan results:', err);
     } finally {
@@ -152,7 +177,7 @@ const LibraryManagementPage: React.FC = () => {
   };
 
   const handleStartScan = async (path: LibraryPath) => {
-    if (!user) {
+    if (!authenticated) {
       alert('You must be logged in to start a scan');
       return;
     }
@@ -163,16 +188,8 @@ const LibraryManagementPage: React.FC = () => {
     setShowDuplicateReport(false);
     
     try {
-      // Fetch existing files and directories from Firebase before scanning
-      const [existingFiles, existingDirectories] = await Promise.all([
-        firebaseLibraryService.getUserExistingFiles(user),
-        firebaseLibraryService.getUserExistingDirectories(user)
-      ]);
-
-      console.log(`Found ${existingFiles.length} existing files and ${existingDirectories.length} existing directories`);
-
-      // Start the actual backend scan with existing data
-      const response = await fetch('http://localhost:8082/api/library/scan', {
+      // Start the backend scan
+      const response = await fetch('/api/backend/api/library/scan', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -180,10 +197,9 @@ const LibraryManagementPage: React.FC = () => {
         body: JSON.stringify({
           libraryPath: path.rootPath,
           extractMetadata: settings.extractMetadata || false,
-          checkDuplicates: true, // Enable duplicate detection
-          userId: user?.uid, // Pass user ID for existing data comparison
-          existingFiles: existingFiles,
-          existingDirectories: existingDirectories
+          checkDuplicates: true,
+          existingFiles: [],
+          existingDirectories: []
         }),
       });
 
@@ -203,7 +219,7 @@ const LibraryManagementPage: React.FC = () => {
       // Poll for scan status updates
       const statusInterval = setInterval(async () => {
         try {
-          const statusResponse = await fetch(`http://localhost:8082/api/library/scan/status/${currentScanId}`);
+          const statusResponse = await fetch(`/api/backend/api/library/scan/status/${currentScanId}`);
           
           if (statusResponse.ok) {
             const statusResult = await statusResponse.json();
@@ -227,23 +243,20 @@ const LibraryManagementPage: React.FC = () => {
                   
                   // Fetch scan results from backend
                   try {
-                    const resultsResponse = await fetch(`http://localhost:8082/api/library/scan/results/${currentScanId}`);
+                    const resultsResponse = await fetch(`/api/backend/api/library/scan/results/${currentScanId}`);
                     if (resultsResponse.ok) {
                       const resultsData = await resultsResponse.json();
-                      const scanResults: ScanResultData = resultsData.data;
+                      const scanResults = resultsData.data;
                       
                       // Check for duplicate report
-                      if (scanResults.duplicateReport && scanResults.duplicateReport.duplicates && scanResults.duplicateReport.duplicates.length > 0) {
+                      if (scanResults.duplicateReport?.duplicates?.length > 0) {
                         setDuplicateReport(scanResults.duplicateReport);
                         setShowDuplicateReport(true);
                       }
                       
-                      // Save results to Firestore (only new/updated items will be saved)
-                      await firestoreScanService.saveScanResults(user, scanResults, path.rootPath);
-                      
                       // Clean up scan data from backend memory
                       try {
-                        await fetch(`http://localhost:8082/api/library/scan/cleanup/${currentScanId}`, {
+                        await fetch(`/api/backend/api/library/scan/cleanup/${currentScanId}`, {
                           method: 'DELETE'
                         });
                       } catch (cleanupError) {
@@ -252,19 +265,17 @@ const LibraryManagementPage: React.FC = () => {
                       
                       setScanStatus('Completed');
                       const duplicateCount = scanResults.duplicateReport?.duplicates?.length || 0;
-                      console.log(`Scan completed and saved: ${scanResults.totalFiles} files, ${scanResults.totalDirectories} directories${duplicateCount > 0 ? `, ${duplicateCount} duplicates detected` : ''}`);
+                      console.log(`Scan completed: ${scanResults.totalFiles} files, ${scanResults.totalDirectories} directories${duplicateCount > 0 ? `, ${duplicateCount} duplicates detected` : ''}`);
                     } else {
                       throw new Error('Failed to fetch scan results');
                     }
                   } catch (saveError) {
-                    console.error('Error saving scan results:', saveError);
+                    console.error('Error processing scan results:', saveError);
                     setScanStatus('Error saving results');
-                    await firestoreScanService.saveScanError(user, currentScanId, path.rootPath, String(saveError));
                   }
                 } else {
                   setScanStatus('Error');
                   console.error('Scan failed:', scanData.errors);
-                  await firestoreScanService.saveScanError(user, currentScanId, path.rootPath, JSON.stringify(scanData.errors));
                 }
                 
                 // Clean up
@@ -292,14 +303,14 @@ const LibraryManagementPage: React.FC = () => {
       setScanStatus('');
       setScanId(null);
       // You might want to show an error message to the user here
-      alert(`Failed to start scan: ${error instanceof Error ? error.message : 'Unknown error'}. ${!user ? 'Please ensure you are logged in.' : ''}`);
+      alert(`Failed to start scan: ${error instanceof Error ? error.message : 'Unknown error'}. ${!authenticated ? 'Please ensure you are logged in.' : ''}`);
     }
   };
 
   const handleStopScan = async () => {
     if (scanId) {
       try {
-        const response = await fetch('http://localhost:8082/api/library/scan/stop', {
+        const response = await fetch('/api/backend/api/library/scan/stop', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -326,7 +337,16 @@ const LibraryManagementPage: React.FC = () => {
   };
 
   const handleUpdateSettings = () => {
-    // Save settings logic would go here
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(LIBRARY_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+
+      if (jellyfinRootPath.trim()) {
+        window.localStorage.setItem(JELLYFIN_ROOT_STORAGE_KEY, jellyfinRootPath.trim());
+      } else {
+        window.localStorage.removeItem(JELLYFIN_ROOT_STORAGE_KEY);
+      }
+    }
+
     setShowSettingsDialog(false);
   };
 
@@ -336,7 +356,7 @@ const LibraryManagementPage: React.FC = () => {
         Media Library Management
       </Typography>
 
-      {!user && (
+      {!authenticated && (
         <Alert severity="warning" sx={{ mb: 3 }}>
           Please log in to manage your library paths and access scan results.
         </Alert>
@@ -511,7 +531,7 @@ const LibraryManagementPage: React.FC = () => {
             variant="outlined"
             startIcon={<RefreshIcon />}
             onClick={loadScanResults}
-            disabled={loadingScanResults || !user}
+            disabled={loadingScanResults}
           >
             Refresh
           </Button>
@@ -519,7 +539,7 @@ const LibraryManagementPage: React.FC = () => {
         
         <Card>
           <CardContent>
-            {!user ? (
+            {!authenticated ? (
               <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
                 Please log in to view scan results.
               </Typography>
@@ -578,54 +598,17 @@ const LibraryManagementPage: React.FC = () => {
 
       {/* File Browser Tab */}
       <TabPanel value={currentTab} index={2}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 2 }}>
-          <Typography variant="h6">File Browser</Typography>
-          <Button
-            variant="contained"
-            onClick={() => window.open('/admin/libraryBrowser', '_blank')}
-            disabled={!user}
-          >
-            Open Library Browser
-          </Button>
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h6">File Maintenance</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            Rename, move, create folders, and inspect directory contents directly from Admin Library.
+          </Typography>
         </Box>
-        
-        <Alert severity="info" sx={{ mb: 3 }}>
-          <Typography variant="subtitle2" gutterBottom>
-            🆕 New Features Available:
-          </Typography>
-          <Typography variant="body2">
-            • <strong>Show Folder Contents:</strong> Toggle the switch to view all files and subdirectories within each folder
-            <br />
-            • <strong>Bulk Move to Folder:</strong> Select multiple items and use "Move to Folder" to quickly organize your media files
-            <br />
-            • <strong>Enhanced Navigation:</strong> Browse folder hierarchies directly without leaving the current view
-          </Typography>
-        </Alert>
-        
-        <Card>
-          <CardContent>
-            {!user ? (
-              <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
-                Please log in to browse files.
-              </Typography>
-            ) : scanResults.length === 0 ? (
-              <Typography color="text.secondary" align="center" sx={{ py: 4 }}>
-                No scanned files available. Complete a library scan to browse files.
-              </Typography>
-            ) : (
-              <Box sx={{ textAlign: 'center', py: 4 }}>
-                <Typography variant="body1" gutterBottom>
-                  You have {scanResults.reduce((total, result) => total + (result.filesFound || 0), 0)} files 
-                  and {scanResults.reduce((total, result) => total + (result.directoriesFound || 0), 0)} directories 
-                  from {scanResults.length} scan{scanResults.length !== 1 ? 's' : ''}.
-                </Typography>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
-                  Click "Open Library Browser" above to browse and manage your scanned files with the new folder browsing and bulk move features.
-                </Typography>
-              </Box>
-            )}
-          </CardContent>
-        </Card>
+
+        <LibraryMaintenancePanel
+          libraryPaths={libraryPaths}
+          disabled={!authenticated}
+        />
       </TabPanel>
 
       {/* Settings Tab */}
@@ -640,6 +623,20 @@ const LibraryManagementPage: React.FC = () => {
             Edit Settings
           </Button>
         </Box>
+
+        <Card sx={{ mb: 2 }}>
+          <CardContent>
+            <Typography variant="subtitle1" gutterBottom>
+              Global Jellyfin Root Path
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+              Used as the default destination root when organizing media files.
+            </Typography>
+            <Typography sx={{ fontFamily: 'monospace', fontSize: '0.9rem' }}>
+              {jellyfinRootPath || 'Not set (defaults to backend fallback)'}
+            </Typography>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardContent>
@@ -694,6 +691,20 @@ const LibraryManagementPage: React.FC = () => {
             placeholder="/path/to/media/library"
             value={newPathForm.rootPath}
             onChange={(e) => setNewPathForm(prev => ({ ...prev, rootPath: e.target.value }))}
+            InputProps={{
+              endAdornment: (
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setFolderBrowserMode('libraryPath');
+                    setShowFolderBrowser(true);
+                  }}
+                  startIcon={<FolderIcon />}
+                >
+                  Browse
+                </Button>
+              ),
+            }}
             sx={{ mb: 2 }}
           />
           <FormControl fullWidth variant="outlined">
@@ -738,7 +749,7 @@ const LibraryManagementPage: React.FC = () => {
           <Typography variant="subtitle1" gutterBottom>
             File Processing
           </Typography>
-          <Box sx={{ display: 'flex', gap: 2, mb: 2 }}>
+          <Box sx={{ display: 'flex', gap: 2, mb: 3 }}>
             <TextField
               label="Extract Metadata"
               select
@@ -758,6 +769,43 @@ const LibraryManagementPage: React.FC = () => {
               <MenuItem value="false">Disabled</MenuItem>
             </TextField>
           </Box>
+
+          <Typography variant="subtitle1" gutterBottom>
+            Jellyfin Organization
+          </Typography>
+          <TextField
+            margin="dense"
+            label="Global Jellyfin Root Path"
+            fullWidth
+            variant="outlined"
+            placeholder="/ark/media/jellyfin"
+            value={jellyfinRootPath}
+            onChange={(e) => setJellyfinRootPath(e.target.value)}
+            InputProps={{
+              endAdornment: (
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setFolderBrowserMode('jellyfinRoot');
+                    setShowFolderBrowser(true);
+                  }}
+                  startIcon={<FolderIcon />}
+                >
+                  Browse
+                </Button>
+              ),
+            }}
+            helperText="Used by default for file organization to Jellyfin paths."
+            sx={{ mb: 1 }}
+          />
+          <Button
+            size="small"
+            color="inherit"
+            onClick={() => setJellyfinRootPath('')}
+            sx={{ textTransform: 'none' }}
+          >
+            Clear global Jellyfin root
+          </Button>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setShowSettingsDialog(false)}>Cancel</Button>
@@ -766,6 +814,21 @@ const LibraryManagementPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Folder Browser Dialog */}
+      <FolderBrowser
+        open={showFolderBrowser}
+        onClose={() => setShowFolderBrowser(false)}
+        onSelect={(path) => {
+          if (folderBrowserMode === 'jellyfinRoot') {
+            setJellyfinRootPath(path);
+          } else {
+            setNewPathForm(prev => ({ ...prev, rootPath: path }));
+          }
+          setShowFolderBrowser(false);
+        }}
+        initialPath={folderBrowserMode === 'jellyfinRoot' ? jellyfinRootPath : newPathForm.rootPath}
+      />
 
       {/* Duplicate Report Dialog */}
       <Dialog 
