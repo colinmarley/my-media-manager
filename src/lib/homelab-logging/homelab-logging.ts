@@ -33,18 +33,18 @@ const BASE = {
 
 // ── Server-side (Node.js) ────────────────────────────────────────────────────
 
-let _pino: ReturnType<typeof import('pino').default> | null = null
+let _pino: ReturnType<typeof import('pino')> | null = null
 
 function getServerPino() {
   if (_pino) return _pino
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pino = require('pino') as typeof import('pino')
-  _pino = pino.default({
+  _pino = pino({
     level: (process.env.LOG_LEVEL ?? 'info').toLowerCase(),
     base: BASE,
-    timestamp: pino.default.stdTimeFunctions.isoTime,
+    timestamp: pino.stdTimeFunctions.isoTime,
     formatters: {
-      level(label) { return { level: label } },
+      level(label: string) { return { level: label } },
     },
   })
   return _pino

@@ -19,7 +19,7 @@ const ROUTE_TABS = [
 
 function ripperStatusColor(jobs: RipJob[]): string {
   if (jobs.some((j) => j.status === 'failed')) return '#f44336';
-  if (jobs.some((j) => ['queued', 'ripping', 'encoding', 'delivering'].includes(j.status))) return '#ff9800';
+  if (jobs.some((j) => ['queued', 'ripping', 'delivering'].includes(j.status))) return '#ff9800';
   return '#4caf50';
 }
 
