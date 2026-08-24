@@ -136,6 +136,34 @@ class Disc(Base):
     updated_at                = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class Tape(Base):
+    """
+    Catalog record for a physical VHS/VHS-C/Mini DV tape owned — the same
+    first-class-entity treatment as Disc, so a tape can be logged before
+    it's ever digitized and later linked to the media_files produced from
+    it. `tape_label` is the free-form physical identifier written on the
+    tape/case (e.g. "VHSC_0001") — the same convention already used by
+    tape_session_files.tape_id, but this row's `id` is the stable catalog
+    primary key other tables (media_files.tape_id) reference.
+    """
+    __tablename__ = "tapes"
+
+    id             = Column(Text, primary_key=True)
+    title          = Column(Text, nullable=False)
+    tape_type      = Column(Text)  # "vhs" | "vhs_c" | "mini_dv"
+    tape_label     = Column(Text)  # e.g. "VHSC_0001" — matches tape_session_files.tape_id convention
+    brand          = Column(Text)
+    condition      = Column(Text)
+    recording_speed = Column(Text)  # "sp" | "lp" | "ep"
+    label_notes    = Column(Text)
+    purchase_date  = Column(Text)
+    video_files    = Column(JSONB, default=[])
+    image_files    = Column(JSONB, default=[])
+    raw_data       = Column(JSONB, default={})
+    created_at     = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at     = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class Series(Base):
     __tablename__ = "series"
 
@@ -395,6 +423,7 @@ class MediaFile(Base):
     assigned_to_type    = Column(Text)
     assigned_to_id      = Column(Text)
     disc_id             = Column(Text, ForeignKey("discs.id", ondelete="SET NULL"))
+    tape_id             = Column(Text, ForeignKey("tapes.id", ondelete="SET NULL"))
     needs_organization  = Column(Boolean, default=False)
     target_path         = Column(Text)
     organization_status = Column(Text)

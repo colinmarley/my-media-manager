@@ -6,6 +6,7 @@ import DashboardCard from './_components/DashboardCard';
 const Dashboard = () => {
   const dashboardLinks = [
     { title: 'My Library', description: 'Browse and manage your saved movies and shows.', href: '/dashboard/my-library' },
+    { title: 'Physical Media', description: 'Discs and tapes you own, and the files ripped/digitized from each.', href: '/dashboard/physical-media' },
     { title: 'Movie Organizer', description: 'Preview and apply Jellyfin extras organization for processed movie folders.', href: '/dashboard/movie-organization' },
     { title: 'TV Organizer', description: 'Preview and apply Jellyfin show episode/special/extras organization for processed TV folders.', href: '/dashboard/show-organization' },
     { title: 'Ingress Automation', description: 'Monitor ingestion queue and automation health.', href: '/ingress-automation' },

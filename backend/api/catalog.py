@@ -16,7 +16,7 @@ from sqlalchemy import select, delete, or_
 from typing import Any
 
 from db.database import get_db
-from db.models import Movie, Series, Disc
+from db.models import Movie, Series, Disc, Tape, MediaFile
 from api.auth import require_session
 from config.settings import settings
 
@@ -32,6 +32,20 @@ def _row_to_dict(row, id_field: str = "id") -> dict:
     data: dict = dict(row.raw_data or {})
     data["id"] = getattr(row, id_field)
     return data
+
+
+def _media_file_to_dict(row: MediaFile) -> dict:
+    return {
+        "id": row.id,
+        "fileName": row.file_name,
+        "filePath": row.file_path,
+        "fileSize": row.file_size,
+        "detectedMediaType": row.detected_media_type,
+        "assignmentStatus": row.assignment_status,
+        "targetPath": row.target_path,
+        "organizationStatus": row.organization_status,
+        "createdAt": row.created_at.isoformat() if row.created_at else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -398,6 +412,13 @@ async def get_disc(disc_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     return _row_to_dict(row)
 
 
+@router.get("/discs/{disc_id}/files")
+async def list_disc_files(disc_id: str, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    """Media files ripped/scanned from this physical disc (media_files.disc_id)."""
+    result = await db.execute(select(MediaFile).where(MediaFile.disc_id == disc_id))
+    return [_media_file_to_dict(row) for row in result.scalars().all()]
+
+
 @router.put("/discs/{disc_id}", dependencies=[Depends(require_session)])
 async def upsert_disc(disc_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     result = await db.execute(select(Disc).where(Disc.id == disc_id))
@@ -421,6 +442,101 @@ async def delete_disc(disc_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     await db.execute(delete(Disc).where(Disc.id == disc_id))
     await db.commit()
     return {"deleted": disc_id}
+
+
+# ---------------------------------------------------------------------------
+# Tapes
+# ---------------------------------------------------------------------------
+
+@router.get("/tapes")
+async def list_tapes(db: AsyncSession = Depends(get_db)) -> list[dict]:
+    result = await db.execute(select(Tape).order_by(Tape.title))
+    return [_row_to_dict(row) for row in result.scalars().all()]
+
+
+@router.get("/tapes/search")
+async def search_tapes(
+    title: str | None = Query(default=None),
+    tape_label: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Look up existing tapes by title and/or physical label (e.g. 'VHSC_0001')."""
+    if not title and not tape_label:
+        return []
+
+    conditions = []
+    if title:
+        conditions.append(Tape.title.ilike(f"%{title}%"))
+    if tape_label:
+        conditions.append(Tape.tape_label == tape_label)
+
+    result = await db.execute(
+        select(Tape).where(or_(*conditions)).order_by(Tape.title).limit(25)
+    )
+    return [_row_to_dict(row) for row in result.scalars().all()]
+
+
+@router.post("/tapes")
+async def create_tape(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    """
+    Create a new tape record with a server-generated id. Deliberately NOT
+    behind require_session — matches the discs endpoints' trust model
+    (see create_disc's docstring).
+    """
+    row = Tape(
+        id=str(uuid.uuid4()),
+        title=body.get("title") or "Untitled",
+        tape_type=body.get("tapeType") or body.get("tape_type"),
+        tape_label=body.get("tapeLabel") or body.get("tape_label"),
+        brand=body.get("brand"),
+        condition=body.get("condition"),
+        recording_speed=body.get("recordingSpeed") or body.get("recording_speed"),
+        raw_data=body,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _row_to_dict(row)
+
+
+@router.get("/tapes/{tape_id}")
+async def get_tape(tape_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    result = await db.execute(select(Tape).where(Tape.id == tape_id))
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tape not found")
+    return _row_to_dict(row)
+
+
+@router.get("/tapes/{tape_id}/files")
+async def list_tape_files(tape_id: str, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    """Media files digitized from this physical tape (media_files.tape_id)."""
+    result = await db.execute(select(MediaFile).where(MediaFile.tape_id == tape_id))
+    return [_media_file_to_dict(row) for row in result.scalars().all()]
+
+
+@router.put("/tapes/{tape_id}", dependencies=[Depends(require_session)])
+async def upsert_tape(tape_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    result = await db.execute(select(Tape).where(Tape.id == tape_id))
+    row = result.scalar_one_or_none()
+
+    if row is None:
+        row = Tape(id=tape_id)
+        db.add(row)
+
+    row.title    = body.get("title") or "Untitled"
+    row.raw_data = body
+
+    await db.commit()
+    await db.refresh(row)
+    return _row_to_dict(row)
+
+
+@router.delete("/tapes/{tape_id}", dependencies=[Depends(require_session)])
+async def delete_tape(tape_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    await db.execute(delete(Tape).where(Tape.id == tape_id))
+    await db.commit()
+    return {"deleted": tape_id}
 
 
 # ---------------------------------------------------------------------------
