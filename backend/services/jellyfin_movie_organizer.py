@@ -4,6 +4,12 @@ import shutil
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+from services.extras_taxonomy import (
+    EXTRA_FOLDERS,
+    EXTRA_SUFFIX_TO_FOLDER,
+    classify_extra_from_stem,
+)
+
 
 def _load_settings_values() -> Dict[str, object]:
     """Load settings lazily so this module can run without full app deps in tests."""
@@ -45,48 +51,11 @@ class JellyfinMovieOrganizer:
         ".srt", ".vtt", ".ass", ".ssa", ".sub", ".idx",
     }
 
-    EXTRA_FOLDERS: Dict[str, str] = {
-        "behind the scenes": "behind the scenes",
-        "behindthescenes": "behind the scenes",
-        "deleted scenes": "deleted scenes",
-        "deletedscenes": "deleted scenes",
-        "interviews": "interviews",
-        "interview": "interviews",
-        "scenes": "scenes",
-        "scene": "scenes",
-        "samples": "samples",
-        "sample": "samples",
-        "shorts": "shorts",
-        "short": "shorts",
-        "featurettes": "featurettes",
-        "featurette": "featurettes",
-        "clips": "clips",
-        "clip": "clips",
-        "other": "other",
-        "extras": "extras",
-        "extra": "extras",
-        "trailers": "trailers",
-        "trailer": "trailers",
-        "theme-music": "theme-music",
-        "thememusic": "theme-music",
-        "backdrops": "backdrops",
-        "backdrop": "backdrops",
-    }
-
-    EXTRA_SUFFIX_TO_FOLDER: Dict[str, str] = {
-        "trailer": "trailers",
-        "sample": "samples",
-        "scene": "scenes",
-        "clip": "clips",
-        "interview": "interviews",
-        "behindthescenes": "behind the scenes",
-        "deleted": "deleted scenes",
-        "deletedscene": "deleted scenes",
-        "featurette": "featurettes",
-        "short": "shorts",
-        "other": "other",
-        "extra": "extras",
-    }
+    # Kept as class attributes (delegating to services.extras_taxonomy, the
+    # shared source of truth) since other code/tests may reference them via
+    # JellyfinMovieOrganizer.EXTRA_FOLDERS.
+    EXTRA_FOLDERS: Dict[str, str] = EXTRA_FOLDERS
+    EXTRA_SUFFIX_TO_FOLDER: Dict[str, str] = EXTRA_SUFFIX_TO_FOLDER
 
     PART_PATTERN = re.compile(
         r"(?:[ ._-]|^)(cd|dvd|part|pt|disc|disk)[ ._-]*([0-9]+|[a-d])$",
@@ -681,25 +650,7 @@ class JellyfinMovieOrganizer:
             self._move(video_path, destination, actions, reason="Renamed as alternate version")
 
     def _classify_extra_from_stem(self, stem: str) -> Optional[str]:
-        lowered = stem.strip().lower()
-        if lowered in self.EXTRA_FOLDERS:
-            return self.EXTRA_FOLDERS[lowered]
-
-        tokenized = re.sub(r"[\s._-]+", " ", lowered).strip()
-        if tokenized in self.EXTRA_FOLDERS:
-            return self.EXTRA_FOLDERS[tokenized]
-
-        if lowered.endswith(" trailer"):
-            return "trailers"
-        if lowered.endswith(" sample"):
-            return "samples"
-
-        m = re.search(r"(?:[ ._-]|^)(trailer|sample|scene|clip|interview|behindthescenes|deletedscene|deleted|featurette|short|other|extra)$", lowered)
-        if m:
-            token = m.group(1)
-            return self.EXTRA_SUFFIX_TO_FOLDER.get(token)
-
-        return None
+        return classify_extra_from_stem(stem)
 
     def _normalize_existing_extra_folders(self, folder_path: str, actions: List[FileAction]) -> None:
         for entry in sorted(os.listdir(folder_path), key=str.lower):

@@ -94,7 +94,7 @@ class FileOrganizationService:
                 )
 
             # Get source files from assignment
-            source_files = self._get_source_files(assignment)
+            source_files = await self._get_source_files(assignment)
             if not source_files:
                 raise ValueError("No source files in assignment")
 
@@ -275,8 +275,8 @@ class FileOrganizationService:
             )
             return None
 
-    def _get_source_files(self, assignment: Dict[str, Any]) -> List[str]:
-        """Extract source file paths from assignment."""
+    async def _get_source_files(self, assignment: Dict[str, Any]) -> List[str]:
+        """Extract source file paths from assignment, including confirmed extras."""
         files = []
 
         # Get primary file. Accept both legacy/new payload keys.
@@ -285,12 +285,25 @@ class FileOrganizationService:
         if primary_file:
             files.append(primary_file)
 
-        # Get extra files (subtitles, etc)
-        extra_files = assignment.get("extraFileIds", [])
-        for extra_id in extra_files:
-            # In a real scenario, should look up file from Firestore
-            # For now, just note that extra files would be handled
-            pass
+        # Get extra files (deleted scenes, trailers, etc). Only files whose
+        # AssignmentExtraFile row has been confirmed (via the extras review UI)
+        # are included — unconfirmed extras stay put until a human classifies
+        # them, per the extras taxonomy review workflow.
+        extra_file_ids = assignment.get("extraFileIds", [])
+        if extra_file_ids and self.db_session_factory:
+            from sqlalchemy import select
+            from db.models import AssignmentExtraFile, MediaFile
+
+            async with self.db_session_factory() as session:
+                result = await session.execute(
+                    select(MediaFile.file_path)
+                    .join(AssignmentExtraFile, AssignmentExtraFile.media_file_id == MediaFile.id)
+                    .where(
+                        AssignmentExtraFile.media_file_id.in_(extra_file_ids),
+                        AssignmentExtraFile.confirmed.is_(True),
+                    )
+                )
+                files.extend(row[0] for row in result.all() if row[0])
 
         return files
 

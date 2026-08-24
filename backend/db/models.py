@@ -435,8 +435,21 @@ class MediaAssignment(Base):
 class AssignmentExtraFile(Base):
     __tablename__ = "assignment_extra_files"
 
-    assignment_id = Column(Text, ForeignKey("media_assignments.id", ondelete="CASCADE"), primary_key=True)
-    media_file_id = Column(Text, ForeignKey("media_files.id",       ondelete="CASCADE"), primary_key=True)
+    id            = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
+    assignment_id = Column(Text, ForeignKey("media_assignments.id", ondelete="CASCADE"), nullable=False)
+    media_file_id = Column(Text, ForeignKey("media_files.id",       ondelete="CASCADE"), nullable=False)
+    # Category slug from services.extras_taxonomy.CATEGORIES (e.g. "deleted_scene").
+    # Null means "not yet classified" — needs manual review.
+    category      = Column(Text, nullable=True)
+    # How `category` was determined: "inferred" (filename/folder pattern match),
+    # "manual" (user picked it in the review UI), or "tmdb" (from TMDB extras
+    # metadata, once that's wired up).
+    source        = Column(Text, nullable=True)
+    # Gates the actual file move in file_organization_service — a suggested
+    # category never moves a file until a human confirms it.
+    confirmed     = Column(Boolean, nullable=False, default=False)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 class JellyfinFolder(Base):

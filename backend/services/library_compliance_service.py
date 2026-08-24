@@ -17,6 +17,7 @@ from db.models import (
     ComplianceReviewEvent,
     ComplianceScan,
 )
+from services.extras_taxonomy import EXTRA_FOLDERS as _EXTRA_FOLDER_VARIANTS
 from services.filesystem_manager import FileSystemManager
 from utils.logging import logger
 
@@ -37,11 +38,10 @@ class ComplianceScanProgress:
 class LibraryComplianceService:
     """Runs non-destructive Jellyfin compliance audits and stores findings."""
 
-    EXTRA_FOLDERS = {
-        "behind the scenes", "behindthescenes", "deleted scenes", "deletedscenes", "interviews", "interview",
-        "scenes", "scene", "samples", "sample", "shorts", "short", "featurettes", "featurette", "clips", "clip",
-        "other", "extras", "extra", "trailers", "trailer", "theme-music", "thememusic", "backdrops", "backdrop"
-    }
+    # Delegates to services.extras_taxonomy, the shared source of truth — all
+    # recognized spelling variants (plural/singular/no-space) of extras folder
+    # names, so a not-yet-normalized folder on disk still gets recognized.
+    EXTRA_FOLDERS = set(_EXTRA_FOLDER_VARIANTS.keys())
 
     COMPANION_LABELS = {
         "extra", "extras", "special feature", "special features", "bonus", "bonus feature", "bonus features",
