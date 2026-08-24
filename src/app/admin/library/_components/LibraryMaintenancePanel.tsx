@@ -37,7 +37,7 @@ import {
 import type { LibraryPath } from '../../../../types/library/LibraryTypes';
 import FolderBrowser from './FolderBrowser';
 
-const FILE_API_BASE = 'http://localhost:8082/api/files';
+const FILE_API_BASE = '/api/backend/api/files';
 
 interface DirectoryItem {
   path: string;

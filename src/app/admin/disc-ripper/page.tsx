@@ -3,14 +3,18 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, Container, Divider,
-  FormControl, FormControlLabel, FormLabel, IconButton, InputLabel, MenuItem,
-  Paper, Radio, RadioGroup, Select, Stack, Step, StepButton, Stepper,
+  Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle,
+  FormControl, FormControlLabel, FormLabel, IconButton, InputLabel, List, ListItem, MenuItem,
+  Paper, Radio, RadioGroup, Select, Snackbar, Stack, Step, StepButton, Stepper,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   TextField, Tooltip, Typography,
 } from '@mui/material';
+import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
+import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import ReplayIcon from '@mui/icons-material/Replay';
 import StopIcon from '@mui/icons-material/Stop';
-import { DiscRipperService, DiscTitle, RipJob, StartJobRequest } from '@/service/disc-ripper/DiscRipperService';
+import { DiscRipperService, DiscTitle, JobAnalysis, RipJob, StartJobRequest } from '@/service/disc-ripper/DiscRipperService';
 import TmdbService from '@/service/tmdb/TmdbService';
 
 // ---------------------------------------------------------------------------
@@ -34,10 +38,11 @@ interface TmdbSeason {
 interface TmdbEpisode {
   episodeNumber: number;
   name: string;
+  runtime?: number;
 }
 
 type Assignment =
-  | { type: 'episode'; episodeNumber: number }
+  | { type: 'episode'; episodeNumber: number; episodeName: string }
   | { type: 'special' }
   | { type: 'custom'; name: string };
 
@@ -78,7 +83,8 @@ function buildEpisodeMap(
     const a = assignments[idx];
     if (!a) continue;
     if (a.type === 'episode') {
-      map[String(idx)] = epCode(season, a.episodeNumber);
+      const code = epCode(season, a.episodeNumber);
+      map[String(idx)] = a.episodeName ? `${code} - ${a.episodeName}` : code;
     } else if (a.type === 'special') {
       specialN++;
       map[String(idx)] = `SpecialFeature${String(specialN).padStart(3, '0')}`;
@@ -87,6 +93,41 @@ function buildEpisodeMap(
     }
   }
   return map;
+}
+
+function previewFilenames(
+  mediaType: 'movie' | 'show',
+  title: string,
+  year: number,
+  selectedIndices: number[],
+  assignments: Record<number, Assignment>,
+  season: number,
+): string[] {
+  if (!title.trim() || !selectedIndices.length) return [];
+  const sorted = [...selectedIndices].sort((a, b) => a - b);
+  if (mediaType === 'movie') {
+    if (sorted.length === 1) return [`${title} (${year}).mkv`];
+    return sorted.map((_, i) => `${title} (${year}) - Version ${i + 1}.mkv`);
+  }
+  // show
+  let specialN = 0;
+  return sorted.map((idx, i) => {
+    const a = assignments[idx];
+    if (!a || a.type === 'episode') {
+      const epNum = a?.type === 'episode' ? a.episodeNumber : i + 1;
+      const epName = a?.type === 'episode' ? a.episodeName : '';
+      const code = epCode(season, epNum);
+      return `${title} ${code}${epName ? ` - ${epName}` : ''}.mkv`;
+    }
+    if (a.type === 'special') {
+      specialN++;
+      return `${title} SpecialFeature${String(specialN).padStart(3, '0')}.mkv`;
+    }
+    if (a.type === 'custom') {
+      return a.name.trim() ? `${title} ${a.name.trim()}.mkv` : '(custom name pending)';
+    }
+    return `${title} ${epCode(season, i + 1)}.mkv`;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +256,11 @@ function ConfigureStep({
   // Form fields
   const [mediaType, setMediaType] = useState<'movie' | 'show'>('show');
   const [discType, setDiscType] = useState<'dvd' | 'bluray'>('dvd');
+
+  // Advanced encode settings (DVD only; null = use service defaults)
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [dvdQuality, setDvdQuality] = useState<number>(21);
+  const [dvdEncoder, setDvdEncoder] = useState<string>('nvenc_h265');
   const [title, setTitle] = useState('');
   const [year, setYear] = useState(new Date().getFullYear());
   const [imdbId, setImdbId] = useState('');
@@ -287,15 +333,16 @@ function ConfigureStep({
     try {
       const data = await TmdbService.getSeasonDetails(seriesId, seasonNum);
       const eps: TmdbEpisode[] = (data.episodes ?? []).map((e: {
-        episode_number: number; name: string;
-      }) => ({ episodeNumber: e.episode_number, name: e.name }));
+        episode_number: number; name: string; runtime?: number;
+      }) => ({ episodeNumber: e.episode_number, name: e.name, runtime: e.runtime ?? undefined }));
       setEpisodes(eps);
       // Auto-assign in order
       const newAssignments: Record<number, Assignment> = {};
       let epIdx = 0;
       for (const idx of [...currentSelectedIndices].sort((a, b) => a - b)) {
-        newAssignments[idx] = epIdx < eps.length
-          ? { type: 'episode', episodeNumber: eps[epIdx++].episodeNumber }
+        const ep = epIdx < eps.length ? eps[epIdx++] : null;
+        newAssignments[idx] = ep
+          ? { type: 'episode', episodeNumber: ep.episodeNumber, episodeName: ep.name }
           : { type: 'special' };
       }
       setAssignments(newAssignments);
@@ -377,13 +424,15 @@ function ConfigureStep({
       if (episodes.length) {
         const usedEps = new Set(
           Object.values(assignments)
-            .filter((a): a is { type: 'episode'; episodeNumber: number } => a.type === 'episode')
+            .filter((a): a is Extract<Assignment, { type: 'episode' }> => a.type === 'episode')
             .map((a) => a.episodeNumber)
         );
         const next = episodes.find((e) => !usedEps.has(e.episodeNumber));
         setAssignments((prev) => ({
           ...prev,
-          [idx]: next ? { type: 'episode', episodeNumber: next.episodeNumber } : { type: 'special' },
+          [idx]: next
+            ? { type: 'episode', episodeNumber: next.episodeNumber, episodeName: next.name }
+            : { type: 'special' },
         }));
       }
     }
@@ -396,7 +445,8 @@ function ConfigureStep({
       setAssignments((prev) => ({ ...prev, [titleIdx]: { type: 'custom', name: '' } }));
     } else if (value.startsWith('ep:')) {
       const epNum = parseInt(value.slice(3));
-      setAssignments((prev) => ({ ...prev, [titleIdx]: { type: 'episode', episodeNumber: epNum } }));
+      const ep = episodes.find((e) => e.episodeNumber === epNum);
+      setAssignments((prev) => ({ ...prev, [titleIdx]: { type: 'episode', episodeNumber: epNum, episodeName: ep?.name ?? '' } }));
     }
   };
 
@@ -440,6 +490,10 @@ function ConfigureStep({
       season: mediaType === 'show' ? season : undefined,
       mkv_title_indices: selectedIndices,
       episode_map: episodeMap && Object.keys(episodeMap).length ? episodeMap : undefined,
+      ...(discType === 'dvd' && {
+        dvd_quality: dvdQuality !== 21 ? dvdQuality : undefined,
+        dvd_encoder: dvdEncoder !== 'nvenc_h265' ? dvdEncoder : undefined,
+      }),
     });
   };
 
@@ -614,6 +668,17 @@ function ConfigureStep({
                 variant="outlined"
               />
             )}
+            {selectedIndices.length > 0 && (() => {
+              const bytes = selectedIndices.reduce((sum, idx) => {
+                const t = titles.find((t) => t.index === idx);
+                return sum + (t?.file_size_bytes ?? 0);
+              }, 0);
+              return (
+                <Typography variant="caption" color="text.secondary">
+                  {selectedIndices.length} selected · ~{DiscRipperService.formatBytes(bytes)}
+                </Typography>
+              );
+            })()}
           </Stack>
           {mediaType === 'show' && selectedIndices.length > 0 && episodes.length > 0 && (
             <Button
@@ -714,6 +779,11 @@ function ConfigureStep({
                                   {epCode(season, ep.episodeNumber)}
                                 </Typography>
                                 {ep.name}
+                                {ep.runtime && (
+                                  <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                                    {ep.runtime}m
+                                  </Typography>
+                                )}
                               </Typography>
                             </MenuItem>
                           ))}
@@ -752,7 +822,81 @@ function ConfigureStep({
         </Stack>
       </Paper>
 
+      {/* ── Episode count warning ──────────────────────────────────────── */}
+      {mediaType === 'show' && episodes.length > 0 && selectedIndices.length > episodes.length && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          You&apos;ve selected {selectedIndices.length} titles but Season {season} only has {episodes.length} episodes.
+          Extra titles will be numbered as special features.
+        </Alert>
+      )}
+
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+
+      {discType === 'dvd' && (
+        <Box sx={{ mb: 2 }}>
+          <Button size="small" variant="text" onClick={() => setShowAdvanced((v) => !v)}>
+            {showAdvanced ? 'Hide Advanced Settings' : 'Advanced Encode Settings'}
+          </Button>
+          <Collapse in={showAdvanced}>
+            <Paper variant="outlined" sx={{ p: 2, mt: 1 }}>
+              <Typography variant="subtitle2" sx={{ mb: 1.5 }}>DVD Encode Settings</Typography>
+              <Stack spacing={2}>
+                <Box>
+                  <Typography variant="caption" color="text.secondary">
+                    Quality (CRF): {dvdQuality} — lower = better quality, larger file
+                  </Typography>
+                  <Stack direction="row" spacing={1} alignItems="center">
+                    <Typography variant="caption">16</Typography>
+                    <Box sx={{ flex: 1 }}>
+                      <input
+                        type="range"
+                        min={16}
+                        max={28}
+                        value={dvdQuality}
+                        onChange={(e) => setDvdQuality(Number(e.target.value))}
+                        style={{ width: '100%' }}
+                      />
+                    </Box>
+                    <Typography variant="caption">28</Typography>
+                  </Stack>
+                </Box>
+                <FormControl size="small" sx={{ minWidth: 220 }}>
+                  <InputLabel>Encoder</InputLabel>
+                  <Select
+                    label="Encoder"
+                    value={dvdEncoder}
+                    onChange={(e) => setDvdEncoder(e.target.value as string)}
+                  >
+                    <MenuItem value="nvenc_h265">nvenc_h265 (GPU H.265)</MenuItem>
+                    <MenuItem value="x265">x265 (CPU H.265)</MenuItem>
+                    <MenuItem value="x264">x264 (CPU H.264)</MenuItem>
+                    <MenuItem value="none">No encode (copy MKV as-is)</MenuItem>
+                  </Select>
+                </FormControl>
+              </Stack>
+            </Paper>
+          </Collapse>
+        </Box>
+      )}
+
+      {/* ── Output filename preview ────────────────────────────────────── */}
+      {selectedIndices.length > 0 && title.trim() && (() => {
+        const names = previewFilenames(mediaType, title.trim(), year, selectedIndices, assignments, season);
+        return (
+          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
+            <Typography variant="subtitle2" sx={{ mb: 1 }}>
+              Output file{names.length !== 1 ? 's' : ''} preview
+            </Typography>
+            <Stack spacing={0.5}>
+              {names.map((name, i) => (
+                <Typography key={i} variant="caption" sx={{ fontFamily: 'monospace', color: 'text.secondary', wordBreak: 'break-all' }}>
+                  {name}
+                </Typography>
+              ))}
+            </Stack>
+          </Paper>
+        );
+      })()}
 
       <Button variant="contained" size="large" onClick={submit}>
         Start Rip
@@ -765,15 +909,21 @@ function ConfigureStep({
 // Step 3 — Monitor
 // ---------------------------------------------------------------------------
 
-function MonitorStep({ jobs, serviceError, onRefresh, onViewResults }: {
+function MonitorStep({ jobs, serviceError, onRefresh, onViewResults, onRetry }: {
   jobs: RipJob[];
   serviceError: string;
   onRefresh: () => void;
   onViewResults: (jobId: string) => void;
+  onRetry: (jobId: string) => void;
 }) {
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
   const [liveLog, setLiveLog] = useState<Record<string, string[]>>({});
   const logRef = useRef<HTMLDivElement>(null);
+  const [analyzingJobId, setAnalyzingJobId] = useState<string | null>(null);
+  const [analyses, setAnalyses] = useState<Map<string, JobAnalysis>>(new Map());
+  const [analyzeErrors, setAnalyzeErrors] = useState<Record<string, string>>({});
+  const [copiedJobId, setCopiedJobId] = useState<string | null>(null);
+  const [stopConfirmJobId, setStopConfirmJobId] = useState<string | null>(null);
 
   const streamLog = useCallback((jobId: string) => {
     if (liveLog[jobId]) return;
@@ -796,8 +946,53 @@ function MonitorStep({ jobs, serviceError, onRefresh, onViewResults }: {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [liveLog]);
 
-  const stop = async (jobId: string) => {
-    try { await DiscRipperService.stopJob(jobId); } catch { /* ignore */ }
+  useEffect(() => {
+    const failedJobs = jobs.filter((j) => j.status === 'failed');
+    for (const job of failedJobs) {
+      if (!analyses.has(job.id)) {
+        DiscRipperService.getJobAnalysis(job.id).then((analysis) => {
+          if (analysis) setAnalyses((prev) => new Map(prev).set(job.id, analysis));
+        }).catch(() => {/* ignore */});
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs]);
+
+  const analyzeJob = async (jobId: string) => {
+    setAnalyzingJobId(jobId);
+    setAnalyzeErrors((prev) => ({ ...prev, [jobId]: '' }));
+    try {
+      const analysis = await DiscRipperService.analyzeJob(jobId);
+      setAnalyses((prev) => new Map(prev).set(jobId, analysis));
+    } catch (e: unknown) {
+      setAnalyzeErrors((prev) => ({
+        ...prev,
+        [jobId]: e instanceof Error ? e.message : 'Analysis failed — is Ollama reachable?',
+      }));
+    } finally {
+      setAnalyzingJobId(null);
+    }
+  };
+
+  const copyClaudePrompt = (jobId: string, text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedJobId(jobId);
+      setTimeout(() => setCopiedJobId(null), 2000);
+    }).catch(() => {/* ignore */});
+  };
+
+  const stop = (jobId: string) => setStopConfirmJobId(jobId);
+
+  const confirmStop = async () => {
+    if (!stopConfirmJobId) return;
+    try { await DiscRipperService.stopJob(stopConfirmJobId); } catch { /* ignore */ }
+    setStopConfirmJobId(null);
+    onRefresh();
+  };
+
+  const retry = async (jobId: string) => {
+    try { await DiscRipperService.retryJob(jobId); } catch { /* ignore */ }
+    onRetry(jobId);
     onRefresh();
   };
 
@@ -857,6 +1052,29 @@ function MonitorStep({ jobs, serviceError, onRefresh, onViewResults }: {
                             </IconButton>
                           </Tooltip>
                         )}
+                        {job.status === 'failed' && (
+                          <Tooltip title="Analyze failure with AI">
+                            <span>
+                              <IconButton
+                                size="small"
+                                color="warning"
+                                onClick={() => analyzeJob(job.id)}
+                                disabled={analyzingJobId === job.id}
+                              >
+                                {analyzingJobId === job.id
+                                  ? <CircularProgress size={16} />
+                                  : <AutoFixHighIcon fontSize="small" />}
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        )}
+                        {['failed', 'cancelled'].includes(job.status) && (
+                          <Tooltip title="Retry job with same settings">
+                            <IconButton size="small" color="primary" onClick={() => retry(job.id)}>
+                              <ReplayIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        )}
                         {job.status === 'done' && job.output_paths.length > 0 && (
                           <Button size="small" variant="outlined" onClick={() => onViewResults(job.id)}>
                             Results
@@ -895,6 +1113,81 @@ function MonitorStep({ jobs, serviceError, onRefresh, onViewResults }: {
                       </TableCell>
                     </TableRow>
                   )}
+
+                  {analyzeErrors[job.id] && (
+                    <TableRow>
+                      <TableCell colSpan={5}>
+                        <Alert severity="error" sx={{ py: 0 }}>
+                          AI analysis failed: {analyzeErrors[job.id]}
+                        </Alert>
+                      </TableCell>
+                    </TableRow>
+                  )}
+
+                  {analyses.has(job.id) && (
+                    <TableRow>
+                      <TableCell colSpan={5}>
+                        <Box sx={{ p: 1.5, border: '1px solid', borderColor: 'warning.main', borderRadius: 1 }}>
+                          <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                            <Typography variant="subtitle2">AI Analysis</Typography>
+                            <Chip
+                              label={analyses.get(job.id)!.error_type.replace(/_/g, ' ')}
+                              size="small"
+                              color="warning"
+                              variant="outlined"
+                            />
+                            <Typography variant="caption" color="text.secondary">
+                              via {analyses.get(job.id)!.model_used}
+                            </Typography>
+                          </Stack>
+
+                          <Typography variant="body2" sx={{ mb: 1.5 }}>
+                            {analyses.get(job.id)!.error_summary}
+                          </Typography>
+
+                          {analyses.get(job.id)!.suggested_fix && (
+                            <Box sx={{ mb: 1.5 }}>
+                              <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
+                                SUGGESTED FIX
+                              </Typography>
+                              <Typography variant="body2">
+                                {analyses.get(job.id)!.suggested_fix}
+                              </Typography>
+                            </Box>
+                          )}
+
+                          {analyses.get(job.id)!.claude_prompt &&
+                           analyses.get(job.id)!.claude_prompt !== 'No code change needed.' && (
+                            <Box>
+                              <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
+                                <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                                  CLAUDE CODE PROMPT
+                                </Typography>
+                                <Tooltip title={copiedJobId === job.id ? 'Copied!' : 'Copy to clipboard'}>
+                                  <IconButton size="small" onClick={() => copyClaudePrompt(job.id, analyses.get(job.id)!.claude_prompt)}>
+                                    <ContentCopyIcon sx={{ fontSize: 14 }} />
+                                  </IconButton>
+                                </Tooltip>
+                              </Stack>
+                              <Box
+                                component="pre"
+                                sx={{
+                                  bgcolor: '#0d1117', color: '#c9d1d9',
+                                  fontFamily: 'monospace', fontSize: '0.72rem',
+                                  p: 1.5, borderRadius: 1,
+                                  maxHeight: 200, overflowY: 'auto',
+                                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                  m: 0,
+                                }}
+                              >
+                                {analyses.get(job.id)!.claude_prompt}
+                              </Box>
+                            </Box>
+                          )}
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  )}
                 </React.Fragment>
               );
             })}
@@ -908,6 +1201,20 @@ function MonitorStep({ jobs, serviceError, onRefresh, onViewResults }: {
           </TableBody>
         </Table>
       </TableContainer>
+
+      <Dialog open={!!stopConfirmJobId} onClose={() => setStopConfirmJobId(null)}>
+        <DialogTitle>Stop this rip?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Progress on &ldquo;{jobs.find((j) => j.id === stopConfirmJobId)?.title}&rdquo; will be lost
+            and cannot be resumed.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setStopConfirmJobId(null)}>Cancel</Button>
+          <Button onClick={confirmStop} color="error" variant="contained">Stop Rip</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
@@ -921,24 +1228,26 @@ function ResultsStep({
   selectedJobId,
   onSelectJob,
   onQueued,
+  onRetry,
 }: {
   jobs: RipJob[];
   selectedJobId: string | null;
   onSelectJob: (id: string) => void;
   onQueued: (jobId: string) => void;
+  onRetry: (jobId: string) => void;
 }) {
-  const doneJobs = jobs.filter((j) => j.status === 'done' && j.output_paths.length > 0);
-  const effectiveJobId = selectedJobId ?? doneJobs[0]?.id ?? null;
-  const sourceJob = doneJobs.find((j) => j.id === effectiveJobId) ?? null;
+  const terminalJobs = jobs.filter((j) => j.status === 'done' || j.status === 'failed');
+  const effectiveJobId = selectedJobId ?? terminalJobs[0]?.id ?? null;
+  const sourceJob = terminalJobs.find((j) => j.id === effectiveJobId) ?? null;
 
   const [localPaths, setLocalPaths] = useState<string[]>([]);
   const [editNames, setEditNames] = useState<Record<number, string>>({});
   const [editEpCodes, setEditEpCodes] = useState<Record<number, string>>({});
   const [expandedVideo, setExpandedVideo] = useState<number | null>(null);
+  const [videoErrors, setVideoErrors] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState<Record<number, boolean>>({});
   const [saveErrors, setSaveErrors] = useState<Record<number, string>>({});
-  const [ingestLoading, setIngestLoading] = useState(false);
-  const [ingestResult, setIngestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [durations, setDurations] = useState<Record<number, number>>({});
 
   const basename = (p: string) => p.split('/').pop() ?? p;
 
@@ -962,7 +1271,18 @@ function ResultsStep({
     setEditEpCodes(codes);
     setExpandedVideo(null);
     setSaveErrors({});
+    setVideoErrors({});
+    setDurations({});
     setIngestResult(null);
+
+    // Fetch duration for each output file in parallel (ffprobe reads MKV header only)
+    if (sourceJob) {
+      paths.forEach((_, i) => {
+        DiscRipperService.getFileDuration(sourceJob.id, i).then((d) => {
+          if (d !== null) setDurations((prev) => ({ ...prev, [i]: d }));
+        });
+      });
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceJob?.id]);
 
@@ -993,6 +1313,86 @@ function ResultsStep({
     }
   };
 
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState('');
+  const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
+  const [copiedAnalysis, setCopiedAnalysis] = useState(false);
+
+  const [queueStatuses, setQueueStatuses] = useState<Record<string, string> | null>(null);
+  const [queueCheckLoading, setQueueCheckLoading] = useState(false);
+  const [ingestLoading, setIngestLoading] = useState(false);
+  const [ingestResult, setIngestResult] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [ingestConfirmOpen, setIngestConfirmOpen] = useState(false);
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchSaveMsg, setBatchSaveMsg] = useState('');
+
+  const checkQueueStatuses = async (paths: string[]) => {
+    if (!paths.length) return;
+    setQueueCheckLoading(true);
+    try {
+      const res = await fetch('/api/backend/api/ingress/queue');
+      if (!res.ok) return;
+      const data = await res.json();
+      const items: Array<{ file_path: string; status: string }> = data?.data?.items ?? data?.data ?? [];
+      const statusMap: Record<string, string> = {};
+      for (const item of items) {
+        if (paths.includes(item.file_path)) {
+          statusMap[item.file_path] = item.status;
+        }
+      }
+      setQueueStatuses(statusMap);
+    } catch {
+      // leave queueStatuses null — show fallback button
+    } finally {
+      setQueueCheckLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    setAnalysis(null);
+    setAnalyzeError('');
+    if (sourceJob?.status === 'failed') {
+      DiscRipperService.getJobAnalysis(sourceJob.id).then((a) => {
+        if (a) setAnalysis(a);
+      }).catch(() => {/* no prior analysis */});
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceJob?.id]);
+
+  const analyzeJobFn = async () => {
+    if (!sourceJob) return;
+    setAnalyzing(true);
+    setAnalyzeError('');
+    try {
+      const a = await DiscRipperService.analyzeJob(sourceJob.id);
+      setAnalysis(a);
+    } catch (e: unknown) {
+      setAnalyzeError(e instanceof Error ? e.message : 'Analysis failed — is Ollama reachable?');
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  useEffect(() => {
+    setQueueStatuses(null);
+    setIngestResult(null);
+    if (localPaths.length) checkQueueStatuses(localPaths);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceJob?.id, localPaths.join(',')]);
+
+  // Auto-refresh ingest queue status while any file is in a non-terminal state
+  useEffect(() => {
+    if (!localPaths.length || !queueStatuses) return;
+    const hasNonTerminal = localPaths.some((p) => {
+      const s = queueStatuses[p];
+      return !s || (s !== 'completed' && s !== 'failed');
+    });
+    if (!hasNonTerminal) return;
+    const interval = setInterval(() => checkQueueStatuses(localPaths), 5000);
+    return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localPaths, queueStatuses]);
+
   const sendToIngest = async () => {
     if (!sourceJob) return;
     setIngestLoading(true);
@@ -1009,10 +1409,11 @@ function ResultsStep({
       const skipped = data.data?.skipped?.length ?? 0;
       const errors = data.data?.errors ?? [];
       let msg = `${added} file(s) added to ingest queue`;
-      if (skipped > 0) msg += `, ${skipped} skipped`;
+      if (skipped > 0) msg += `, ${skipped} skipped (already queued)`;
       if (errors.length > 0) msg += ` — ${errors.map((e: { reason: string }) => e.reason).join('; ')}`;
       setIngestResult({ ok: errors.length === 0, msg });
       if (errors.length === 0) onQueued(sourceJob.id);
+      await checkQueueStatuses(localPaths);
     } catch (e: unknown) {
       setIngestResult({ ok: false, msg: e instanceof Error ? e.message : 'Failed to add to ingest queue' });
     } finally {
@@ -1020,41 +1421,184 @@ function ResultsStep({
     }
   };
 
-  if (doneJobs.length === 0) {
+  const saveAll = async () => {
+    if (!sourceJob) return;
+    const dirtyIndices = localPaths
+      .map((p, i) => ({ i, dirty: editNames[i] !== basename(p) && (editNames[i] ?? '').endsWith('.mkv') }))
+      .filter((x) => x.dirty)
+      .map((x) => x.i);
+    if (!dirtyIndices.length) return;
+    setBatchSaving(true);
+    for (let n = 0; n < dirtyIndices.length; n++) {
+      setBatchSaveMsg(`Saving ${n + 1} of ${dirtyIndices.length}…`);
+      await saveRename(dirtyIndices[n]);
+    }
+    setBatchSaving(false);
+    setBatchSaveMsg('All renames saved');
+  };
+
+  if (terminalJobs.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary">
-        No completed jobs yet. Complete a rip job to review its output files here.
+        No completed or failed jobs yet. Run a rip job to see results here.
       </Typography>
     );
   }
 
   return (
     <Box>
-      {doneJobs.length > 1 && (
+      {terminalJobs.length > 1 && (
         <FormControl size="small" sx={{ mb: 3, minWidth: 320 }}>
-          <InputLabel>Completed job</InputLabel>
+          <InputLabel>Job</InputLabel>
           <Select
-            label="Completed job"
+            label="Job"
             value={effectiveJobId ?? ''}
             onChange={(e) => onSelectJob(e.target.value as string)}
           >
-            {doneJobs.map((j) => (
+            {terminalJobs.map((j) => (
               <MenuItem key={j.id} value={j.id}>
                 {j.title} ({j.year})
                 {j.season != null ? ` — S${String(j.season).padStart(2, '0')}` : ''}
+                {j.status === 'failed' && (
+                  <Chip label="failed" size="small" color="error" variant="outlined" sx={{ ml: 1, height: 16, fontSize: 10 }} />
+                )}
               </MenuItem>
             ))}
           </Select>
         </FormControl>
       )}
 
-      {sourceJob && (
-        <Stack spacing={2}>
-          {localPaths.map((path, i) => {
+      {sourceJob?.status === 'failed' && (
+        <>
+          <Alert
+            severity="error"
+            sx={{ mb: analyzeError || analysis ? 1 : 2 }}
+            action={
+              <Stack direction="row" spacing={0.5} alignItems="center">
+                <Tooltip title={analysis ? 'Re-analyze with AI' : 'Analyze failure with AI'}>
+                  <span>
+                    <Button
+                      color="inherit"
+                      size="small"
+                      startIcon={analyzing ? <CircularProgress size={14} color="inherit" /> : <AutoFixHighIcon />}
+                      onClick={analyzeJobFn}
+                      disabled={analyzing}
+                    >
+                      {analyzing ? 'Analyzing…' : analysis ? 'Re-analyze' : 'Analyze'}
+                    </Button>
+                  </span>
+                </Tooltip>
+                <Button color="inherit" size="small" startIcon={<ReplayIcon />} onClick={() => onRetry(sourceJob.id)}>
+                  Retry
+                </Button>
+              </Stack>
+            }
+          >
+            <strong>Job failed</strong>
+            {sourceJob.error ? ` — ${sourceJob.error}` : ''}
+            {sourceJob.output_paths.length === 0 && ' No output files were produced.'}
+          </Alert>
+
+          {analyzeError && (
+            <Alert severity="error" sx={{ mb: 2 }}>
+              AI analysis failed: {analyzeError}
+            </Alert>
+          )}
+
+          {analysis && (
+            <Box sx={{ mb: 2, p: 1.5, border: '1px solid', borderColor: 'warning.main', borderRadius: 1 }}>
+              <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+                <Typography variant="subtitle2">AI Analysis</Typography>
+                <Chip
+                  label={analysis.error_type.replace(/_/g, ' ')}
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                />
+                <Typography variant="caption" color="text.secondary">
+                  via {analysis.model_used}
+                </Typography>
+              </Stack>
+
+              <Typography variant="body2" sx={{ mb: 1.5 }}>
+                {analysis.error_summary}
+              </Typography>
+
+              {analysis.suggested_fix && (
+                <Box sx={{ mb: 1.5 }}>
+                  <Typography variant="caption" color="text.secondary" fontWeight={600} display="block" sx={{ mb: 0.5 }}>
+                    SUGGESTED FIX
+                  </Typography>
+                  <Typography variant="body2">{analysis.suggested_fix}</Typography>
+                </Box>
+              )}
+
+              {analysis.claude_prompt && analysis.claude_prompt !== 'No code change needed.' && (
+                <Box>
+                  <Stack direction="row" alignItems="center" spacing={0.5} sx={{ mb: 0.5 }}>
+                    <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                      CLAUDE CODE PROMPT
+                    </Typography>
+                    <Tooltip title={copiedAnalysis ? 'Copied!' : 'Copy to clipboard'}>
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          navigator.clipboard.writeText(analysis.claude_prompt).then(() => {
+                            setCopiedAnalysis(true);
+                            setTimeout(() => setCopiedAnalysis(false), 2000);
+                          }).catch(() => {/* ignore */});
+                        }}
+                      >
+                        <ContentCopyIcon sx={{ fontSize: 14 }} />
+                      </IconButton>
+                    </Tooltip>
+                  </Stack>
+                  <Box
+                    component="pre"
+                    sx={{
+                      bgcolor: '#0d1117', color: '#c9d1d9',
+                      fontFamily: 'monospace', fontSize: '0.72rem',
+                      p: 1.5, borderRadius: 1,
+                      maxHeight: 200, overflowY: 'auto',
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                      m: 0,
+                    }}
+                  >
+                    {analysis.claude_prompt}
+                  </Box>
+                </Box>
+              )}
+            </Box>
+          )}
+        </>
+      )}
+
+      {sourceJob && sourceJob.output_paths.length > 0 && (() => {
+        const dirtyCount = localPaths.filter((p, i) =>
+          editNames[i] !== basename(p) && (editNames[i] ?? '').endsWith('.mkv')
+        ).length;
+        return (
+          <Stack spacing={2}>
+            {localPaths.length > 1 && dirtyCount > 0 && (
+              <Stack direction="row" justifyContent="flex-end">
+                <Button
+                  size="small"
+                  variant="contained"
+                  disabled={batchSaving}
+                  startIcon={batchSaving ? <CircularProgress size={14} /> : undefined}
+                  onClick={saveAll}
+                >
+                  {batchSaving ? batchSaveMsg : `Save All (${dirtyCount})`}
+                </Button>
+              </Stack>
+            )}
+            {localPaths.map((path, i) => {
             const name = editNames[i] ?? basename(path);
             const isDirty = name !== basename(path);
             const showEpCode = sourceJob.media_type === 'show' && extractEpCode(basename(sourceJob.output_paths[i] ?? '')) !== null;
             const streamUrl = DiscRipperService.streamUrl(sourceJob.id, i);
+            const epVal = editEpCodes[i] ?? '';
+            const epCodeInvalid = showEpCode && epVal !== '' && !/^S\d{2}E\d{2}/i.test(epVal);
 
             return (
               <Paper key={i} variant="outlined" sx={{ p: 2 }}>
@@ -1064,8 +1608,10 @@ function ResultsStep({
                       <TextField
                         label="Episode"
                         size="small"
-                        value={editEpCodes[i] ?? ''}
-                        sx={{ width: 110 }}
+                        value={epVal}
+                        sx={{ width: 120 }}
+                        error={epCodeInvalid}
+                        helperText={epCodeInvalid ? 'Use S01E02 format' : undefined}
                         slotProps={{ input: { style: { fontFamily: 'monospace' } } }}
                         onChange={(e) => handleEpCodeChange(i, e.target.value)}
                       />
@@ -1080,7 +1626,7 @@ function ResultsStep({
                     <Button
                       size="small"
                       variant={isDirty ? 'contained' : 'outlined'}
-                      disabled={saving[i] || !name.endsWith('.mkv')}
+                      disabled={saving[i] || !name.endsWith('.mkv') || epCodeInvalid}
                       onClick={() => saveRename(i)}
                       startIcon={saving[i] ? <CircularProgress size={14} /> : undefined}
                       sx={{ alignSelf: 'center' }}
@@ -1093,51 +1639,173 @@ function ResultsStep({
                     <Alert severity="error" sx={{ py: 0 }}>{saveErrors[i]}</Alert>
                   )}
 
-                  <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
-                    {path}
-                  </Typography>
+                  <Stack direction="row" spacing={1.5} alignItems="baseline">
+                    <Typography variant="caption" color="text.secondary" sx={{ fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                      {path}
+                    </Typography>
+                    {durations[i] != null ? (
+                      <Typography variant="caption" color="text.secondary" sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+                        {fmtDur(Math.round(durations[i]))}
+                      </Typography>
+                    ) : (
+                      <Typography variant="caption" color="text.disabled" sx={{ whiteSpace: 'nowrap', flexShrink: 0 }}>
+                        …
+                      </Typography>
+                    )}
+                  </Stack>
 
                   <Box>
                     <Button
                       size="small"
                       variant="text"
-                      onClick={() => setExpandedVideo(expandedVideo === i ? null : i)}
+                      onClick={() => {
+                        setExpandedVideo(expandedVideo === i ? null : i);
+                        setVideoErrors((prev) => ({ ...prev, [i]: '' }));
+                      }}
                     >
                       {expandedVideo === i ? 'Hide Preview' : '▶ Preview'}
                     </Button>
                   </Box>
 
-                  <Collapse in={expandedVideo === i}>
-                    <video
-                      controls
-                      src={streamUrl}
-                      style={{ width: '100%', maxHeight: 480, borderRadius: 4, display: 'block' }}
-                    />
+                  <Collapse in={expandedVideo === i} unmountOnExit>
+                    <Box sx={{ mt: 0.5 }}>
+                      {videoErrors[i] ? (
+                        <Alert severity="error">
+                          Preview failed — {videoErrors[i]}
+                        </Alert>
+                      ) : (
+                        <>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                            Transcoding to H.264 — playback starts in a few seconds…
+                          </Typography>
+                          <video
+                            key={streamUrl}
+                            controls
+                            preload="auto"
+                            src={streamUrl}
+                            onError={(e) => {
+                              const vid = e.currentTarget as HTMLVideoElement;
+                              const code = vid.error?.code;
+                              const msg = vid.error?.message ?? '';
+                              const labels: Record<number, string> = {
+                                1: 'aborted',
+                                2: 'network error',
+                                3: 'decode error',
+                                4: 'format not supported',
+                              };
+                              const detail = code != null
+                                ? `${labels[code] ?? `code ${code}`}${msg ? `: ${msg}` : ''} — src: ${streamUrl}`
+                                : `unknown error — src: ${streamUrl}`;
+                              setVideoErrors((prev) => ({ ...prev, [i]: detail }));
+                            }}
+                            style={{ width: '100%', maxHeight: 480, borderRadius: 4, display: 'block' }}
+                          />
+                        </>
+                      )}
+                    </Box>
                   </Collapse>
                 </Stack>
               </Paper>
             );
           })}
         </Stack>
-      )}
+  );
+})()}
 
-      {sourceJob && (
+      {sourceJob && sourceJob.output_paths.length > 0 && (
         <Box sx={{ mt: 3 }}>
           {ingestResult && (
             <Alert severity={ingestResult.ok ? 'success' : 'error'} sx={{ mb: 1.5 }}>
               {ingestResult.msg}
             </Alert>
           )}
-          <Button
-            variant="contained"
-            disabled={ingestLoading}
-            onClick={sendToIngest}
-            startIcon={ingestLoading ? <CircularProgress size={16} /> : undefined}
-          >
-            {ingestLoading ? 'Adding…' : 'Add to Ingest Queue'}
-          </Button>
+
+          {queueCheckLoading && (
+            <Stack direction="row" spacing={1} alignItems="center">
+              <CircularProgress size={16} />
+              <Typography variant="caption" color="text.secondary">Checking ingest queue…</Typography>
+            </Stack>
+          )}
+
+          {!queueCheckLoading && queueStatuses !== null && localPaths.every((p) => queueStatuses[p]) && (
+            <Box>
+              <Typography variant="body2" sx={{ mb: 1 }}>
+                Files detected in ingest queue — processing automatically:
+              </Typography>
+              <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                {localPaths.map((p) => (
+                  <Chip
+                    key={p}
+                    label={`${p.split('/').pop()} — ${queueStatuses[p]}`}
+                    size="small"
+                    color={queueStatuses[p] === 'completed' ? 'success' : queueStatuses[p] === 'failed' ? 'error' : 'info'}
+                  />
+                ))}
+              </Stack>
+              <Button
+                size="small"
+                variant="text"
+                sx={{ mt: 1 }}
+                onClick={() => checkQueueStatuses(localPaths)}
+              >
+                Refresh Status
+              </Button>
+            </Box>
+          )}
+
+          {!queueCheckLoading && (queueStatuses === null || localPaths.some((p) => !queueStatuses?.[p])) && (
+            <Box>
+              {queueStatuses !== null && localPaths.some((p) => !queueStatuses[p]) && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+                  Not yet picked up by watcher — add manually or wait for auto-detection.
+                </Typography>
+              )}
+              <Button
+                variant="contained"
+                disabled={ingestLoading}
+                onClick={() => setIngestConfirmOpen(true)}
+                startIcon={ingestLoading ? <CircularProgress size={16} /> : undefined}
+              >
+                {ingestLoading ? 'Adding…' : 'Add to Ingest Queue'}
+              </Button>
+            </Box>
+          )}
         </Box>
       )}
+
+      {/* ── Ingest confirmation dialog ─────────────────────────────────── */}
+      <Dialog open={ingestConfirmOpen} onClose={() => setIngestConfirmOpen(false)}>
+        <DialogTitle>Add to Jellyfin ingest queue?</DialogTitle>
+        <DialogContent>
+          <DialogContentText sx={{ mb: 1 }}>
+            {localPaths.length} file{localPaths.length !== 1 ? 's' : ''} will be queued for import into your Jellyfin library:
+          </DialogContentText>
+          <Box component="ul" sx={{ m: 0, pl: 2 }}>
+            {localPaths.map((p) => (
+              <Box component="li" key={p} sx={{ fontFamily: 'monospace', fontSize: '0.8rem', wordBreak: 'break-all' }}>
+                {p.split('/').pop()}
+              </Box>
+            ))}
+          </Box>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIngestConfirmOpen(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => { setIngestConfirmOpen(false); sendToIngest(); }}
+          >
+            Add to Queue
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* ── Batch save snackbar ────────────────────────────────────────── */}
+      <Snackbar
+        open={!!batchSaveMsg && !batchSaving}
+        autoHideDuration={3000}
+        onClose={() => setBatchSaveMsg('')}
+        message={batchSaveMsg}
+      />
     </Box>
   );
 }
@@ -1181,8 +1849,14 @@ export default function DiscRipperPage() {
       await loadJobs();
       setActiveStep(2);
     } catch (e: unknown) {
-      setSubmitError(e instanceof Error ? e.message : 'Failed to start job');
+      const axiosDetail = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+      setSubmitError(axiosDetail ?? (e instanceof Error ? e.message : 'Failed to start job'));
     }
+  };
+
+  const handleRetry = async (jobId: string) => {
+    await loadJobs();
+    setActiveStep(2);
   };
 
   const activeJobs = jobs.filter((j) =>
@@ -1255,6 +1929,7 @@ export default function DiscRipperPage() {
           serviceError={jobsError}
           onRefresh={loadJobs}
           onViewResults={(id) => { setResultsJobId(id); setActiveStep(3); }}
+          onRetry={handleRetry}
         />
       )}
 
@@ -1264,6 +1939,7 @@ export default function DiscRipperPage() {
           selectedJobId={resultsJobId}
           onSelectJob={setResultsJobId}
           onQueued={(id) => setQueuedJobIds((prev) => new Set(prev).add(id))}
+          onRetry={async (id) => { try { await DiscRipperService.retryJob(id); } catch { /* ignore */ } await loadJobs(); setResultsJobId(id); setActiveStep(2); }}
         />
       )}
     </Container>

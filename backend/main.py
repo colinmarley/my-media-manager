@@ -73,11 +73,48 @@ library_compliance_service = None
 async def run_ingress_auto_processor(app: FastAPI):
     """Continuously process pending ingress queue items while watcher is running."""
     interval_seconds = max(1, settings.ingress_auto_process_interval_seconds)
+    _watcher_restart_check_counter = 0
+    _retry_check_counter = 0
 
     while True:
         try:
             watcher_service = app.state.file_watcher_service
             queue_service = app.state.ingress_queue_service
+
+            # Periodically check if the watcher died unexpectedly and restart it.
+            _watcher_restart_check_counter += 1
+            if _watcher_restart_check_counter >= 30:
+                _watcher_restart_check_counter = 0
+                if (
+                    watcher_service
+                    and getattr(app.state, "_watcher_should_run", False)
+                    and not watcher_service.is_running
+                ):
+                    paths = getattr(app.state, "_watcher_paths", settings.ingress_default_paths)
+                    try:
+                        watcher_service.start_watching(paths)
+                        logger.warning("Ingress watcher restarted after unexpected stop", paths=paths)
+                    except Exception as restart_exc:
+                        logger.error("Ingress watcher restart failed", error=str(restart_exc))
+
+            # Auto-retry failed ingress items (transient errors, up to 3 attempts).
+            _retry_check_counter += 1
+            if _retry_check_counter >= 30 and queue_service:
+                _retry_check_counter = 0
+                now = __import__('time').time()
+                retry_candidates = [
+                    item for item in queue_service.items_by_id.values()
+                    if item.status == "failed"
+                    and (item.attempts or 0) < 3
+                    and (item.last_attempt is None or now - item.last_attempt > 300)
+                ]
+                for item in retry_candidates:
+                    await queue_service.retry_item(item.id)
+                    logger.info(
+                        "Auto-retrying failed ingress item",
+                        item_id=item.id,
+                        attempts=item.attempts,
+                    )
 
             if (
                 watcher_service
@@ -239,6 +276,15 @@ async def lifespan(app: FastAPI):
         queue_callback=ingress_queue_service.add_from_watcher,
     )
 
+    # Ensure ingress paths exist before the watcher tries to start them.
+    # Runs independently of dest_base existence to handle first-run and mount timing.
+    for ingress_path in settings.ingress_default_paths:
+        try:
+            os.makedirs(ingress_path, exist_ok=True)
+            logger.debug("Ensured ingress path exists", path=ingress_path)
+        except OSError as exc:
+            logger.warning("Could not create ingress path", path=ingress_path, error=str(exc))
+
     if settings.ingress_auto_start_watcher and settings.ingress_default_paths:
         try:
             file_watcher_service.start_watching(settings.ingress_default_paths)
@@ -246,12 +292,19 @@ async def lifespan(app: FastAPI):
                 "Ingress watcher auto-started",
                 paths=settings.ingress_default_paths,
             )
+            app.state._watcher_should_run = True
+            app.state._watcher_paths = settings.ingress_default_paths
         except Exception as exc:
             logger.warning(
                 "Ingress watcher auto-start failed",
                 paths=settings.ingress_default_paths,
                 error=str(exc),
             )
+            app.state._watcher_should_run = False
+            app.state._watcher_paths = settings.ingress_default_paths
+    else:
+        app.state._watcher_should_run = False
+        app.state._watcher_paths = settings.ingress_default_paths
 
     # Store services in app state for dependency injection in routes
     app.state.file_manager = file_manager

@@ -37,6 +37,21 @@ export interface RipJob {
   error: string | null;
   rip_dir: string | null;
   output_paths: string[];
+  encode_quality: number | null;
+  encode_encoder: string | null;
+}
+
+export interface JobAnalysis {
+  id: string;
+  job_id: string;
+  created_at: string;
+  error_type: string;
+  error_summary: string;
+  suggested_fix: string;
+  claude_prompt: string;
+  full_analysis: string;
+  model_used: string;
+  log_path: string;
 }
 
 export interface StartJobRequest {
@@ -48,6 +63,8 @@ export interface StartJobRequest {
   season?: number;
   mkv_title_indices: number[];
   episode_map?: Record<string, string>;
+  dvd_quality?: number;   // CRF 16-28; omit to use service default (21)
+  dvd_encoder?: string;   // e.g. "nvenc_h265", "x265", "x264"
 }
 
 function formatDuration(seconds: number): string {
@@ -91,12 +108,43 @@ export const DiscRipperService = {
   },
 
   streamUrl(jobId: string, fileIndex: number): string {
-    return `${BASE}/jobs/${jobId}/files/${fileIndex}/stream`;
+    return `/api/disc-ripper/jobs/${jobId}/files/${fileIndex}/stream`;
+  },
+
+  async getFileDuration(jobId: string, fileIndex: number): Promise<number | null> {
+    try {
+      const res = await fetch(`/api/disc-ripper/jobs/${jobId}/files/${fileIndex}/metadata`);
+      if (!res.ok) return null;
+      const data = await res.json() as { duration?: number };
+      return data.duration ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  async retryJob(jobId: string): Promise<RipJob> {
+    const { data } = await api.post<RipJob>(`/jobs/${jobId}/retry`);
+    return data;
   },
 
   async renameFile(jobId: string, fileIndex: number, newName: string): Promise<RipJob> {
     const { data } = await api.patch<RipJob>(`/jobs/${jobId}/files/${fileIndex}`, { name: newName });
     return data;
+  },
+
+  async analyzeJob(jobId: string): Promise<JobAnalysis> {
+    const { data } = await api.post<JobAnalysis>(`/jobs/${jobId}/analyze`, {}, { timeout: 130_000 });
+    return data;
+  },
+
+  async getJobAnalysis(jobId: string): Promise<JobAnalysis | null> {
+    try {
+      const { data } = await api.get<JobAnalysis>(`/jobs/${jobId}/analysis`);
+      return data;
+    } catch (e: unknown) {
+      if ((e as { response?: { status?: number } })?.response?.status === 404) return null;
+      throw e;
+    }
   },
 
   formatDuration,

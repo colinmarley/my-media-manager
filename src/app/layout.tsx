@@ -117,7 +117,7 @@ export default function RootLayout({
                 </Box>
                 <Box sx={Styles.headerCenter}>
                   <Typography variant="h6" sx={Styles.headerTitle}>
-                    My App
+                    Media Manager
                   </Typography>
                 </Box>
                 <Box sx={Styles.headerRight}>

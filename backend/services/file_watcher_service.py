@@ -460,9 +460,12 @@ class FileWatcherService:
                 continue
 
             if not os.path.exists(normalized_path):
-                raise ScanOperationError(
-                    f"Ingress path does not exist: {normalized_path}"
-                )
+                try:
+                    os.makedirs(normalized_path, exist_ok=True)
+                except OSError as exc:
+                    raise ScanOperationError(
+                        f"Ingress path does not exist and could not be created: {normalized_path} ({exc})"
+                    )
 
             if not os.path.isdir(normalized_path):
                 raise ScanOperationError(

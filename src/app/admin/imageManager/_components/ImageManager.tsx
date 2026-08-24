@@ -34,7 +34,7 @@ const ImageManager: React.FC = () => {
   };
 
   const handlePreview = (name: string, url: string) => {
-    setPreviewUrl(`http://localhost:8082${url}`);
+    setPreviewUrl(`/api/backend${url}`);
     setPreviewName(name);
   };
 

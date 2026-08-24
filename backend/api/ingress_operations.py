@@ -260,6 +260,8 @@ async def start_ingress_watcher(payload: StartWatcherRequest, req: Request):
             use_polling=payload.usePolling,
             recursive=payload.recursive,
         )
+        req.app.state._watcher_should_run = True
+        req.app.state._watcher_paths = ingress_paths
 
         if payload.processExistingFiles:
             background_thread = threading.Thread(
@@ -304,6 +306,7 @@ async def stop_ingress_watcher(req: Request):
 
     try:
         status = watcher_service.stop_watching()
+        req.app.state._watcher_should_run = False
         return {
             "success": True,
             "data": status,

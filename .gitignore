@@ -74,3 +74,4 @@ venv/
 *.pem
 *.key
 *.p12
+mcp_server.log

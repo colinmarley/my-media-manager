@@ -877,6 +877,30 @@ const IngressAutomationPanel: React.FC = () => {
         </Alert>
       )}
 
+      {(() => {
+        const pending = (queueStatus?.counts?.pending ?? 0) as number;
+        const needsReview = (queueStatus?.counts?.needs_review ?? 0) as number;
+        const backlog = pending + needsReview;
+        if (backlog > 0 && !watcher?.is_running) {
+          return (
+            <Alert severity="warning" sx={{ mb: 2 }}>
+              <strong>{backlog} file{backlog !== 1 ? 's' : ''} waiting</strong>
+              {needsReview > 0 && ` (${needsReview} need manual review)`} — watcher is stopped.
+              Start the watcher below to resume processing.
+            </Alert>
+          );
+        }
+        if (backlog > 0 && watcher?.is_running) {
+          return (
+            <Alert severity="info" sx={{ mb: 2 }}>
+              {pending > 0 && <><strong>{pending}</strong> file{pending !== 1 ? 's' : ''} pending processing. </>}
+              {needsReview > 0 && <><strong>{needsReview}</strong> file{needsReview !== 1 ? 's' : ''} need manual review.</>}
+            </Alert>
+          );
+        }
+        return null;
+      })()}
+
       <Alert severity="info" sx={{ mb: 3 }}>
         High-confidence matches are auto-assigned and organized. Items below threshold appear as
         &ldquo;needs_review&rdquo; for manual action here.

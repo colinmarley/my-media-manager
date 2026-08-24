@@ -189,7 +189,7 @@ const LibraryManagementPage: React.FC = () => {
     
     try {
       // Start the backend scan
-      const response = await fetch('http://localhost:8082/api/library/scan', {
+      const response = await fetch('/api/backend/api/library/scan', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -219,7 +219,7 @@ const LibraryManagementPage: React.FC = () => {
       // Poll for scan status updates
       const statusInterval = setInterval(async () => {
         try {
-          const statusResponse = await fetch(`http://localhost:8082/api/library/scan/status/${currentScanId}`);
+          const statusResponse = await fetch(`/api/backend/api/library/scan/status/${currentScanId}`);
           
           if (statusResponse.ok) {
             const statusResult = await statusResponse.json();
@@ -243,7 +243,7 @@ const LibraryManagementPage: React.FC = () => {
                   
                   // Fetch scan results from backend
                   try {
-                    const resultsResponse = await fetch(`http://localhost:8082/api/library/scan/results/${currentScanId}`);
+                    const resultsResponse = await fetch(`/api/backend/api/library/scan/results/${currentScanId}`);
                     if (resultsResponse.ok) {
                       const resultsData = await resultsResponse.json();
                       const scanResults = resultsData.data;
@@ -256,7 +256,7 @@ const LibraryManagementPage: React.FC = () => {
                       
                       // Clean up scan data from backend memory
                       try {
-                        await fetch(`http://localhost:8082/api/library/scan/cleanup/${currentScanId}`, {
+                        await fetch(`/api/backend/api/library/scan/cleanup/${currentScanId}`, {
                           method: 'DELETE'
                         });
                       } catch (cleanupError) {
@@ -310,7 +310,7 @@ const LibraryManagementPage: React.FC = () => {
   const handleStopScan = async () => {
     if (scanId) {
       try {
-        const response = await fetch('http://localhost:8082/api/library/scan/stop', {
+        const response = await fetch('/api/backend/api/library/scan/stop', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
