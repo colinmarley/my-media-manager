@@ -1,26 +1,25 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import React, { useCallback, useEffect, useState } from 'react';
+import { useParams, useRouter } from 'next/navigation';
 import {
-  Alert, Box, Chip, CircularProgress, Divider, Paper, Stack,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography,
+  Alert, Box, Button, Chip, CircularProgress, Divider, IconButton, Paper, Stack,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
+import LinkOffIcon from '@mui/icons-material/LinkOff';
+import AddLinkIcon from '@mui/icons-material/AddLink';
 import { api } from '@/service/api/apiClient';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
 import { CatalogTape } from '@/types/catalog/Tape.type';
-
-interface LinkedMediaFile {
-  id: string;
-  fileName: string;
-  filePath: string;
-  fileSize: number | null;
-  detectedMediaType: string | null;
-  assignmentStatus: string | null;
-  targetPath: string | null;
-  organizationStatus: string | null;
-  createdAt: string | null;
-}
+import { deleteDisc } from '@/service/catalog/DiscCatalogService';
+import { deleteTape } from '@/service/catalog/TapeCatalogService';
+import { disconnectFile, LinkedMediaFile } from '@/service/catalog/MediaFileLinkService';
+import DiscEditDialog from '../../_components/DiscEditDialog';
+import TapeEditDialog from '../../_components/TapeEditDialog';
+import ConfirmDeleteDialog from '../../_components/ConfirmDeleteDialog';
+import ConnectFileDialog from '../../_components/ConnectFileDialog';
 
 function formatBytes(bytes: number | null): string {
   if (!bytes) return '—';
@@ -30,7 +29,9 @@ function formatBytes(bytes: number | null): string {
 
 export default function PhysicalMediaDetailPage() {
   const params = useParams<{ type: string; id: string }>();
+  const router = useRouter();
   const mediaKind = params.type === 'tapes' ? 'tapes' : 'discs';
+  const isTape = mediaKind === 'tapes';
   const id = params.id;
 
   const [item, setItem] = useState<CatalogDisc | CatalogTape | null>(null);
@@ -38,42 +39,73 @@ export default function PhysicalMediaDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    let cancelled = false;
+  const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [connectOpen, setConnectOpen] = useState(false);
+  const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
+  const [disconnectError, setDisconnectError] = useState('');
+
+  const load = useCallback(() => {
     setLoading(true);
     setError('');
-    Promise.all([
+    return Promise.all([
       api.get<CatalogDisc | CatalogTape>(`/api/catalog/${mediaKind}/${id}`),
       api.get<LinkedMediaFile[]>(`/api/catalog/${mediaKind}/${id}/files`),
     ])
       .then(([itemData, filesData]) => {
-        if (cancelled) return;
         setItem(itemData);
         setFiles(filesData);
       })
       .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load');
+        setError(e instanceof Error ? e.message : 'Failed to load');
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        setLoading(false);
       });
-    return () => { cancelled = true; };
   }, [mediaKind, id]);
+
+  useEffect(() => {
+    let cancelled = false;
+    load().then(() => {
+      if (cancelled) return;
+    });
+    return () => { cancelled = true; };
+  }, [load]);
+
+  const handleDisconnect = async (fileId: string) => {
+    setDisconnectingId(fileId);
+    setDisconnectError('');
+    try {
+      await disconnectFile(fileId, isTape ? 'tape' : 'disc');
+      await load();
+    } catch (e: unknown) {
+      setDisconnectError(e instanceof Error ? e.message : 'Failed to disconnect file');
+    } finally {
+      setDisconnectingId(null);
+    }
+  };
 
   if (loading) return <Box sx={{ p: 3 }}><CircularProgress size={24} /></Box>;
   if (error) return <Box sx={{ p: 3 }}><Alert severity="error">{error}</Alert></Box>;
   if (!item) return <Box sx={{ p: 3 }}><Alert severity="warning">Not found</Alert></Box>;
 
-  const isTape = mediaKind === 'tapes';
   const tape = isTape ? (item as CatalogTape) : null;
   const disc = !isTape ? (item as CatalogDisc) : null;
 
   return (
     <Box sx={{ p: 3, maxWidth: 900 }}>
-      <Typography variant="h4" sx={{ mb: 0.5 }}>{item.title}</Typography>
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
-        {isTape ? 'Physical tape' : 'Physical disc'}
-      </Typography>
+      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 3 }}>
+        <Box>
+          <Typography variant="h4" sx={{ mb: 0.5 }}>{item.title}</Typography>
+          <Typography variant="body2" color="text.secondary">
+            {isTape ? 'Physical tape' : 'Physical disc'}
+          </Typography>
+        </Box>
+        <Stack direction="row" spacing={1}>
+          <Button startIcon={<EditIcon />} onClick={() => setEditOpen(true)}>Edit</Button>
+          <Button startIcon={<DeleteIcon />} color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
+        </Stack>
+      </Stack>
 
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Typography variant="subtitle2" sx={{ mb: 1.5 }}>Details</Typography>
@@ -82,6 +114,8 @@ export default function PhysicalMediaDetailPage() {
           {disc && disc.regionCode && <Chip label={`Region: ${disc.regionCode}`} size="small" variant="outlined" />}
           {disc && disc.condition && <Chip label={`Condition: ${disc.condition}`} size="small" variant="outlined" />}
           {disc && disc.barcode && <Chip label={`Barcode: ${disc.barcode}`} size="small" variant="outlined" />}
+          {disc && disc.discNumber != null && <Chip label={`Disc #${disc.discNumber}`} size="small" variant="outlined" />}
+          {disc && disc.language && <Chip label={`Language: ${disc.language}`} size="small" variant="outlined" />}
           {disc && disc.isPartOfSet && <Chip label="Part of a set" size="small" color="info" variant="outlined" />}
           {disc && disc.isRentalDisc && <Chip label="Rental disc" size="small" color="warning" variant="outlined" />}
 
@@ -99,14 +133,21 @@ export default function PhysicalMediaDetailPage() {
         )}
       </Paper>
 
-      <Typography variant="subtitle2" sx={{ mb: 1.5 }}>
-        Files from this {isTape ? 'tape' : 'disc'} ({files.length})
-      </Typography>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
+        <Typography variant="subtitle2">
+          Connected Files ({files.length})
+        </Typography>
+        <Button size="small" startIcon={<AddLinkIcon />} onClick={() => setConnectOpen(true)}>
+          Connect a file
+        </Button>
+      </Stack>
+
+      {disconnectError && <Alert severity="error" sx={{ mb: 1.5 }}>{disconnectError}</Alert>}
 
       {files.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
-          No files linked yet. Files get linked automatically when ripped/digitized with this
-          {isTape ? ' tape' : ' disc'} selected, or you can link existing files manually from the library browser.
+          No files connected yet. Files get connected automatically when ripped/digitized with this
+          {isTape ? ' tape' : ' disc'} selected, or click &ldquo;Connect a file&rdquo; above to link one manually.
         </Typography>
       ) : (
         <TableContainer component={Paper} variant="outlined">
@@ -117,6 +158,7 @@ export default function PhysicalMediaDetailPage() {
                 <TableCell>Type</TableCell>
                 <TableCell>Size</TableCell>
                 <TableCell>Status</TableCell>
+                <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -137,12 +179,65 @@ export default function PhysicalMediaDetailPage() {
                       variant="outlined"
                     />
                   </TableCell>
+                  <TableCell align="right">
+                    <Tooltip title="Disconnect from this item">
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleDisconnect(f.id)}
+                          disabled={disconnectingId === f.id}
+                        >
+                          {disconnectingId === f.id
+                            ? <CircularProgress size={16} />
+                            : <LinkOffIcon fontSize="small" />}
+                        </IconButton>
+                      </span>
+                    </Tooltip>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
       )}
+
+      {disc && (
+        <DiscEditDialog
+          open={editOpen}
+          disc={disc}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => load()}
+        />
+      )}
+      {tape && (
+        <TapeEditDialog
+          open={editOpen}
+          tape={tape}
+          onClose={() => setEditOpen(false)}
+          onSaved={() => load()}
+        />
+      )}
+      <ConfirmDeleteDialog
+        open={deleteOpen}
+        title={`Delete ${isTape ? 'tape' : 'disc'}?`}
+        description={`"${item.title}" will be permanently removed from your catalog. Connected files are not deleted, just disconnected.`}
+        onClose={() => setDeleteOpen(false)}
+        onConfirm={async () => {
+          if (isTape) {
+            await deleteTape(id);
+          } else {
+            await deleteDisc(id);
+          }
+          router.push('/dashboard/physical-media');
+        }}
+      />
+      <ConnectFileDialog
+        open={connectOpen}
+        kind={isTape ? 'tape' : 'disc'}
+        targetId={id}
+        onClose={() => setConnectOpen(false)}
+        onConnected={() => load()}
+      />
     </Box>
   );
 }

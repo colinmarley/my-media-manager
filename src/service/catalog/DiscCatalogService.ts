@@ -23,3 +23,11 @@ export async function searchDiscs(params: { title?: string; barcode?: string }):
 export async function createDisc(data: Partial<CatalogDisc>): Promise<CatalogDisc> {
   return api.post<CatalogDisc>('/api/catalog/discs', data);
 }
+
+export async function updateDisc(id: string, data: Partial<CatalogDisc>): Promise<CatalogDisc> {
+  return api.put<CatalogDisc>(`/api/catalog/discs/${id}`, { ...data, id });
+}
+
+export async function deleteDisc(id: string): Promise<void> {
+  await api.delete(`/api/catalog/discs/${id}`);
+}

@@ -3,16 +3,34 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import {
-  Box, Chip, CircularProgress, Paper, Stack, Tab, Tabs,
-  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Typography,
+  Box, Button, Chip, CircularProgress, IconButton, Paper, Stack, Tab, Tabs,
+  Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material';
+import AddIcon from '@mui/icons-material/Add';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
 import useDiscs from '@/hooks/catalog/useDiscs';
 import useTapes from '@/hooks/catalog/useTapes';
+import { deleteDisc } from '@/service/catalog/DiscCatalogService';
+import { deleteTape } from '@/service/catalog/TapeCatalogService';
+import { CatalogDisc } from '@/types/catalog/Disc.type';
+import { CatalogTape } from '@/types/catalog/Tape.type';
+import DiscEditDialog from './_components/DiscEditDialog';
+import TapeEditDialog from './_components/TapeEditDialog';
+import ConfirmDeleteDialog from './_components/ConfirmDeleteDialog';
 
 export default function PhysicalMediaPage() {
   const [tab, setTab] = useState<'discs' | 'tapes'>('discs');
-  const { discs, loading: discsLoading, error: discsError } = useDiscs();
-  const { tapes, loading: tapesLoading, error: tapesError } = useTapes();
+  const { discs, loading: discsLoading, error: discsError, refetch: refetchDiscs } = useDiscs();
+  const { tapes, loading: tapesLoading, error: tapesError, refetch: refetchTapes } = useTapes();
+
+  const [discDialogOpen, setDiscDialogOpen] = useState(false);
+  const [editingDisc, setEditingDisc] = useState<CatalogDisc | null>(null);
+  const [deletingDisc, setDeletingDisc] = useState<CatalogDisc | null>(null);
+
+  const [tapeDialogOpen, setTapeDialogOpen] = useState(false);
+  const [editingTape, setEditingTape] = useState<CatalogTape | null>(null);
+  const [deletingTape, setDeletingTape] = useState<CatalogTape | null>(null);
 
   return (
     <Box sx={{ p: 3 }}>
@@ -21,10 +39,21 @@ export default function PhysicalMediaPage() {
         Everything you own on disc or tape, and the files ripped/digitized from each.
       </Typography>
 
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
-        <Tab label={`Discs (${discs.length})`} value="discs" />
-        <Tab label={`Tapes (${tapes.length})`} value="tapes" />
-      </Tabs>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
+        <Tabs value={tab} onChange={(_, v) => setTab(v)}>
+          <Tab label={`Discs (${discs.length})`} value="discs" />
+          <Tab label={`Tapes (${tapes.length})`} value="tapes" />
+        </Tabs>
+        {tab === 'discs' ? (
+          <Button startIcon={<AddIcon />} onClick={() => { setEditingDisc(null); setDiscDialogOpen(true); }}>
+            New Disc
+          </Button>
+        ) : (
+          <Button startIcon={<AddIcon />} onClick={() => { setEditingTape(null); setTapeDialogOpen(true); }}>
+            New Tape
+          </Button>
+        )}
+      </Stack>
 
       {tab === 'discs' && (
         <Box>
@@ -32,7 +61,7 @@ export default function PhysicalMediaPage() {
           {discsError && <Typography color="error">{discsError}</Typography>}
           {!discsLoading && discs.length === 0 && (
             <Typography color="text.secondary">
-              No discs catalogued yet. Add one from Admin → Discs, or link one while starting a rip.
+              No discs catalogued yet. Click &ldquo;New Disc&rdquo; above, or link one while starting a rip.
             </Typography>
           )}
           {discs.length > 0 && (
@@ -45,6 +74,7 @@ export default function PhysicalMediaPage() {
                     <TableCell>Condition</TableCell>
                     <TableCell>Region</TableCell>
                     <TableCell />
+                    <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -65,6 +95,18 @@ export default function PhysicalMediaPage() {
                           <Chip label="has extras" size="small" color="info" variant="outlined" />
                         )}
                       </TableCell>
+                      <TableCell align="right">
+                        <Tooltip title="Edit">
+                          <IconButton size="small" onClick={() => { setEditingDisc(disc); setDiscDialogOpen(true); }}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Delete">
+                          <IconButton size="small" color="error" onClick={() => setDeletingDisc(disc)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -80,7 +122,7 @@ export default function PhysicalMediaPage() {
           {tapesError && <Typography color="error">{tapesError}</Typography>}
           {!tapesLoading && tapes.length === 0 && (
             <Typography color="text.secondary">
-              No tapes catalogued yet.
+              No tapes catalogued yet. Click &ldquo;New Tape&rdquo; above.
             </Typography>
           )}
           {tapes.length > 0 && (
@@ -93,6 +135,7 @@ export default function PhysicalMediaPage() {
                     <TableCell>Label</TableCell>
                     <TableCell>Brand</TableCell>
                     <TableCell>Condition</TableCell>
+                    <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -113,6 +156,18 @@ export default function PhysicalMediaPage() {
                           ? <Chip label={tape.condition} size="small" variant="outlined" />
                           : '—'}
                       </TableCell>
+                      <TableCell align="right">
+                        <Tooltip title="Edit">
+                          <IconButton size="small" onClick={() => { setEditingTape(tape); setTapeDialogOpen(true); }}>
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Delete">
+                          <IconButton size="small" color="error" onClick={() => setDeletingTape(tape)}>
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Tooltip>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -121,6 +176,43 @@ export default function PhysicalMediaPage() {
           )}
         </Box>
       )}
+
+      <DiscEditDialog
+        open={discDialogOpen}
+        disc={editingDisc}
+        onClose={() => setDiscDialogOpen(false)}
+        onSaved={() => refetchDiscs()}
+      />
+      <TapeEditDialog
+        open={tapeDialogOpen}
+        tape={editingTape}
+        onClose={() => setTapeDialogOpen(false)}
+        onSaved={() => refetchTapes()}
+      />
+      <ConfirmDeleteDialog
+        open={!!deletingDisc}
+        title="Delete disc?"
+        description={`"${deletingDisc?.title}" will be permanently removed from your catalog. Files linked to it are not deleted, just unlinked.`}
+        onClose={() => setDeletingDisc(null)}
+        onConfirm={async () => {
+          if (deletingDisc) {
+            await deleteDisc(deletingDisc.id);
+            await refetchDiscs();
+          }
+        }}
+      />
+      <ConfirmDeleteDialog
+        open={!!deletingTape}
+        title="Delete tape?"
+        description={`"${deletingTape?.title}" will be permanently removed from your catalog. Files linked to it are not deleted, just unlinked.`}
+        onClose={() => setDeletingTape(null)}
+        onConfirm={async () => {
+          if (deletingTape) {
+            await deleteTape(deletingTape.id);
+            await refetchTapes();
+          }
+        }}
+      />
     </Box>
   );
 }
