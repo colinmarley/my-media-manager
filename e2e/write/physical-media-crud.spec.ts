@@ -63,13 +63,20 @@ test('create, edit, connect a file, disconnect, and delete a disc via the UI', a
     await expect(page.getByText('Connected Files (0)')).toBeVisible();
     await page.getByRole('button', { name: /Connect a file/i }).click();
     await page.getByLabel('Search by filename').fill(fileName);
-    await expect(page.getByText(fileName)).toBeVisible();
-    await page.getByText(fileName).click();
+    // exact: true — the search-result row's secondary line shows the full
+    // file path, which also contains fileName as a substring; a non-exact
+    // match resolves to both and Playwright retries forever waiting for a
+    // single match, eventually blowing the whole-test timeout.
+    await expect(page.getByText(fileName, { exact: true })).toBeVisible();
+    await page.getByText(fileName, { exact: true }).click();
     await expect(page.getByText('Connected Files (1)')).toBeVisible();
-    await expect(page.getByText(fileName)).toBeVisible();
+    await expect(page.getByText(fileName, { exact: true })).toBeVisible();
 
     // --- Disconnect ---
-    await page.getByRole('button', { name: /Disconnect from this item/i }).click();
+    // MUI's Tooltip puts the aria-label on the wrapping <span> (needed so the
+    // tooltip still works when the IconButton is disabled), not on the
+    // <button> itself, so getByRole('button', { name }) never matches here.
+    await page.locator('[aria-label="Disconnect from this item"]').click();
     await expect(page.getByText('Connected Files (0)')).toBeVisible();
   } finally {
     // --- Delete (via the detail page, whichever title is current) ---
