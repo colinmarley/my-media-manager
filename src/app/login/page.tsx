@@ -43,7 +43,12 @@ export default function LoginPage() {
     if (!password.trim()) return;
     try {
       await login(password);
-      router.push('/dashboard');
+      // Hard navigation, not router.push: the nav sidebar renders (and
+      // prefetches) /dashboard and friends even while unauthenticated, so
+      // Next's client router cache holds a stale "redirect to /login" entry
+      // for them from before this login. router.push would reuse that stale
+      // entry and never leave /login despite a valid session cookie.
+      window.location.assign('/dashboard');
     } catch {
       // error is already in store
     }
