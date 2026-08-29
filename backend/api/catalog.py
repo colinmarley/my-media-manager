@@ -17,7 +17,7 @@ from typing import Any
 
 from db.database import get_db
 from db.models import Movie, Series, Disc, Tape, MediaFile
-from api.auth import require_session
+from api.mobile_auth import require_any_auth
 from config.settings import settings
 
 router = APIRouter(prefix="/api/catalog", tags=["Catalog"])
@@ -121,7 +121,7 @@ async def get_movie(movie_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     return _row_to_dict(row)
 
 
-@router.put("/movies/{movie_id}", dependencies=[Depends(require_session)])
+@router.put("/movies/{movie_id}", dependencies=[Depends(require_any_auth)])
 async def upsert_movie(movie_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     result = await db.execute(select(Movie).where(Movie.id == movie_id))
     row = result.scalar_one_or_none()
@@ -169,7 +169,7 @@ async def upsert_movie(movie_id: str, body: dict[str, Any], db: AsyncSession = D
     return _row_to_dict(row)
 
 
-@router.patch("/movies/{movie_id}/folder-path", dependencies=[Depends(require_session)])
+@router.patch("/movies/{movie_id}/folder-path", dependencies=[Depends(require_any_auth)])
 async def patch_movie_folder_path(movie_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     """Update only the folderPath field on a movie record (in raw_data)."""
     result = await db.execute(select(Movie).where(Movie.id == movie_id))
@@ -191,7 +191,7 @@ async def patch_movie_folder_path(movie_id: str, body: dict[str, Any], db: Async
     return _row_to_dict(row)
 
 
-@router.post("/movies/{movie_id}/remove-to-review", dependencies=[Depends(require_session)])
+@router.post("/movies/{movie_id}/remove-to-review", dependencies=[Depends(require_any_auth)])
 async def remove_movie_to_review(movie_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Move the movie's folder to _NeedsReview, then delete the catalog record."""
     result = await db.execute(select(Movie).where(Movie.id == movie_id))
@@ -221,7 +221,7 @@ async def remove_movie_to_review(movie_id: str, db: AsyncSession = Depends(get_d
     return {"deleted": movie_id, "movedTo": move_result}
 
 
-@router.delete("/movies/{movie_id}", dependencies=[Depends(require_session)])
+@router.delete("/movies/{movie_id}", dependencies=[Depends(require_any_auth)])
 async def delete_movie(movie_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     await db.execute(delete(Movie).where(Movie.id == movie_id))
     await db.commit()
@@ -266,7 +266,7 @@ async def get_series(series_id: str, db: AsyncSession = Depends(get_db)) -> dict
     return _row_to_dict(row)
 
 
-@router.put("/series/{series_id}", dependencies=[Depends(require_session)])
+@router.put("/series/{series_id}", dependencies=[Depends(require_any_auth)])
 async def upsert_series(series_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     result = await db.execute(select(Series).where(Series.id == series_id))
     row = result.scalar_one_or_none()
@@ -315,7 +315,7 @@ async def upsert_series(series_id: str, body: dict[str, Any], db: AsyncSession =
     return _row_to_dict(row)
 
 
-@router.patch("/series/{series_id}/folder-path", dependencies=[Depends(require_session)])
+@router.patch("/series/{series_id}/folder-path", dependencies=[Depends(require_any_auth)])
 async def patch_series_folder_path(series_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     """Update only the folderPath field on a series record (in raw_data)."""
     result = await db.execute(select(Series).where(Series.id == series_id))
@@ -337,7 +337,7 @@ async def patch_series_folder_path(series_id: str, body: dict[str, Any], db: Asy
     return _row_to_dict(row)
 
 
-@router.post("/series/{series_id}/remove-to-review", dependencies=[Depends(require_session)])
+@router.post("/series/{series_id}/remove-to-review", dependencies=[Depends(require_any_auth)])
 async def remove_series_to_review(series_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     """Move the series' folder to _NeedsReview, then delete the catalog record."""
     result = await db.execute(select(Series).where(Series.id == series_id))
@@ -367,7 +367,7 @@ async def remove_series_to_review(series_id: str, db: AsyncSession = Depends(get
     return {"deleted": series_id, "movedTo": move_result}
 
 
-@router.delete("/series/{series_id}", dependencies=[Depends(require_session)])
+@router.delete("/series/{series_id}", dependencies=[Depends(require_any_auth)])
 async def delete_series(series_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     await db.execute(delete(Series).where(Series.id == series_id))
     await db.commit()
@@ -417,12 +417,13 @@ async def create_disc(body: dict[str, Any], db: AsyncSession = Depends(get_db)) 
     (which requires the caller to supply an id, awkward for service-to-service
     creation from disc-ripper-service), this is a plain create.
 
-    Deliberately NOT behind require_session: this endpoint's primary caller is
-    disc-ripper-service (a trusted LAN service with no browser session), and
-    this codebase has no service-to-service auth mechanism (API keys, etc.) to
-    build on. This matches the existing trust model of the read endpoints
-    (GET /discs, GET /discs/{id} are also unauthenticated) rather than the
-    require_session pattern used for browser-driven mutations (PUT/DELETE).
+    Deliberately NOT behind require_any_auth: this endpoint's primary caller
+    is disc-ripper-service (a trusted LAN service with no browser session or
+    mobile token), and this codebase has no service-to-service auth
+    mechanism (API keys, etc.) to build on. This matches the existing trust
+    model of the read endpoints (GET /discs, GET /discs/{id} are also
+    unauthenticated) rather than the require_any_auth pattern used for
+    browser/mobile-driven mutations (PUT/DELETE).
     """
     row = Disc(id=str(uuid.uuid4()))
     _apply_disc_fields(row, body)
@@ -448,7 +449,7 @@ async def list_disc_files(disc_id: str, db: AsyncSession = Depends(get_db)) -> l
     return [_media_file_to_dict(row) for row in result.scalars().all()]
 
 
-@router.put("/discs/{disc_id}", dependencies=[Depends(require_session)])
+@router.put("/discs/{disc_id}", dependencies=[Depends(require_any_auth)])
 async def upsert_disc(disc_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     result = await db.execute(select(Disc).where(Disc.id == disc_id))
     row = result.scalar_one_or_none()
@@ -464,7 +465,7 @@ async def upsert_disc(disc_id: str, body: dict[str, Any], db: AsyncSession = Dep
     return _row_to_dict(row)
 
 
-@router.delete("/discs/{disc_id}", dependencies=[Depends(require_session)])
+@router.delete("/discs/{disc_id}", dependencies=[Depends(require_any_auth)])
 async def delete_disc(disc_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     await db.execute(delete(Disc).where(Disc.id == disc_id))
     await db.commit()
@@ -507,7 +508,7 @@ async def search_tapes(
 async def create_tape(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     """
     Create a new tape record with a server-generated id. Deliberately NOT
-    behind require_session — matches the discs endpoints' trust model
+    behind require_any_auth — matches the discs endpoints' trust model
     (see create_disc's docstring).
     """
     row = Tape(id=str(uuid.uuid4()))
@@ -534,7 +535,7 @@ async def list_tape_files(tape_id: str, db: AsyncSession = Depends(get_db)) -> l
     return [_media_file_to_dict(row) for row in result.scalars().all()]
 
 
-@router.put("/tapes/{tape_id}", dependencies=[Depends(require_session)])
+@router.put("/tapes/{tape_id}", dependencies=[Depends(require_any_auth)])
 async def upsert_tape(tape_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     result = await db.execute(select(Tape).where(Tape.id == tape_id))
     row = result.scalar_one_or_none()
@@ -550,7 +551,7 @@ async def upsert_tape(tape_id: str, body: dict[str, Any], db: AsyncSession = Dep
     return _row_to_dict(row)
 
 
-@router.delete("/tapes/{tape_id}", dependencies=[Depends(require_session)])
+@router.delete("/tapes/{tape_id}", dependencies=[Depends(require_any_auth)])
 async def delete_tape(tape_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     await db.execute(delete(Tape).where(Tape.id == tape_id))
     await db.commit()
@@ -636,7 +637,7 @@ async def search_media_files(
     return [_media_file_to_dict(row) for row in result.scalars().all()]
 
 
-@router.patch("/media-files/{file_id}/link", dependencies=[Depends(require_session)])
+@router.patch("/media-files/{file_id}/link", dependencies=[Depends(require_any_auth)])
 async def link_media_file(file_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     """
     Connect or disconnect a single existing MediaFile to/from a disc or tape.
@@ -683,7 +684,7 @@ async def link_media_file(file_id: str, body: dict[str, Any], db: AsyncSession =
 # Disc Reassignment
 # ---------------------------------------------------------------------------
 
-@router.post("/reassign-discs", dependencies=[Depends(require_session)])
+@router.post("/reassign-discs", dependencies=[Depends(require_any_auth)])
 async def reassign_discs(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     """
     Move a set of disc records from one catalog entry to another.

@@ -38,6 +38,20 @@ class Session(Base):
     user_agent = Column(Text)
 
 
+class MobileToken(Base):
+    """Long-lived bearer token issued to the mobile app after password login.
+    Parallel to Session (cookie auth for the web app) rather than a
+    replacement — see api/mobile_auth.py's require_any_auth()."""
+    __tablename__ = "mobile_tokens"
+
+    token        = Column(Text, primary_key=True)
+    device_name  = Column(Text)
+    created_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    expires_at   = Column(DateTime(timezone=True), nullable=False)
+    last_used_at = Column(DateTime(timezone=True))
+    revoked_at   = Column(DateTime(timezone=True))
+
+
 # ---------------------------------------------------------------------------
 # Media Catalog
 # ---------------------------------------------------------------------------

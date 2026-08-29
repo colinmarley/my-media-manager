@@ -263,7 +263,7 @@ class TestMovies:
     @pytest.mark.asyncio
     async def test_upsert_movie_creates_new(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         db = _make_db(single=None)
 
@@ -274,7 +274,7 @@ class TestMovies:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.put(
@@ -292,7 +292,7 @@ class TestMovies:
     @pytest.mark.asyncio
     async def test_upsert_movie_updates_existing(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         existing = _make_movie(id="movie1")
         db = _make_db(single=existing)
@@ -304,7 +304,7 @@ class TestMovies:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.put(
@@ -320,7 +320,7 @@ class TestMovies:
     @pytest.mark.asyncio
     async def test_delete_movie(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         db = _make_db()
 
@@ -331,7 +331,7 @@ class TestMovies:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.delete("/api/catalog/movies/movie1")
@@ -478,7 +478,7 @@ class TestSeries:
     @pytest.mark.asyncio
     async def test_upsert_series_creates_new(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         db = _make_db(single=None)
 
@@ -489,7 +489,7 @@ class TestSeries:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.put(
@@ -506,7 +506,7 @@ class TestSeries:
     @pytest.mark.asyncio
     async def test_delete_series(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         db = _make_db()
 
@@ -517,7 +517,7 @@ class TestSeries:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.delete("/api/catalog/series/series1")
@@ -628,7 +628,7 @@ class TestDiscs:
     @pytest.mark.asyncio
     async def test_upsert_disc_creates_new(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         db = _make_db(single=None)
 
@@ -639,7 +639,7 @@ class TestDiscs:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.put(
@@ -663,7 +663,7 @@ class TestDiscs:
         stale column made an edited disc silently unfindable by its new
         barcode."""
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         existing = _make_disc(id="disc1")
         db = _make_db(single=existing)
@@ -675,7 +675,7 @@ class TestDiscs:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.put(
@@ -733,7 +733,7 @@ class TestDiscs:
     @pytest.mark.asyncio
     async def test_delete_disc(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         db = _make_db()
 
@@ -744,7 +744,7 @@ class TestDiscs:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.delete("/api/catalog/discs/disc1")
@@ -880,7 +880,7 @@ class TestTapes:
     @pytest.mark.asyncio
     async def test_upsert_tape_updates_existing_and_syncs_columns(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         existing = _make_tape(id="tape1")
         db = _make_db(single=existing)
@@ -892,7 +892,7 @@ class TestTapes:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.put(
@@ -928,7 +928,7 @@ class TestTapes:
     @pytest.mark.asyncio
     async def test_delete_tape(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         db = _make_db()
 
@@ -939,7 +939,7 @@ class TestTapes:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.delete("/api/catalog/tapes/tape1")
@@ -1039,7 +1039,7 @@ class TestMediaFileLinking:
     @pytest.mark.asyncio
     async def test_link_media_file_not_found(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         db = _make_db(single=None)
 
@@ -1050,7 +1050,7 @@ class TestMediaFileLinking:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.patch("/api/catalog/media-files/missing/link", json={"discId": "disc1"})
@@ -1061,7 +1061,7 @@ class TestMediaFileLinking:
     @pytest.mark.asyncio
     async def test_connect_file_to_disc(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         media_file = _make_media_file()
         # First execute(): find the media file. Second: verify the disc exists.
@@ -1074,7 +1074,7 @@ class TestMediaFileLinking:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.patch("/api/catalog/media-files/file1/link", json={"discId": "disc1"})
@@ -1088,7 +1088,7 @@ class TestMediaFileLinking:
     @pytest.mark.asyncio
     async def test_connect_file_to_nonexistent_disc_returns_404(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         media_file = _make_media_file()
         db = _make_sequential_db(media_file, None)  # disc lookup returns nothing
@@ -1100,7 +1100,7 @@ class TestMediaFileLinking:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.patch("/api/catalog/media-files/file1/link", json={"discId": "missing-disc"})
@@ -1111,7 +1111,7 @@ class TestMediaFileLinking:
     @pytest.mark.asyncio
     async def test_disconnect_file_from_disc(self, app):
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         media_file = _make_media_file(disc_id="disc1")
         db = _make_sequential_db(media_file)  # discId is null, no existence check needed
@@ -1123,7 +1123,7 @@ class TestMediaFileLinking:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.patch("/api/catalog/media-files/file1/link", json={"discId": None})
@@ -1138,7 +1138,7 @@ class TestMediaFileLinking:
         """A file only comes from one physical source — connecting to a tape
         clears any existing disc link."""
         from db.database import get_db
-        from api.auth import require_session
+        from api.mobile_auth import require_any_auth
 
         media_file = _make_media_file(disc_id="old-disc")
         db = _make_sequential_db(media_file, "tape1")
@@ -1150,12 +1150,62 @@ class TestMediaFileLinking:
             return MagicMock()
 
         app.dependency_overrides[get_db] = override_db
-        app.dependency_overrides[require_session] = override_session
+        app.dependency_overrides[require_any_auth] = override_session
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.patch("/api/catalog/media-files/file1/link", json={"tapeId": "tape1"})
             assert resp.status_code == 200
             assert media_file.tape_id == "tape1"
             assert media_file.disc_id is None
+        finally:
+            app.dependency_overrides.clear()
+
+
+# ===========================================================================
+# require_any_auth accepts a bearer token with no cookie
+# (mobile-auth integration seam most likely to regress silently)
+# ===========================================================================
+
+
+class TestMobileTokenAuthOnCatalogRoutes:
+    @pytest.mark.asyncio
+    async def test_delete_disc_accepts_bearer_token_without_cookie(self, app):
+        from db.database import get_db
+
+        # The mocked db returns this row for *any* select() — including
+        # require_any_auth's MobileToken lookup — so its shape only needs
+        # to be truthy and settable, not a real MobileToken.
+        token_row = MagicMock()
+        db = _make_db(single=token_row)
+
+        async def override_db():
+            yield db
+
+        app.dependency_overrides[get_db] = override_db
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.delete(
+                    "/api/catalog/discs/disc1",
+                    headers={"Authorization": "Bearer a-valid-mobile-token"},
+                )
+            assert resp.status_code == 200
+            assert resp.json()["deleted"] == "disc1"
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_delete_disc_with_no_auth_at_all_returns_401(self, app):
+        from db.database import get_db
+
+        db = _make_db(single=None)
+
+        async def override_db():
+            yield db
+
+        app.dependency_overrides[get_db] = override_db
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.delete("/api/catalog/discs/disc1")
+            assert resp.status_code == 401
         finally:
             app.dependency_overrides.clear()

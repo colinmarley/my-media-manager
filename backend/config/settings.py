@@ -133,6 +133,12 @@ class LibrarySettings(BaseSettings):
     )
     session_expiry_hours: int = 24 * 7  # 7 days by default
 
+    # Mobile app bearer-token auth (parallel to cookie sessions above)
+    mobile_token_expiry_days: int = Field(
+        default=180,
+        validation_alias=AliasChoices("MOBILE_TOKEN_EXPIRY_DAYS", "MEDIA_LIBRARY_MOBILE_TOKEN_EXPIRY_DAYS"),
+    )
+
     # Default app password — seeded automatically on first startup if no password hash
     # is found in the database. Set via APP_DEFAULT_PASSWORD env var.
     # Leave empty to require manual seeding via scripts/seed_password.py.
@@ -177,6 +183,15 @@ class LibrarySettings(BaseSettings):
         default="/ark/media/tape-archive",
         validation_alias=AliasChoices("TAPE_ARCHIVE_PATH", "MEDIA_LIBRARY_TAPE_ARCHIVE_PATH"),
     )
+
+    # Cover-photo archive for movies/series/discs/tapes (generalized upload,
+    # separate from tape_archive_path so the existing tape-digitization
+    # workflow's storage tree is never touched by this feature).
+    media_archive_path: str = Field(
+        default="/ark/media/catalog-images",
+        validation_alias=AliasChoices("MEDIA_ARCHIVE_PATH", "MEDIA_LIBRARY_MEDIA_ARCHIVE_PATH"),
+    )
+
     class Config:
         env_file = ".env"
         env_prefix = "MEDIA_LIBRARY_"
