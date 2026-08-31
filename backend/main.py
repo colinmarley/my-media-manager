@@ -47,6 +47,7 @@ from api.tape_ingest import router as tape_ingest_router
 from api.tape_settings import router as tape_settings_router
 from api.mobile_auth import router as mobile_auth_router
 from api.media_images import router as media_images_router
+from api.metadata_search import router as metadata_search_router
 from db.database import engine, Base, AsyncSessionLocal
 from db.models import AppConfig
 from services.filesystem_manager import FileSystemManager
@@ -399,6 +400,7 @@ app.include_router(tape_ingest_router)
 app.include_router(tape_settings_router)
 app.include_router(mobile_auth_router)
 app.include_router(media_images_router)
+app.include_router(metadata_search_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
 
 @app.get("/")
