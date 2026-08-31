@@ -497,6 +497,15 @@ async def search_disc_sets(
     return [_disc_set_to_dict(row) for row in result.scalars().all()]
 
 
+@router.get("/disc-sets/{set_id}")
+async def get_disc_set(set_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    result = await db.execute(select(DiscSet).where(DiscSet.id == set_id))
+    row = result.scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Disc set not found")
+    return _disc_set_to_dict(row)
+
+
 @router.post("/disc-sets", dependencies=[Depends(require_any_auth)])
 async def create_disc_set(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
     title = (body.get("title") or "").strip()

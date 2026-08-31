@@ -162,6 +162,41 @@ class TestDiscSets:
         finally:
             app.dependency_overrides.clear()
 
+    @pytest.mark.asyncio
+    async def test_get_disc_set_found(self, app):
+        from db.database import get_db
+
+        db = _make_db(single=_make_disc_set())
+
+        async def override_db():
+            yield db
+
+        app.dependency_overrides[get_db] = override_db
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/disc-sets/set1")
+            assert resp.status_code == 200
+            assert resp.json() == {"id": "set1", "title": "LOTR Extended Trilogy"}
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_get_disc_set_not_found(self, app):
+        from db.database import get_db
+
+        db = _make_db(single=None)
+
+        async def override_db():
+            yield db
+
+        app.dependency_overrides[get_db] = override_db
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/disc-sets/missing")
+            assert resp.status_code == 404
+        finally:
+            app.dependency_overrides.clear()
+
 
 # ===========================================================================
 # GET/POST/DELETE /api/catalog/discs/{disc_id}/links
