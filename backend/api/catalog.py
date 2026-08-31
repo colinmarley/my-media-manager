@@ -16,7 +16,7 @@ from sqlalchemy import select, delete, or_
 from typing import Any
 
 from db.database import get_db
-from db.models import Movie, Series, Disc, Tape, MediaFile
+from db.models import Movie, Series, Disc, DiscSet, DiscMediaLink, Tape, MediaFile
 from api.mobile_auth import require_any_auth
 from config.settings import settings
 
@@ -44,6 +44,8 @@ def _apply_disc_fields(row: Disc, body: dict[str, Any]) -> None:
     row.condition = body.get("condition")
     row.region_code = body.get("regionCode") or body.get("region_code")
     row.disc_number = body.get("discNumber") or body.get("disc_number")
+    row.set_id = body.get("setId") or body.get("set_id")
+    row.edition = body.get("edition")
     row.language = body.get("language")
     row.purchase_date = body.get("purchaseDate") or body.get("purchase_date")
     row.release_date = body.get("releaseDate") or body.get("release_date")
@@ -470,6 +472,124 @@ async def delete_disc(disc_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     await db.execute(delete(Disc).where(Disc.id == disc_id))
     await db.commit()
     return {"deleted": disc_id}
+
+
+# ---------------------------------------------------------------------------
+# Disc Sets (boxed sets — main feature + special features, theatrical vs.
+# director's cut, a multi-disc season, etc. — grouped via discs.set_id)
+# ---------------------------------------------------------------------------
+
+def _disc_set_to_dict(row: DiscSet) -> dict:
+    return {"id": row.id, "title": row.title}
+
+
+@router.get("/disc-sets")
+async def search_disc_sets(
+    title: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """List disc sets, optionally filtered by title — backs the "join an
+    existing set" picker when adding a disc."""
+    stmt = select(DiscSet).order_by(DiscSet.title)
+    if title:
+        stmt = select(DiscSet).where(DiscSet.title.ilike(f"%{title}%")).order_by(DiscSet.title)
+    result = await db.execute(stmt.limit(50))
+    return [_disc_set_to_dict(row) for row in result.scalars().all()]
+
+
+@router.post("/disc-sets", dependencies=[Depends(require_any_auth)])
+async def create_disc_set(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    row = DiscSet(id=str(uuid.uuid4()), title=title)
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _disc_set_to_dict(row)
+
+
+@router.get("/disc-sets/{set_id}/discs")
+async def list_discs_in_set(set_id: str, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    """Other discs in this boxed set — backs an "other discs in this set"
+    section on a disc's detail view."""
+    result = await db.execute(select(Disc).where(Disc.set_id == set_id).order_by(Disc.disc_number, Disc.title))
+    return [_row_to_dict(row) for row in result.scalars().all()]
+
+
+# ---------------------------------------------------------------------------
+# Disc <-> Media Links (a disc containing more than one movie/series, e.g.
+# a double-feature disc — additive many-to-many, independent of the
+# pre-existing single-valued disc.raw_data.mediaId/mediaType set by
+# reassign-discs)
+# ---------------------------------------------------------------------------
+
+async def _titles_for_media(db: AsyncSession, refs: list[tuple[str, str]]) -> dict[tuple[str, str], str]:
+    """Batch-resolve {(mediaType, mediaId): title} for a list of refs."""
+    movie_ids = [media_id for media_type, media_id in refs if media_type == "movie"]
+    series_ids = [media_id for media_type, media_id in refs if media_type == "series"]
+    titles: dict[tuple[str, str], str] = {}
+    if movie_ids:
+        result = await db.execute(select(Movie.id, Movie.title).where(Movie.id.in_(movie_ids)))
+        for media_id, title in result.all():
+            titles[("movie", media_id)] = title
+    if series_ids:
+        result = await db.execute(select(Series.id, Series.title).where(Series.id.in_(series_ids)))
+        for media_id, title in result.all():
+            titles[("series", media_id)] = title
+    return titles
+
+
+@router.get("/discs/{disc_id}/links")
+async def list_disc_links(disc_id: str, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    result = await db.execute(select(DiscMediaLink).where(DiscMediaLink.disc_id == disc_id))
+    links = result.scalars().all()
+    titles = await _titles_for_media(db, [(link.media_type, link.media_id) for link in links])
+    return [
+        {
+            "mediaType": link.media_type,
+            "mediaId": link.media_id,
+            "title": titles.get((link.media_type, link.media_id)),
+        }
+        for link in links
+    ]
+
+
+@router.post("/discs/{disc_id}/links", dependencies=[Depends(require_any_auth)])
+async def add_disc_link(disc_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    media_type = body.get("mediaType")
+    media_id = body.get("mediaId")
+    if media_type not in ("movie", "series") or not media_id:
+        raise HTTPException(status_code=400, detail="mediaType ('movie'|'series') and mediaId are required")
+
+    disc_result = await db.execute(select(Disc.id).where(Disc.id == disc_id))
+    if disc_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Disc not found")
+
+    existing = await db.execute(
+        select(DiscMediaLink).where(
+            DiscMediaLink.disc_id == disc_id,
+            DiscMediaLink.media_type == media_type,
+            DiscMediaLink.media_id == media_id,
+        )
+    )
+    if existing.scalar_one_or_none() is None:
+        db.add(DiscMediaLink(disc_id=disc_id, media_type=media_type, media_id=media_id))
+        await db.commit()
+    return {"discId": disc_id, "mediaType": media_type, "mediaId": media_id}
+
+
+@router.delete("/discs/{disc_id}/links/{media_type}/{media_id}", dependencies=[Depends(require_any_auth)])
+async def remove_disc_link(disc_id: str, media_type: str, media_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    await db.execute(
+        delete(DiscMediaLink).where(
+            DiscMediaLink.disc_id == disc_id,
+            DiscMediaLink.media_type == media_type,
+            DiscMediaLink.media_id == media_id,
+        )
+    )
+    await db.commit()
+    return {"discId": disc_id, "mediaType": media_type, "mediaId": media_id, "deleted": True}
 
 
 # ---------------------------------------------------------------------------

@@ -125,12 +125,27 @@ class ReleaseMovie(Base):
     movie_id   = Column(Text, ForeignKey("movies.id",   ondelete="CASCADE"), primary_key=True)
 
 
+class DiscSet(Base):
+    """A boxed set grouping multiple physical discs (main feature + special
+    features, theatrical vs. director's cut, a multi-disc season, etc.).
+    Deliberately separate from the pre-existing `releases` table, which is
+    unused by any live code path — this is the real, wired-up mechanism."""
+    __tablename__ = "disc_sets"
+
+    id         = Column(Text, primary_key=True)
+    title      = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class Disc(Base):
     __tablename__ = "discs"
 
     id                        = Column(Text, primary_key=True)
     title                     = Column(Text, nullable=False)
     release_id                = Column(Text, ForeignKey("releases.id", ondelete="SET NULL"))
+    set_id                    = Column(Text, ForeignKey("disc_sets.id", ondelete="SET NULL"))
+    edition                   = Column(Text)  # e.g. "Special Edition", "Director's Cut" — free text
     format                    = Column(Text)
     disc_number               = Column(Integer)
     barcode                   = Column(Text)
@@ -148,6 +163,20 @@ class Disc(Base):
     raw_data                  = Column(JSONB, default={})  # Full Firebase document for backward compatibility
     created_at                = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at                = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class DiscMediaLink(Base):
+    """Many-to-many disc <-> movie/series link, for discs that contain more
+    than one title (e.g. a double-feature disc). Replaces relying on the
+    single scalar disc.raw_data.mediaId/mediaType for this case — that field
+    is left untouched for backward compatibility with the existing
+    reassign-discs flow, which this table doesn't interact with."""
+    __tablename__ = "disc_media_links"
+
+    disc_id    = Column(Text, ForeignKey("discs.id", ondelete="CASCADE"), primary_key=True)
+    media_type = Column(Text, primary_key=True)  # "movie" | "series"
+    media_id   = Column(Text, primary_key=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Tape(Base):
