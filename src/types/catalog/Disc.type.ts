@@ -27,4 +27,8 @@ export interface CatalogDisc extends AuditFields {
   barcode?: string | null;
   purchaseDate?: string | null;
   condition?: DiscCondition | null;
+  // Real count of media_files rows linked via disc_id (GET /discs computes
+  // this server-side) — the honest "has this been ripped" signal, unlike
+  // videoFiles above which nothing in the current pipeline populates.
+  linkedFileCount?: number;
 }

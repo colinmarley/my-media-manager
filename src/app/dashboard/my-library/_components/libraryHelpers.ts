@@ -163,6 +163,15 @@ const getFileCountFromDiscIds = (discIds: string[], discMap: Map<string, Catalog
       return count + 1;
     }
 
+    // linkedFileCount is the real media_files-by-disc_id count (what /link-source
+    // and the manual connect-file flow actually populate); it's honest even at
+    // zero — a disc catalogued but not yet ripped should contribute 0, not a
+    // guessed 1. Only fall back to the legacy videoFiles-length guess for a
+    // disc payload fetched before this field existed.
+    if (typeof disc.linkedFileCount === 'number') {
+      return count + disc.linkedFileCount;
+    }
+
     const videoCount = Array.isArray(disc.videoFiles) ? disc.videoFiles.length : 0;
 
     return count + (videoCount > 0 ? videoCount : 1);

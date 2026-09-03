@@ -573,6 +573,41 @@ class TestDiscs:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
+    async def test_list_discs_includes_linked_file_count(self, app):
+        """Regression coverage for the "Has files" filter bug: the web app's
+        library filter fell back to guessing 1 file per linked disc because
+        discs.video_files is never actually populated by the rip-linking flow.
+        list_discs now returns a real linkedFileCount computed from
+        media_files.disc_id, which that filter was updated to prefer."""
+        from db.database import get_db
+
+        ripped_disc = _make_disc(id="disc1")
+        unripped_disc = _make_disc(id="disc2")
+
+        discs_result = MagicMock()
+        discs_result.scalars.return_value.all.return_value = [ripped_disc, unripped_disc]
+
+        counts_result = MagicMock()
+        counts_result.all.return_value = [("disc1", 3)]
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[discs_result, counts_result])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/discs")
+            assert resp.status_code == 200
+            by_id = {d["id"]: d for d in resp.json()}
+            assert by_id["disc1"]["linkedFileCount"] == 3
+            assert by_id["disc2"]["linkedFileCount"] == 0
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
     async def test_get_disc_found(self, app):
         from db.database import get_db
 

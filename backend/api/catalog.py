@@ -12,7 +12,7 @@ import shutil
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, or_
+from sqlalchemy import select, delete, or_, func
 from typing import Any
 
 from db.database import get_db
@@ -389,7 +389,21 @@ async def delete_series(series_id: str, db: AsyncSession = Depends(get_db)) -> d
 @router.get("/discs")
 async def list_discs(db: AsyncSession = Depends(get_db)) -> list[dict]:
     result = await db.execute(select(Disc).order_by(Disc.title))
-    return [_row_to_dict(row) for row in result.scalars().all()]
+    discs = result.scalars().all()
+
+    # Real "has this been ripped" signal — media_files.disc_id is what
+    # /link-source and the manual connect-file flow actually populate;
+    # discs.video_files (folded into raw_data by _row_to_dict) is not
+    # written by either, so it can't be trusted for this (see
+    # my-library's getFileCountFromDiscIds, which this field now backs).
+    counts_result = await db.execute(
+        select(MediaFile.disc_id, func.count(MediaFile.id))
+        .where(MediaFile.disc_id.isnot(None))
+        .group_by(MediaFile.disc_id)
+    )
+    counts = dict(counts_result.all())
+
+    return [{**_row_to_dict(row), "linkedFileCount": counts.get(row.id, 0)} for row in discs]
 
 
 @router.get("/discs/search")

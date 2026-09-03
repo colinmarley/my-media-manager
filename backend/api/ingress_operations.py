@@ -8,7 +8,6 @@ import time
 from typing import Any, Dict, List, Optional
 import os
 import threading
-from datetime import datetime
 import requests
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -18,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.settings import settings
 from db.database import get_db
-from db.models import Movie, Series
+from db.models import MediaAssignment, MediaFile, Movie, Series
 from services.metadata_enrichment_service import metadata_enrichment_service
 from utils.exceptions import ScanOperationError
 from utils.logging import logger
@@ -104,13 +103,10 @@ def _fetch_omdb_metadata(imdb_id: Optional[str], title: str, year: Optional[int]
     return metadata_enrichment_service.fetch_omdb_metadata(imdb_id, title, year)
 
 
-def _build_reset_move_pairs(assignment: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Extract source/destination move pairs from organization result operations."""
-    organization_result = assignment.get("organizationResult") or {}
-    operations = organization_result.get("operations") or []
-
+def _build_reset_move_pairs(operations: Optional[List[Dict[str, Any]]]) -> List[Dict[str, str]]:
+    """Extract source/destination move pairs from a MediaAssignment's `operations` JSONB column."""
     move_pairs: List[Dict[str, str]] = []
-    for op in operations:
+    for op in operations or []:
         destination = op.get("destination")
         source = op.get("source")
         if destination and source:
@@ -559,11 +555,13 @@ async def manual_assign_ingress_item(
 
 
 @router.post("/queue/reset-to-encoded")
-async def reset_ingress_item_to_encoded(payload: QueueResetToEncodedRequest, req: Request):
+async def reset_ingress_item_to_encoded(
+    payload: QueueResetToEncodedRequest,
+    req: Request,
+    db: AsyncSession = Depends(get_db),
+):
     """Move organized files for a queue item back to encoded source paths for retesting."""
     queue_service = req.app.state.ingress_queue_service
-    auto_matcher_service = req.app.state.auto_matcher_service
-    firestore_service = getattr(req.app.state, "firestore_service", None)
     file_manager = req.app.state.file_manager
 
     with queue_service.lock:
@@ -581,16 +579,16 @@ async def reset_ingress_item_to_encoded(payload: QueueResetToEncodedRequest, req
             "message": "Queue item has no assignment to reset",
             "code": "ASSIGNMENT_NOT_FOUND",
         })
-    assignment_doc = assignment_ref.get()
-    if not assignment_doc.exists:
+
+    assignment = await db.get(MediaAssignment, queue_item.assignment_id)
+    if assignment is None:
         raise HTTPException(status_code=404, detail={
             "type": "NotFoundError",
             "message": f"Assignment not found: {queue_item.assignment_id}",
             "code": "ASSIGNMENT_NOT_FOUND",
         })
 
-    assignment = assignment_doc.to_dict() or {}
-    move_pairs = _build_reset_move_pairs(assignment)
+    move_pairs = _build_reset_move_pairs(assignment.operations)
 
     if not move_pairs:
         raise HTTPException(status_code=400, detail={
@@ -603,26 +601,14 @@ async def reset_ingress_item_to_encoded(payload: QueueResetToEncodedRequest, req
     reset_results = reset_result["reset_results"]
     failures = reset_result["failures"]
 
-    # Update assignment status after reset attempt.
-    assignment_ref.update({
-        "organizationStatus": "pending" if len(failures) == 0 else "failed",
-        "isOrganized": False,
-        "targetPath": None,
-        "updatedAt": time.time(),
-        "resetResult": {
-            "attemptedAt": datetime.utcnow().isoformat(),
-            "filesAttempted": len(move_pairs),
-            "filesReset": sum(1 for r in reset_results if r.get("success")),
-            "errors": failures,
-            "operations": reset_results,
-        },
-    })
-
-    media_id = assignment.get("mediaId")
-    media_type = assignment.get("mediaType")
-    media_collection = "movies" if media_type == "movie" else "series"
-    if media_id:
-        pass  # Firestore write removed
+    # Update the assignment (and its primary file, if any) status after reset attempt.
+    assignment.organization_status = "pending" if len(failures) == 0 else "failed"
+    if assignment.primary_file_id:
+        media_file = await db.get(MediaFile, assignment.primary_file_id)
+        if media_file is not None:
+            media_file.organization_status = "pending" if len(failures) == 0 else "failed"
+            media_file.target_path = None
+    await db.commit()
 
     with queue_service.lock:
         queue_item.status = "needs_review"
@@ -645,10 +631,9 @@ async def reset_ingress_item_to_encoded(payload: QueueResetToEncodedRequest, req
 
 
 @router.post("/queue/reset-completed-to-encoded")
-async def reset_completed_items_to_encoded(req: Request):
+async def reset_completed_items_to_encoded(req: Request, db: AsyncSession = Depends(get_db)):
     """Reset all completed organized queue items back to encoded paths."""
     queue_service = req.app.state.ingress_queue_service
-    firestore_service = getattr(req.app.state, "firestore_service", None)
     file_manager = req.app.state.file_manager
 
     with queue_service.lock:
@@ -677,13 +662,12 @@ async def reset_completed_items_to_encoded(req: Request):
     errors: List[str] = []
 
     for queue_item in candidate_items:
-        assignment_doc = assignment_ref.get()
-        if not assignment_doc.exists:
+        assignment = await db.get(MediaAssignment, queue_item.assignment_id)
+        if assignment is None:
             errors.append(f"Assignment not found: {queue_item.assignment_id}")
             continue
 
-        assignment = assignment_doc.to_dict() or {}
-        move_pairs = _build_reset_move_pairs(assignment)
+        move_pairs = _build_reset_move_pairs(assignment.operations)
         if not move_pairs:
             errors.append(f"No moved files found for assignment: {queue_item.assignment_id}")
             continue
@@ -695,26 +679,13 @@ async def reset_completed_items_to_encoded(req: Request):
         failures = reset_result["failures"]
         files_reset += sum(1 for r in reset_results if r.get("success"))
 
-        assignment_ref.update({
-            "organizationStatus": "pending" if len(failures) == 0 else "failed",
-            "isOrganized": False,
-            "targetPath": None,
-            "updatedAt": time.time(),
-            "resetResult": {
-                "attemptedAt": datetime.utcnow().isoformat(),
-                "filesAttempted": len(move_pairs),
-                "filesReset": sum(1 for r in reset_results if r.get("success")),
-                "errors": failures,
-                "operations": reset_results,
-            },
-        })
-
-        media_id = assignment.get("mediaId")
-        media_type = assignment.get("mediaType")
-        media_collection = "movies" if media_type == "movie" else "series"
-        if media_id:
-            pass  # Firestore write removed
-
+        assignment.organization_status = "pending" if len(failures) == 0 else "failed"
+        if assignment.primary_file_id:
+            media_file = await db.get(MediaFile, assignment.primary_file_id)
+            if media_file is not None:
+                media_file.organization_status = "pending" if len(failures) == 0 else "failed"
+                media_file.target_path = None
+        await db.commit()
 
         with queue_service.lock:
             queue_item.status = "needs_review"
