@@ -46,6 +46,8 @@ def _apply_disc_fields(row: Disc, body: dict[str, Any]) -> None:
     row.disc_number = body.get("discNumber") or body.get("disc_number")
     row.set_id = body.get("setId") or body.get("set_id")
     row.edition = body.get("edition")
+    row.storage_type = body.get("storageType") or body.get("storage_type")
+    row.storage_id = body.get("storageId") or body.get("storage_id")
     row.language = body.get("language")
     row.purchase_date = body.get("purchaseDate") or body.get("purchase_date")
     row.release_date = body.get("releaseDate") or body.get("release_date")
@@ -63,11 +65,15 @@ def _apply_tape_fields(row: Tape, body: dict[str, Any]) -> None:
     row.title = body.get("title") or "Untitled"
     row.tape_type = body.get("tapeType") or body.get("tape_type")
     row.tape_label = body.get("tapeLabel") or body.get("tape_label")
+    row.barcode = body.get("barcode")
+    row.edition = body.get("edition")
     row.brand = body.get("brand")
     row.condition = body.get("condition")
     row.recording_speed = body.get("recordingSpeed") or body.get("recording_speed")
     row.label_notes = body.get("labelNotes") or body.get("label_notes")
     row.purchase_date = body.get("purchaseDate") or body.get("purchase_date")
+    row.storage_type = body.get("storageType") or body.get("storage_type")
+    row.storage_id = body.get("storageId") or body.get("storage_id")
     row.raw_data = body
 
 
@@ -615,10 +621,11 @@ async def list_tapes(db: AsyncSession = Depends(get_db)) -> list[dict]:
 async def search_tapes(
     title: str | None = Query(default=None),
     tape_label: str | None = Query(default=None),
+    barcode: str | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    """Look up existing tapes by title and/or physical label (e.g. 'VHSC_0001')."""
-    if not title and not tape_label:
+    """Look up existing tapes by title, physical label (e.g. 'VHSC_0001'), and/or barcode."""
+    if not title and not tape_label and not barcode:
         return []
 
     conditions = []
@@ -626,6 +633,8 @@ async def search_tapes(
         conditions.append(Tape.title.ilike(f"%{title}%"))
     if tape_label:
         conditions.append(Tape.tape_label == tape_label)
+    if barcode:
+        conditions.append(Tape.barcode == barcode)
 
     result = await db.execute(
         select(Tape).where(or_(*conditions)).order_by(Tape.title).limit(25)

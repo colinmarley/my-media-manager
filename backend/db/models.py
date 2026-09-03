@@ -146,6 +146,8 @@ class Disc(Base):
     release_id                = Column(Text, ForeignKey("releases.id", ondelete="SET NULL"))
     set_id                    = Column(Text, ForeignKey("disc_sets.id", ondelete="SET NULL"))
     edition                   = Column(Text)  # e.g. "Special Edition", "Director's Cut" — free text
+    storage_type              = Column(Text)  # "Box" | "Binder" — physical storage location, not content grouping
+    storage_id                = Column(Text)  # e.g. "MED0001" — client-side numbering convention
     format                    = Column(Text)
     disc_number               = Column(Integer)
     barcode                   = Column(Text)
@@ -195,11 +197,15 @@ class Tape(Base):
     title          = Column(Text, nullable=False)
     tape_type      = Column(Text)  # "vhs" | "vhs_c" | "mini_dv"
     tape_label     = Column(Text)  # e.g. "VHSC_0001" — matches tape_session_files.tape_id convention
+    barcode        = Column(Text)
+    edition        = Column(Text)  # e.g. "Special Edition" — free text, mirrors discs.edition
     brand          = Column(Text)
     condition      = Column(Text)
     recording_speed = Column(Text)  # "sp" | "lp" | "ep"
     label_notes    = Column(Text)
     purchase_date  = Column(Text)
+    storage_type   = Column(Text)  # "Box" | "Binder" — physical storage location, not content grouping
+    storage_id     = Column(Text)  # e.g. "MED0001" — client-side numbering convention
     video_files    = Column(JSONB, default=[])
     image_files    = Column(JSONB, default=[])
     raw_data       = Column(JSONB, default={})

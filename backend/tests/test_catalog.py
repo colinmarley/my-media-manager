@@ -692,6 +692,34 @@ class TestDiscs:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
+    async def test_upsert_disc_syncs_storage_location_columns(self, app):
+        from db.database import get_db
+        from api.mobile_auth import require_any_auth
+
+        existing = _make_disc(id="disc1")
+        db = _make_db(single=existing)
+
+        async def override_db():
+            yield db
+
+        async def override_session():
+            return MagicMock()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[require_any_auth] = override_session
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.put(
+                    "/api/catalog/discs/disc1",
+                    json={"title": "Updated Disc", "storageType": "Binder", "storageId": "MED0001"},
+                )
+            assert resp.status_code == 200
+            assert existing.storage_type == "Binder"
+            assert existing.storage_id == "MED0001"
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
     async def test_search_discs_no_params_returns_empty(self, app):
         from db.database import get_db
 
@@ -903,6 +931,61 @@ class TestTapes:
             db.add.assert_not_called()
             assert existing.brand == "TDK"
             assert existing.condition == "fair"
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_upsert_tape_syncs_barcode_edition_and_storage_location(self, app):
+        from db.database import get_db
+        from api.mobile_auth import require_any_auth
+
+        existing = _make_tape(id="tape1")
+        db = _make_db(single=existing)
+
+        async def override_db():
+            yield db
+
+        async def override_session():
+            return MagicMock()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[require_any_auth] = override_session
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.put(
+                    "/api/catalog/tapes/tape1",
+                    json={
+                        "title": "Updated Tape",
+                        "barcode": "012345678905",
+                        "edition": "Collector's Edition",
+                        "storageType": "Box",
+                        "storageId": "MED0002",
+                    },
+                )
+            assert resp.status_code == 200
+            assert existing.barcode == "012345678905"
+            assert existing.edition == "Collector's Edition"
+            assert existing.storage_type == "Box"
+            assert existing.storage_id == "MED0002"
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_search_tapes_by_barcode(self, app):
+        from db.database import get_db
+
+        tape = _make_tape()
+        db = _make_db(rows=[tape])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/tapes/search?barcode=012345678905")
+            assert resp.status_code == 200
+            assert len(resp.json()) == 1
         finally:
             app.dependency_overrides.clear()
 
