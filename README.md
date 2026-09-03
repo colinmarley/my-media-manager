@@ -17,6 +17,19 @@ First Look at development:
 
 ---
 
+## Cataloguing Your Physical Collection
+
+If you're logging a real collection of discs/tapes (not just testing), the
+short version: catalogue items from your phone via the
+[media-manager-mobile](https://github.com/colinmarley/media-manager-mobile)
+companion app while sorting — no need to be at this machine — then rip them
+here later at `/admin/disc-ripper` or `/admin/tape-ingest`, linking each rip
+back to its pre-catalogued entry so rip-status stays trackable. See
+[docs/guides/COLLECTION_CATALOGUING_WORKFLOW.md](docs/guides/COLLECTION_CATALOGUING_WORKFLOW.md)
+for the full step-by-step walkthrough across both apps.
+
+---
+
 ## Getting Started
 
 ### Prerequisites

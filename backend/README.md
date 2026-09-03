@@ -30,6 +30,10 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8082
 
 Interactive API docs: <http://localhost:8082/docs>
 
+For the end-to-end user workflow this API serves (catalogue from the mobile
+app → rip here → track what's ripped → locate a disc physically), see
+[docs/guides/COLLECTION_CATALOGUING_WORKFLOW.md](../docs/guides/COLLECTION_CATALOGUING_WORKFLOW.md).
+
 ## Project Structure
 
 ```
