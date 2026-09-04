@@ -2,7 +2,8 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Divider,
+  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Dialog, DialogActions,
+  DialogContent, DialogContentText, DialogTitle, Divider,
   FormControl, FormControlLabel, InputLabel, MenuItem,
   Paper, Radio, RadioGroup, Select, Stack,
   TextField, Typography,
@@ -55,6 +56,7 @@ export default function ConfigureStep({
   const [contentTypes, setContentTypes] = useState<Record<number, ExtrasCategory | ''>>({});
   const [linkedDisc, setLinkedDisc] = useState<CatalogDisc | null>(null);
   const [error, setError] = useState('');
+  const [showUnlinkedConfirm, setShowUnlinkedConfirm] = useState(false);
 
   // Auto-detect disc type from video width
   useEffect(() => {
@@ -257,12 +259,7 @@ export default function ConfigureStep({
 
   // ── Submit ────────────────────────────────────────────────────────────────
 
-  const submit = () => {
-    if (!title.trim()) { setError('Title is required'); return; }
-    if (!year || year < 1888 || year > 2100) { setError('Enter a valid year'); return; }
-    if (!selectedIndices.length) { setError('Select at least one title to rip'); return; }
-    setError('');
-
+  const doSubmit = () => {
     const episodeMap = mediaType === 'show' ? buildEpisodeMapExcludingExtras() : undefined;
 
     const titleContentTypes = Object.fromEntries(
@@ -281,6 +278,19 @@ export default function ConfigureStep({
       catalog_disc_id: linkedDisc?.id,
       title_content_types: Object.keys(titleContentTypes).length ? titleContentTypes : undefined,
     });
+  };
+
+  const submit = () => {
+    if (!title.trim()) { setError('Title is required'); return; }
+    if (!year || year < 1888 || year > 2100) { setError('Enter a valid year'); return; }
+    if (!selectedIndices.length) { setError('Select at least one title to rip'); return; }
+    setError('');
+
+    if (!linkedDisc) {
+      setShowUnlinkedConfirm(true);
+      return;
+    }
+    doSubmit();
   };
 
   // Titles tagged with an extras content_type are routed by the backend via
@@ -683,6 +693,25 @@ export default function ConfigureStep({
       <Button variant="contained" size="large" onClick={submit}>
         Start Rip
       </Button>
+
+      <Dialog open={showUnlinkedConfirm} onClose={() => setShowUnlinkedConfirm(false)}>
+        <DialogTitle>Start rip without a linked disc?</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            This rip isn&apos;t linked to a catalog disc — the delivered files won&apos;t be
+            traceable back to a physical disc afterward. Continue anyway?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowUnlinkedConfirm(false)}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={() => { setShowUnlinkedConfirm(false); doSubmit(); }}
+          >
+            Start Rip Anyway
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

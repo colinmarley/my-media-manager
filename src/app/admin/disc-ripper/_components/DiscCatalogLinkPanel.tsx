@@ -35,6 +35,11 @@ export default function DiscCatalogLinkPanel({
   const [error, setError] = useState('');
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const [barcodeInput, setBarcodeInput] = useState('');
+  const [barcodeResults, setBarcodeResults] = useState<CatalogDisc[]>([]);
+  const [barcodeSearching, setBarcodeSearching] = useState(false);
+  const barcodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const runSearch = async (query: string) => {
     if (!query.trim()) { setResults([]); return; }
     setSearching(true);
@@ -51,11 +56,40 @@ export default function DiscCatalogLinkPanel({
     searchTimer.current = setTimeout(() => runSearch(value), 400);
   };
 
+  const runBarcodeSearch = async (query: string) => {
+    if (!query.trim()) { setBarcodeResults([]); return; }
+    setBarcodeSearching(true);
+    try {
+      const found = await searchDiscs({ barcode: query.trim() });
+      setBarcodeResults(found);
+      // A barcode scanner types digits + Enter — an unambiguous match should
+      // link immediately rather than making the user click a result.
+      if (found.length === 1) onLink(found[0]);
+    } finally {
+      setBarcodeSearching(false);
+    }
+  };
+
+  const handleBarcodeInputChange = (value: string) => {
+    setBarcodeInput(value);
+    if (barcodeTimer.current) clearTimeout(barcodeTimer.current);
+    barcodeTimer.current = setTimeout(() => runBarcodeSearch(value), 400);
+  };
+
+  const handleBarcodeKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter') return;
+    if (barcodeTimer.current) clearTimeout(barcodeTimer.current);
+    runBarcodeSearch(barcodeInput);
+  };
+
   const handleCreate = async () => {
     setCreating(true);
     setError('');
     try {
-      const disc = await createDisc({ title: discTitle || searchInput || 'Untitled Disc' });
+      const disc = await createDisc({
+        title: discTitle || searchInput || 'Untitled Disc',
+        barcode: barcodeInput.trim() || undefined,
+      });
       onLink(disc);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to create disc record');
@@ -86,6 +120,36 @@ export default function DiscCatalogLinkPanel({
       <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
         Link this rip to a disc in your physical media catalog, or create a new record for it.
       </Typography>
+      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+        <TextField
+          size="small"
+          label="Scan or type barcode"
+          value={barcodeInput}
+          inputMode="numeric"
+          onChange={(e) => handleBarcodeInputChange(e.target.value)}
+          onKeyDown={handleBarcodeKeyDown}
+          sx={{ minWidth: 220 }}
+          slotProps={{
+            input: {
+              endAdornment: barcodeSearching ? <CircularProgress size={16} /> : undefined,
+            },
+          }}
+        />
+        {barcodeResults.length > 1 && (
+          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+            {barcodeResults.map((disc) => (
+              <Chip
+                key={disc.id}
+                label={disc.title}
+                size="small"
+                variant="outlined"
+                clickable
+                onClick={() => onLink(disc)}
+              />
+            ))}
+          </Stack>
+        )}
+      </Stack>
       <Stack direction="row" spacing={1} alignItems="flex-start" flexWrap="wrap" useFlexGap>
         <Autocomplete
           size="small"
