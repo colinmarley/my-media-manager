@@ -64,5 +64,10 @@ export type SeasonStatus = 'Aired' | 'Upcoming' | 'Partial';
 
 export type DiscCondition = 'Mint' | 'Good' | 'Fair' | 'Poor';
 
+// Physical storage location for a loose disc/tape (a labeled box or binder
+// on a shelf) — independent of DiscSet/set_id, which group discs/tapes by
+// *content* (main feature + special features, etc.), not where they live.
+export type StorageType = 'Box' | 'Binder';
+
 export type CollectionType = 'Director' | 'Franchise' | 'Thematic' | 'Boxset' | 'Custom';
   

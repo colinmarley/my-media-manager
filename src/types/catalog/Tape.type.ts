@@ -1,4 +1,4 @@
-import { AuditFields, ImageFile, VideoFile } from './Common.type';
+import { AuditFields, ImageFile, StorageType, VideoFile } from './Common.type';
 import { TapeBrand, TapeCondition, RecordingSpeed, TapeType } from '../tape-ingest/TapeIngest.type';
 
 export interface CatalogTape extends AuditFields {
@@ -17,4 +17,11 @@ export interface CatalogTape extends AuditFields {
   // this server-side) — the honest "has this been digitized" signal, unlike
   // videoFiles above which nothing in the current pipeline populates.
   linkedFileCount?: number;
+  storageType?: StorageType | null;
+  storageId?: string | null;
+  // Backend: tapes.set_id FK -> disc_sets (that table is media-type-generic
+  // despite the name). Not yet rendered anywhere in the web UI — boxed
+  // sets/multi-title-linking is a mobile-only feature for both discs and
+  // tapes today.
+  setId?: string | null;
 }

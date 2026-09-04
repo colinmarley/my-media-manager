@@ -39,6 +39,7 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import useMovies from '@/hooks/catalog/useMovies';
 import useSeries from '@/hooks/catalog/useSeries';
 import useDiscs from '@/hooks/catalog/useDiscs';
+import useMediaDiscsAndTapes from '@/hooks/catalog/useMediaDiscsAndTapes';
 import {
   getCastDisplay,
   getDirectorsDisplay,
@@ -209,6 +210,16 @@ const LibraryMediaDetailPage = () => {
     }) || null;
   }, [movies, series, mediaIdFromRoute, mediaTypeFromRoute]);
 
+  const resolvedMediaId = matchedMedia ? getMediaId(matchedMedia) : undefined;
+  const reverseLookupMediaType = mediaTypeFromRoute === 'movie' || mediaTypeFromRoute === 'series'
+    ? mediaTypeFromRoute
+    : undefined;
+  const {
+    discs: linkedDiscs,
+    tapes: linkedTapes,
+    loading: mediaLinksLoading,
+  } = useMediaDiscsAndTapes(reverseLookupMediaType, resolvedMediaId);
+
   const computed = useMemo(() => {
     if (!matchedMedia) {
       return null;
@@ -230,20 +241,23 @@ const LibraryMediaDetailPage = () => {
       return [];
     }
 
-    // Forward lookup: discs referenced by the movie's releases[].discIds
+    // Forward lookup: discs referenced by the movie's legacy
+    // releases[].discIds (pre-dates disc_media_links, kept for old
+    // Firebase-migrated data).
     const discIds = getDiscIdsForMedia(matchedMedia);
     const forwardDiscs = discIds
       .map((discId) => discMap.get(discId))
       .filter((disc): disc is NonNullable<typeof disc> => Boolean(disc));
 
-    // Reverse lookup: discs that point back to this movie via disc.mediaId
-    const mediaId = getMediaId(matchedMedia);
-    const reverseDiscs = Array.from(discMap.values()).filter(
-      (disc) => disc.mediaId === mediaId && !discIds.includes(disc.id)
-    );
+    // Reverse lookup: server-computed via disc_media_links + the legacy
+    // disc.raw_data.mediaId scalar (GET /api/catalog/media/{type}/{id}/discs).
+    const byId = new Map(forwardDiscs.map((disc) => [disc.id, disc]));
+    for (const disc of linkedDiscs) byId.set(disc.id, disc);
 
-    return [...forwardDiscs, ...reverseDiscs];
-  }, [matchedMedia, discMap]);
+    return Array.from(byId.values());
+  }, [matchedMedia, discMap, linkedDiscs]);
+
+  const associatedTapes = linkedTapes;
 
   const processingSummary = useMemo(() => {
     if (!matchedMedia || !computed) {
@@ -1006,7 +1020,8 @@ const LibraryMediaDetailPage = () => {
                 </Alert>
               )}
 
-              {associatedDiscs.length === 0 && !folderFilesLoading && folderFiles.length === 0 && (
+              {associatedDiscs.length === 0 && associatedTapes.length === 0 && !mediaLinksLoading
+                && !folderFilesLoading && folderFiles.length === 0 && (
                 <Alert severity="info">No associated disc or file records were found.</Alert>
               )}
 
@@ -1140,9 +1155,33 @@ const LibraryMediaDetailPage = () => {
                         <ListItemText
                           primary={disc.title || disc.id}
                           secondary={
-                            Array.isArray(disc.videoFiles) && disc.videoFiles.length > 0
+                            (Array.isArray(disc.videoFiles) && disc.videoFiles.length > 0
                               ? disc.videoFiles.map((file) => file.fileName).join(', ')
-                              : 'No video file names were stored on this disc record.'
+                              : 'No video file names were stored on this disc record.')
+                            + (disc.storageType && disc.storageId ? ` · ${disc.storageType} ${disc.storageId}` : ' · No storage location set')
+                          }
+                        />
+                      </ListItem>
+                    ))}
+                  </List>
+                </>
+              )}
+
+              {associatedTapes.length > 0 && (
+                <>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: associatedDiscs.length > 0 ? 2 : 0, mb: 0.5 }}>
+                    Associated tapes.
+                  </Typography>
+                  <List disablePadding>
+                    {associatedTapes.map((tape) => (
+                      <ListItem key={tape.id} sx={styles.listItem}>
+                        <ListItemText
+                          primary={tape.title || tape.id}
+                          secondary={
+                            (Array.isArray(tape.videoFiles) && tape.videoFiles.length > 0
+                              ? tape.videoFiles.map((file) => file.fileName).join(', ')
+                              : 'No video file names were stored on this tape record.')
+                            + (tape.storageType && tape.storageId ? ` · ${tape.storageType} ${tape.storageId}` : ' · No storage location set')
                           }
                         />
                       </ListItem>

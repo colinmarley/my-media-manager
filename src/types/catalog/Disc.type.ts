@@ -4,6 +4,7 @@ import {
   DiscFormat,
   CatalogMediaType,
   ImageFile,
+  StorageType,
   VideoFile,
 } from './Common.type';
 
@@ -31,4 +32,6 @@ export interface CatalogDisc extends AuditFields {
   // this server-side) — the honest "has this been ripped" signal, unlike
   // videoFiles above which nothing in the current pipeline populates.
   linkedFileCount?: number;
+  storageType?: StorageType | null;
+  storageId?: string | null;
 }
