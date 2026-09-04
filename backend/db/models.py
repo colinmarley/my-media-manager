@@ -198,6 +198,7 @@ class Tape(Base):
     tape_type      = Column(Text)  # "vhs" | "vhs_c" | "mini_dv"
     tape_label     = Column(Text)  # e.g. "VHSC_0001" — matches tape_session_files.tape_id convention
     barcode        = Column(Text)
+    set_id         = Column(Text, ForeignKey("disc_sets.id", ondelete="SET NULL"))  # disc_sets is media-type-generic despite the name
     edition        = Column(Text)  # e.g. "Special Edition" — free text, mirrors discs.edition
     brand          = Column(Text)
     condition      = Column(Text)
@@ -211,6 +212,19 @@ class Tape(Base):
     raw_data       = Column(JSONB, default={})
     created_at     = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at     = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class TapeMediaLink(Base):
+    """Many-to-many tape <-> movie/series link, mirroring DiscMediaLink for
+    tapes containing more than one title. The pre-existing single scalar
+    tape.raw_data.mediaId/mediaType is left untouched for backward
+    compatibility; this table doesn't interact with it."""
+    __tablename__ = "tape_media_links"
+
+    tape_id    = Column(Text, ForeignKey("tapes.id", ondelete="CASCADE"), primary_key=True)
+    media_type = Column(Text, primary_key=True)  # "movie" | "series"
+    media_id   = Column(Text, primary_key=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
 class Series(Base):

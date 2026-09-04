@@ -16,7 +16,7 @@ from sqlalchemy import select, delete, or_, func
 from typing import Any
 
 from db.database import get_db
-from db.models import Movie, Series, Disc, DiscSet, DiscMediaLink, Tape, MediaFile
+from db.models import Movie, Series, Disc, DiscSet, DiscMediaLink, Tape, TapeMediaLink, MediaFile
 from api.mobile_auth import require_any_auth
 from config.settings import settings
 
@@ -66,6 +66,7 @@ def _apply_tape_fields(row: Tape, body: dict[str, Any]) -> None:
     row.tape_type = body.get("tapeType") or body.get("tape_type")
     row.tape_label = body.get("tapeLabel") or body.get("tape_label")
     row.barcode = body.get("barcode")
+    row.set_id = body.get("setId") or body.get("set_id")
     row.edition = body.get("edition")
     row.brand = body.get("brand")
     row.condition = body.get("condition")
@@ -719,6 +720,140 @@ async def delete_tape(tape_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     await db.execute(delete(Tape).where(Tape.id == tape_id))
     await db.commit()
     return {"deleted": tape_id}
+
+
+@router.get("/disc-sets/{set_id}/tapes")
+async def list_tapes_in_set(set_id: str, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    """Other tapes in this boxed set — tape counterpart of list_discs_in_set.
+    disc_sets itself needs no tape-specific handling, it's already
+    media-type-generic (see DiscSet's docstring in db/models.py)."""
+    result = await db.execute(select(Tape).where(Tape.set_id == set_id).order_by(Tape.title))
+    return [_row_to_dict(row) for row in result.scalars().all()]
+
+
+# ---------------------------------------------------------------------------
+# Tape <-> Media Links (a tape containing more than one movie/series —
+# mirrors "Disc <-> Media Links" below, using tape_media_links)
+# ---------------------------------------------------------------------------
+
+@router.get("/tapes/{tape_id}/links")
+async def list_tape_links(tape_id: str, db: AsyncSession = Depends(get_db)) -> list[dict]:
+    result = await db.execute(select(TapeMediaLink).where(TapeMediaLink.tape_id == tape_id))
+    links = result.scalars().all()
+    titles = await _titles_for_media(db, [(link.media_type, link.media_id) for link in links])
+    return [
+        {
+            "mediaType": link.media_type,
+            "mediaId": link.media_id,
+            "title": titles.get((link.media_type, link.media_id)),
+        }
+        for link in links
+    ]
+
+
+@router.post("/tapes/{tape_id}/links", dependencies=[Depends(require_any_auth)])
+async def add_tape_link(tape_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    media_type = body.get("mediaType")
+    media_id = body.get("mediaId")
+    if media_type not in ("movie", "series") or not media_id:
+        raise HTTPException(status_code=400, detail="mediaType ('movie'|'series') and mediaId are required")
+
+    tape_result = await db.execute(select(Tape.id).where(Tape.id == tape_id))
+    if tape_result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Tape not found")
+
+    existing = await db.execute(
+        select(TapeMediaLink).where(
+            TapeMediaLink.tape_id == tape_id,
+            TapeMediaLink.media_type == media_type,
+            TapeMediaLink.media_id == media_id,
+        )
+    )
+    if existing.scalar_one_or_none() is None:
+        db.add(TapeMediaLink(tape_id=tape_id, media_type=media_type, media_id=media_id))
+        await db.commit()
+    return {"tapeId": tape_id, "mediaType": media_type, "mediaId": media_id}
+
+
+@router.delete("/tapes/{tape_id}/links/{media_type}/{media_id}", dependencies=[Depends(require_any_auth)])
+async def remove_tape_link(tape_id: str, media_type: str, media_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    await db.execute(
+        delete(TapeMediaLink).where(
+            TapeMediaLink.tape_id == tape_id,
+            TapeMediaLink.media_type == media_type,
+            TapeMediaLink.media_id == media_id,
+        )
+    )
+    await db.commit()
+    return {"tapeId": tape_id, "mediaType": media_type, "mediaId": media_id, "deleted": True}
+
+
+# ---------------------------------------------------------------------------
+# Reverse lookup: Media -> Discs/Tapes
+# ---------------------------------------------------------------------------
+
+@router.get("/media/{media_type}/{media_id}/discs")
+async def list_media_discs_and_tapes(
+    media_type: str, media_id: str, db: AsyncSession = Depends(get_db)
+) -> dict[str, list[dict]]:
+    """
+    Reverse lookup: every Disc/Tape linked to a Movie/Series, via the
+    disc_media_links/tape_media_links many-to-many tables OR the legacy
+    scalar raw_data.mediaId field (set by reassign-discs). Backs the
+    my-library detail page's "Associated Discs and Files" section.
+    """
+    if media_type not in ("movie", "series"):
+        raise HTTPException(status_code=400, detail="media_type must be 'movie' or 'series'")
+
+    linked_disc_ids = (await db.execute(
+        select(DiscMediaLink.disc_id).where(
+            DiscMediaLink.media_type == media_type, DiscMediaLink.media_id == media_id
+        )
+    )).scalars().all()
+    discs = (await db.execute(
+        select(Disc).where(
+            or_(Disc.id.in_(linked_disc_ids), Disc.raw_data["mediaId"].astext == media_id)
+        ).order_by(Disc.title)
+    )).scalars().all()
+
+    linked_tape_ids = (await db.execute(
+        select(TapeMediaLink.tape_id).where(
+            TapeMediaLink.media_type == media_type, TapeMediaLink.media_id == media_id
+        )
+    )).scalars().all()
+    tapes = (await db.execute(
+        select(Tape).where(
+            or_(Tape.id.in_(linked_tape_ids), Tape.raw_data["mediaId"].astext == media_id)
+        ).order_by(Tape.title)
+    )).scalars().all()
+
+    disc_counts = dict((await db.execute(
+        select(MediaFile.disc_id, func.count(MediaFile.id))
+        .where(MediaFile.disc_id.in_([d.id for d in discs]))
+        .group_by(MediaFile.disc_id)
+    )).all()) if discs else {}
+    tape_counts = dict((await db.execute(
+        select(MediaFile.tape_id, func.count(MediaFile.id))
+        .where(MediaFile.tape_id.in_([t.id for t in tapes]))
+        .group_by(MediaFile.tape_id)
+    )).all()) if tapes else {}
+
+    # Prefer the dedicated storage_type/storage_id columns over whatever
+    # raw_data happens to carry — raw_data is only as fresh as the last
+    # write's body, so a row updated by a flow that didn't round-trip these
+    # fields would otherwise silently under-report a real storage location.
+    return {
+        "discs": [
+            {**_row_to_dict(d), "storageType": d.storage_type, "storageId": d.storage_id,
+             "linkedFileCount": disc_counts.get(d.id, 0)}
+            for d in discs
+        ],
+        "tapes": [
+            {**_row_to_dict(t), "storageType": t.storage_type, "storageId": t.storage_id,
+             "linkedFileCount": tape_counts.get(t.id, 0)}
+            for t in tapes
+        ],
+    }
 
 
 # ---------------------------------------------------------------------------

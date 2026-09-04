@@ -794,6 +794,25 @@ class TestDiscs:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
+    async def test_search_discs_by_barcode(self, app):
+        from db.database import get_db
+
+        disc = _make_disc()
+        db = _make_db(rows=[disc])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/discs/search?barcode=012345678905")
+            assert resp.status_code == 200
+            assert len(resp.json()) == 1
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
     async def test_delete_disc(self, app):
         from db.database import get_db
         from api.mobile_auth import require_any_auth
@@ -1118,6 +1137,238 @@ class TestTapes:
             data = resp.json()
             assert len(data) == 1
             assert data[0]["id"] == "file2"
+        finally:
+            app.dependency_overrides.clear()
+
+
+# ===========================================================================
+# Tape sets + tape media links (tape counterparts of disc-sets/disc_media_links)
+# ===========================================================================
+
+class TestTapeSetsAndLinks:
+    @pytest.mark.asyncio
+    async def test_list_tapes_in_set(self, app):
+        from db.database import get_db
+
+        tape = _make_tape(id="tape1")
+        db = _make_db(rows=[tape])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/disc-sets/set1/tapes")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert len(data) == 1
+            assert data[0]["id"] == "tape1"
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_list_tape_links_empty(self, app):
+        from db.database import get_db
+
+        db = _make_db(rows=[])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/tapes/tape1/links")
+            assert resp.status_code == 200
+            assert resp.json() == []
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_add_tape_link(self, app):
+        from db.database import get_db
+        from api.mobile_auth import require_any_auth
+
+        tape_check = MagicMock()
+        tape_check.scalar_one_or_none.return_value = "tape1"
+        existing_link = MagicMock()
+        existing_link.scalar_one_or_none.return_value = None
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[tape_check, existing_link])
+        db.add = MagicMock()
+        db.commit = AsyncMock()
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        app.dependency_overrides[require_any_auth] = lambda: None
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/api/catalog/tapes/tape1/links",
+                    json={"mediaType": "movie", "mediaId": "movie1"},
+                )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data == {"tapeId": "tape1", "mediaType": "movie", "mediaId": "movie1"}
+            db.add.assert_called_once()
+            db.commit.assert_awaited_once()
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_add_tape_link_tape_not_found(self, app):
+        from db.database import get_db
+        from api.mobile_auth import require_any_auth
+
+        tape_check = MagicMock()
+        tape_check.scalar_one_or_none.return_value = None
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[tape_check])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        app.dependency_overrides[require_any_auth] = lambda: None
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post(
+                    "/api/catalog/tapes/missing-tape/links",
+                    json={"mediaType": "movie", "mediaId": "movie1"},
+                )
+            assert resp.status_code == 404
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_remove_tape_link(self, app):
+        from db.database import get_db
+        from api.mobile_auth import require_any_auth
+
+        db = _make_db()
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        app.dependency_overrides[require_any_auth] = lambda: None
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.delete("/api/catalog/tapes/tape1/links/movie/movie1")
+            assert resp.status_code == 200
+            assert resp.json()["deleted"] is True
+        finally:
+            app.dependency_overrides.clear()
+
+
+# ===========================================================================
+# Reverse lookup: Media -> Discs/Tapes
+# ===========================================================================
+
+class TestMediaDiscsAndTapes:
+    @pytest.mark.asyncio
+    async def test_invalid_media_type_rejected(self, app):
+        from db.database import get_db
+
+        db = _make_db()
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/media/disc/xyz/discs")
+            assert resp.status_code == 400
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_returns_linked_disc_and_legacy_tape_with_storage_and_counts(self, app):
+        """A disc reached via disc_media_links, and a tape reached only via
+        the legacy raw_data.mediaId scalar — both should come back with
+        storage location (from the dedicated columns, not raw_data) and a
+        real linkedFileCount."""
+        from db.database import get_db
+
+        disc = _make_disc(id="disc1", title="Linked Disc")
+        disc.storage_type = "Box"
+        disc.storage_id = "MED0001"
+
+        tape = _make_tape(id="tape1", title="Legacy Tape")
+        tape.storage_type = None
+        tape.storage_id = None
+
+        linked_disc_ids_result = MagicMock()
+        linked_disc_ids_result.scalars.return_value.all.return_value = ["disc1"]
+        discs_result = MagicMock()
+        discs_result.scalars.return_value.all.return_value = [disc]
+
+        linked_tape_ids_result = MagicMock()
+        linked_tape_ids_result.scalars.return_value.all.return_value = []
+        tapes_result = MagicMock()
+        tapes_result.scalars.return_value.all.return_value = [tape]
+
+        disc_counts_result = MagicMock()
+        disc_counts_result.all.return_value = [("disc1", 2)]
+        tape_counts_result = MagicMock()
+        tape_counts_result.all.return_value = []
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[
+            linked_disc_ids_result, discs_result,
+            linked_tape_ids_result, tapes_result,
+            disc_counts_result, tape_counts_result,
+        ])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/media/movie/movie1/discs")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert len(data["discs"]) == 1
+            assert data["discs"][0]["id"] == "disc1"
+            assert data["discs"][0]["storageType"] == "Box"
+            assert data["discs"][0]["storageId"] == "MED0001"
+            assert data["discs"][0]["linkedFileCount"] == 2
+            assert len(data["tapes"]) == 1
+            assert data["tapes"][0]["id"] == "tape1"
+            assert data["tapes"][0]["storageType"] is None
+            assert data["tapes"][0]["linkedFileCount"] == 0
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_no_matches_returns_empty_lists_without_count_queries(self, app):
+        from db.database import get_db
+
+        empty_ids = MagicMock()
+        empty_ids.scalars.return_value.all.return_value = []
+        empty_rows = MagicMock()
+        empty_rows.scalars.return_value.all.return_value = []
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[empty_ids, empty_rows, empty_ids, empty_rows])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/media/series/series1/discs")
+            assert resp.status_code == 200
+            assert resp.json() == {"discs": [], "tapes": []}
+            assert db.execute.await_count == 4
         finally:
             app.dependency_overrides.clear()
 
