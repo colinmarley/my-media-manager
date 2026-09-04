@@ -864,6 +864,39 @@ class TestTapes:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
+    async def test_list_tapes_includes_linked_file_count(self, app):
+        """Mirrors test_list_discs_includes_linked_file_count: list_tapes
+        returns a real linkedFileCount computed from media_files.tape_id,
+        the honest "has this been digitized" signal for tapes."""
+        from db.database import get_db
+
+        digitized_tape = _make_tape(id="tape1")
+        undigitized_tape = _make_tape(id="tape2")
+
+        tapes_result = MagicMock()
+        tapes_result.scalars.return_value.all.return_value = [digitized_tape, undigitized_tape]
+
+        counts_result = MagicMock()
+        counts_result.all.return_value = [("tape1", 2)]
+
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[tapes_result, counts_result])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/tapes")
+            assert resp.status_code == 200
+            by_id = {t["id"]: t for t in resp.json()}
+            assert by_id["tape1"]["linkedFileCount"] == 2
+            assert by_id["tape2"]["linkedFileCount"] == 0
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
     async def test_create_tape(self, app):
         from db.database import get_db
 

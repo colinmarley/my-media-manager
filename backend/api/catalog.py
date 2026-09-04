@@ -628,7 +628,18 @@ async def remove_disc_link(disc_id: str, media_type: str, media_id: str, db: Asy
 @router.get("/tapes")
 async def list_tapes(db: AsyncSession = Depends(get_db)) -> list[dict]:
     result = await db.execute(select(Tape).order_by(Tape.title))
-    return [_row_to_dict(row) for row in result.scalars().all()]
+    tapes = result.scalars().all()
+
+    # Same "has this been digitized" signal as list_discs above —
+    # media_files.tape_id is what the ingest/connect-file flow populates.
+    counts_result = await db.execute(
+        select(MediaFile.tape_id, func.count(MediaFile.id))
+        .where(MediaFile.tape_id.isnot(None))
+        .group_by(MediaFile.tape_id)
+    )
+    counts = dict(counts_result.all())
+
+    return [{**_row_to_dict(row), "linkedFileCount": counts.get(row.id, 0)} for row in tapes]
 
 
 @router.get("/tapes/search")

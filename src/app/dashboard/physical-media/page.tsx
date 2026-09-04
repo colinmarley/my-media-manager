@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import {
-  Box, Button, Chip, CircularProgress, IconButton, Paper, Stack, Tab, Tabs,
+  Box, Button, Chip, CircularProgress, FormControlLabel, IconButton, Paper, Stack, Switch, Tab, Tabs,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -21,8 +21,12 @@ import ConfirmDeleteDialog from './_components/ConfirmDeleteDialog';
 
 export default function PhysicalMediaPage() {
   const [tab, setTab] = useState<'discs' | 'tapes'>('discs');
-  const { discs, loading: discsLoading, error: discsError, refetch: refetchDiscs } = useDiscs();
-  const { tapes, loading: tapesLoading, error: tapesError, refetch: refetchTapes } = useTapes();
+  const [needsRippingOnly, setNeedsRippingOnly] = useState(false);
+  const { discs: allDiscs, loading: discsLoading, error: discsError, refetch: refetchDiscs } = useDiscs();
+  const { tapes: allTapes, loading: tapesLoading, error: tapesError, refetch: refetchTapes } = useTapes();
+
+  const discs = needsRippingOnly ? allDiscs.filter((d) => !d.linkedFileCount) : allDiscs;
+  const tapes = needsRippingOnly ? allTapes.filter((t) => !t.linkedFileCount) : allTapes;
 
   const [discDialogOpen, setDiscDialogOpen] = useState(false);
   const [editingDisc, setEditingDisc] = useState<CatalogDisc | null>(null);
@@ -41,18 +45,24 @@ export default function PhysicalMediaPage() {
 
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)}>
-          <Tab label={`Discs (${discs.length})`} value="discs" />
-          <Tab label={`Tapes (${tapes.length})`} value="tapes" />
+          <Tab label={`Discs (${allDiscs.length})`} value="discs" />
+          <Tab label={`Tapes (${allTapes.length})`} value="tapes" />
         </Tabs>
-        {tab === 'discs' ? (
-          <Button startIcon={<AddIcon />} onClick={() => { setEditingDisc(null); setDiscDialogOpen(true); }}>
-            New Disc
-          </Button>
-        ) : (
-          <Button startIcon={<AddIcon />} onClick={() => { setEditingTape(null); setTapeDialogOpen(true); }}>
-            New Tape
-          </Button>
-        )}
+        <Stack direction="row" spacing={2} alignItems="center">
+          <FormControlLabel
+            control={<Switch size="small" checked={needsRippingOnly} onChange={(e) => setNeedsRippingOnly(e.target.checked)} />}
+            label="Needs ripping only"
+          />
+          {tab === 'discs' ? (
+            <Button startIcon={<AddIcon />} onClick={() => { setEditingDisc(null); setDiscDialogOpen(true); }}>
+              New Disc
+            </Button>
+          ) : (
+            <Button startIcon={<AddIcon />} onClick={() => { setEditingTape(null); setTapeDialogOpen(true); }}>
+              New Tape
+            </Button>
+          )}
+        </Stack>
       </Stack>
 
       {tab === 'discs' && (
@@ -61,7 +71,9 @@ export default function PhysicalMediaPage() {
           {discsError && <Typography color="error">{discsError}</Typography>}
           {!discsLoading && discs.length === 0 && (
             <Typography color="text.secondary">
-              No discs catalogued yet. Click &ldquo;New Disc&rdquo; above, or link one while starting a rip.
+              {needsRippingOnly
+                ? 'Every catalogued disc has at least one linked file — nothing needs ripping.'
+                : 'No discs catalogued yet. Click “New Disc” above, or link one while starting a rip.'}
             </Typography>
           )}
           {discs.length > 0 && (
@@ -91,9 +103,14 @@ export default function PhysicalMediaPage() {
                       </TableCell>
                       <TableCell>{disc.regionCode ?? '—'}</TableCell>
                       <TableCell>
-                        {disc.containsSpecialFeatures && (
-                          <Chip label="has extras" size="small" color="info" variant="outlined" />
-                        )}
+                        <Stack direction="row" spacing={0.5}>
+                          {!disc.linkedFileCount && (
+                            <Chip label="Unripped" size="small" color="warning" variant="outlined" />
+                          )}
+                          {disc.containsSpecialFeatures && (
+                            <Chip label="has extras" size="small" color="info" variant="outlined" />
+                          )}
+                        </Stack>
                       </TableCell>
                       <TableCell align="right">
                         <Tooltip title="Edit">
@@ -122,7 +139,9 @@ export default function PhysicalMediaPage() {
           {tapesError && <Typography color="error">{tapesError}</Typography>}
           {!tapesLoading && tapes.length === 0 && (
             <Typography color="text.secondary">
-              No tapes catalogued yet. Click &ldquo;New Tape&rdquo; above.
+              {needsRippingOnly
+                ? 'Every catalogued tape has at least one linked file — nothing needs ripping.'
+                : 'No tapes catalogued yet. Click “New Tape” above.'}
             </Typography>
           )}
           {tapes.length > 0 && (
@@ -135,6 +154,7 @@ export default function PhysicalMediaPage() {
                     <TableCell>Label</TableCell>
                     <TableCell>Brand</TableCell>
                     <TableCell>Condition</TableCell>
+                    <TableCell />
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
@@ -155,6 +175,11 @@ export default function PhysicalMediaPage() {
                         {tape.condition
                           ? <Chip label={tape.condition} size="small" variant="outlined" />
                           : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {!tape.linkedFileCount && (
+                          <Chip label="Unripped" size="small" color="warning" variant="outlined" />
+                        )}
                       </TableCell>
                       <TableCell align="right">
                         <Tooltip title="Edit">
