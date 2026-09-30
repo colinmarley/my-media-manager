@@ -51,6 +51,7 @@ from api.metadata_search import router as metadata_search_router
 from api.cover_scan import router as cover_scan_router
 from api.ripper_proxy import router as ripper_proxy_router
 from api.wishlist import router as wishlist_router
+from api.storage_locations import router as storage_locations_router
 from db.database import engine, Base, AsyncSessionLocal
 from db.models import AppConfig
 from services.filesystem_manager import FileSystemManager
@@ -407,6 +408,7 @@ app.include_router(metadata_search_router)
 app.include_router(cover_scan_router)
 app.include_router(ripper_proxy_router)
 app.include_router(wishlist_router)
+app.include_router(storage_locations_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
 
 @app.get("/")
