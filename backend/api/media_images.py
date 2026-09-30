@@ -15,6 +15,7 @@ this feature can't disturb that working flow.
   POST   /api/media-images/{media_type}/{media_id}                 upload (auth)
   GET    /api/media-images/{media_type}/{media_id}/{filename}/file  serve
   DELETE /api/media-images/{media_type}/{media_id}/{filename}       delete (auth)
+  PUT    /api/media-images/{media_type}/{media_id}/order            reorder / set cover (auth)
 
 media_type is one of: movie, series, disc, tape
 """
@@ -49,6 +50,12 @@ _MEDIA_MODELS: dict = {
 ALLOWED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".tiff", ".bmp"}
 
 _FILENAME_RE = re.compile(r"^[A-Za-z0-9_\-. ]+$")
+
+
+class ImageOrderRequest(BaseModel):
+    # imageFiles[].fileName values in the desired order. May be a prefix of
+    # the full list — e.g. just [url] to make one photo the cover.
+    fileNames: list[str]
 
 
 class MediaImageInfo(BaseModel):
@@ -189,3 +196,38 @@ async def delete_media_image(media_type: str, media_id: str, filename: str, db: 
     os.remove(fpath)
     logger.info("Media image deleted", media_type=media_type, media_id=media_id, filename=filename)
     return {"deleted": filename}
+
+
+def reorder_image_files(image_files: list, ordered_names: list[str]) -> list:
+    """Put the named entries first, in the given order; everything else keeps
+    its relative order after them. Unknown names are ignored, so a stale
+    client can't drop or invent entries — this only ever permutes."""
+    by_name = {img.get("fileName"): img for img in image_files if isinstance(img, dict)}
+    seen: set[str] = set()
+    front = []
+    for name in ordered_names:
+        if name in by_name and name not in seen:
+            front.append(by_name[name])
+            seen.add(name)
+    rest = [img for img in image_files if not (isinstance(img, dict) and img.get("fileName") in seen)]
+    return front + rest
+
+
+@router.put("/{media_type}/{media_id}/order", dependencies=[Depends(require_any_auth)])
+async def reorder_media_images(
+    media_type: str, media_id: str, body: ImageOrderRequest, db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Reorder a row's imageFiles. The first entry is the item's cover — the
+    thumbnail every list/detail screen shows."""
+    _require_media_type(media_type)
+    row = await _get_row(media_type, media_id, db)
+
+    raw: dict = dict(row.raw_data or {})
+    image_files = reorder_image_files(list(raw.get("imageFiles") or []), body.fileNames)
+    raw["imageFiles"] = image_files
+    row.raw_data = raw
+    if hasattr(row, "image_files"):
+        row.image_files = image_files
+    flag_modified(row, "raw_data")
+    await db.commit()
+    return {"imageFiles": image_files}

@@ -270,3 +270,60 @@ class TestDeleteMediaImage:
             assert resp.status_code == 404
         finally:
             app.dependency_overrides.clear()
+
+
+# ===========================================================================
+# PUT /api/media-images/{media_type}/{media_id}/order
+# ===========================================================================
+
+
+class TestReorderImageFiles:
+    def test_named_entries_move_to_front_rest_keep_order(self):
+        from api.media_images import reorder_image_files
+
+        files = [{"fileName": "a"}, {"fileName": "b"}, {"fileName": "c"}, {"fileName": "d"}]
+        assert [f["fileName"] for f in reorder_image_files(files, ["c"])] == ["c", "a", "b", "d"]
+        assert [f["fileName"] for f in reorder_image_files(files, ["d", "b"])] == ["d", "b", "a", "c"]
+
+    def test_unknown_and_duplicate_names_are_ignored(self):
+        from api.media_images import reorder_image_files
+
+        files = [{"fileName": "a"}, {"fileName": "b"}]
+        assert [f["fileName"] for f in reorder_image_files(files, ["zzz", "b", "b"])] == ["b", "a"]
+
+
+class TestReorderMediaImages:
+    @pytest.mark.asyncio
+    async def test_reorder_without_auth_returns_401(self, app, media_archive):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.put("/api/media-images/disc/disc1/order", json={"fileNames": []})
+        assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_set_cover_moves_image_first_and_commits(self, app, media_archive):
+        from db.database import get_db
+        from api.mobile_auth import require_any_auth
+
+        poster = {"fileName": "https://img.omdbapi.com/poster.jpg"}
+        mine = {"fileName": "/api/media-images/disc/disc1/front.jpg/file"}
+        row = _make_row(image_files=[poster, mine])
+        db = _make_db_session(rows=row)
+
+        async def override_db():
+            yield db
+
+        async def override_auth():
+            return MagicMock()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[require_any_auth] = override_auth
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.put("/api/media-images/disc/disc1/order", json={"fileNames": [mine["fileName"]]})
+            assert resp.status_code == 200
+            assert resp.json() == {"imageFiles": [mine, poster]}
+            assert row.raw_data["imageFiles"] == [mine, poster]
+            assert row.raw_data["title"] == "Test Disc"
+            db.commit.assert_awaited_once()
+        finally:
+            app.dependency_overrides.clear()
