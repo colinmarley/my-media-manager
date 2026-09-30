@@ -49,6 +49,7 @@ from api.mobile_auth import router as mobile_auth_router
 from api.media_images import router as media_images_router
 from api.metadata_search import router as metadata_search_router
 from api.cover_scan import router as cover_scan_router
+from api.ripper_proxy import router as ripper_proxy_router
 from db.database import engine, Base, AsyncSessionLocal
 from db.models import AppConfig
 from services.filesystem_manager import FileSystemManager
@@ -403,6 +404,7 @@ app.include_router(mobile_auth_router)
 app.include_router(media_images_router)
 app.include_router(metadata_search_router)
 app.include_router(cover_scan_router)
+app.include_router(ripper_proxy_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
 
 @app.get("/")

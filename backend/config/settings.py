@@ -166,6 +166,10 @@ class LibrarySettings(BaseSettings):
     ollama_host: str = "http://172.17.0.1:11434"  # MEDIA_LIBRARY_OLLAMA_HOST
     ollama_vision_model: str = "qwen2.5vl:7b"  # MEDIA_LIBRARY_OLLAMA_VISION_MODEL
 
+    # disc-ripper-service, for the mobile app's read-only rip status view.
+    # Default reaches the host's port 8083 from inside the backend container.
+    disc_ripper_url: str = "http://172.17.0.1:8083"  # MEDIA_LIBRARY_DISC_RIPPER_URL
+
 
     # Tape ingest
     tape_ingest_ingress_folder: str = Field(
