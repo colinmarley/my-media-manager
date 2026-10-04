@@ -63,6 +63,24 @@ class LibrarySettings(BaseSettings):
     # Auto-start the watcher on service startup.
     ingress_auto_start_watcher: bool = False
 
+    # AI decision model for main-feature / alternate-version / special-feature
+    # classification of ingest files (TypeSafe Jev, or any server speaking the
+    # same /systemone API such as a self-hosted OpenJev).
+    #   off    - never called
+    #   shadow - called and stored on the queue item for comparison only
+    #   assist - confident answers are used like a classification override
+    #            (a manual override from the review UI still wins)
+    ingest_ai_mode: str = "off"  # MEDIA_LIBRARY_INGEST_AI_MODE
+    ingest_ai_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("MEDIA_LIBRARY_INGEST_AI_API_KEY", "TYPESAFE_API_KEY"),
+    )
+    ingest_ai_base_url: str = "https://api.typesafe.ai/v1"  # MEDIA_LIBRARY_INGEST_AI_BASE_URL
+    ingest_ai_model: str = "jev-latest"  # MEDIA_LIBRARY_INGEST_AI_MODEL
+    # Minimum confidence (0-1) for assist mode to act on an answer.
+    ingest_ai_min_confidence: float = 0.7  # MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE
+    ingest_ai_timeout_seconds: float = 15.0  # MEDIA_LIBRARY_INGEST_AI_TIMEOUT_SECONDS
+
     # Security settings
     enable_file_integrity_checks: bool = False  # Disabled for performance during scanning
     use_trash_for_deletes: bool = True

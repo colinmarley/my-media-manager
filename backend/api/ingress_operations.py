@@ -467,6 +467,51 @@ async def update_ingress_item_classification(payload: QueueClassificationUpdateR
     }
 
 
+class QueueAIClassifyRequest(BaseModel):
+    itemId: str
+
+
+@router.post("/queue/ai-classify")
+async def ai_classify_ingress_item(payload: QueueAIClassifyRequest, req: Request):
+    """Run the AI decision model on an item's folder now, regardless of mode."""
+    queue_service = req.app.state.ingress_queue_service
+    if queue_service.ai_classifier is None:
+        raise HTTPException(status_code=503, detail={
+            "type": "ConfigurationError",
+            "message": "AI classification is not configured (set MEDIA_LIBRARY_INGEST_AI_API_KEY).",
+            "code": "INGEST_AI_NOT_CONFIGURED",
+        })
+    if payload.itemId not in queue_service.items_by_id:
+        raise HTTPException(status_code=404, detail={
+            "type": "NotFoundError",
+            "message": f"Queue item not found: {payload.itemId}",
+            "code": "QUEUE_ITEM_NOT_FOUND",
+        })
+
+    results = await queue_service.refresh_ai_classification(payload.itemId)
+    return {
+        "success": bool(results),
+        "data": {
+            "mode": queue_service.ai_classifier.mode,
+            "classifications": results,
+        },
+        "timestamp": str(int(time.time())),
+    }
+
+
+@router.get("/queue/ai-report")
+async def get_ingress_ai_report(req: Request):
+    """How often the AI had already proposed the label a reviewer corrected to."""
+    queue_service = req.app.state.ingress_queue_service
+    report = await queue_service.get_ai_agreement_report()
+    report["mode"] = queue_service.ai_classifier.mode if queue_service.ai_classifier else "off"
+    return {
+        "success": True,
+        "data": report,
+        "timestamp": str(int(time.time())),
+    }
+
+
 @router.post("/queue/manual-assign")
 async def manual_assign_ingress_item(
     payload: QueueManualAssignRequest,
