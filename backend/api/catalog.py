@@ -8,11 +8,13 @@ as the payload, with the PostgreSQL primary-key `id` guaranteed to be set.
 """
 
 import os
+import re
 import shutil
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, or_, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from typing import Any
 
 from db.database import get_db
@@ -32,6 +34,95 @@ def _row_to_dict(row, id_field: str = "id") -> dict:
     data: dict = dict(row.raw_data or {})
     data["id"] = getattr(row, id_field)
     return data
+
+
+# Same rule as storage_locations.RenameRequest.newId — an id saved with any
+# other character could never be renamed later.
+_STORAGE_ID_RE = re.compile(r"^[A-Za-z0-9_\-. ]{1,40}$")
+
+# Flags a client sends in the body that aren't part of the stored record.
+_CONTROL_KEYS = ("allowDuplicateBarcode",)
+
+
+def _int_or_none(value: Any, label: str) -> int | None:
+    """Coerce a whole-number field ('3', 3, 3.0) or reject it with a 422 —
+    passing a string straight into an Integer column was a 500."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        raise HTTPException(status_code=422, detail=f"{label} must be a whole number.")
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"\s*-?\d+\s*", value):
+        return int(value)
+    raise HTTPException(status_code=422, detail=f"{label} must be a whole number (got {value!r}).")
+
+
+def _normalize_int(body: dict[str, Any], camel: str, snake: str, label: str) -> None:
+    for key in (camel, snake):
+        if key in body:
+            body[key] = _int_or_none(body[key], label)
+
+
+async def _normalize_physical_body(body: dict[str, Any], db: AsyncSession) -> dict[str, Any]:
+    """Validate/clean a disc or tape body before it touches the columns.
+
+    Turns what used to be database 500s (a non-numeric disc number, a setId
+    pointing at a deleted set) into 422s with a message, and trims the
+    storage id so "MED0001 " doesn't become its own box."""
+    body = {k: v for k, v in body.items() if k not in _CONTROL_KEYS}
+    _normalize_int(body, "discNumber", "disc_number", "Disc number")
+
+    for key in ("storageId", "storage_id"):
+        if key in body:
+            value = body[key].strip() if isinstance(body[key], str) else body[key]
+            if value in (None, ""):
+                body[key] = None
+            elif not isinstance(value, str) or not _STORAGE_ID_RE.match(value):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Box/binder ID may only use letters, numbers, spaces, '-', '_' and '.' (max 40).",
+                )
+            else:
+                body[key] = value
+
+    set_id = body.get("setId") or body.get("set_id")
+    if set_id:
+        exists = await db.execute(select(DiscSet.id).where(DiscSet.id == set_id))
+        if exists.scalar_one_or_none() is None:
+            raise HTTPException(status_code=422, detail="That boxed set no longer exists. Pick another set or remove it.")
+    return body
+
+
+async def _reject_duplicate_barcode(model, body: dict[str, Any], db: AsyncSession) -> None:
+    """409 when another disc/tape already has this barcode. Opt-in per
+    request (?check_duplicates=true): owning two copies is legitimate, and
+    service callers like disc-ripper-service keep the old behavior."""
+    barcode = (body.get("barcode") or "").strip()
+    if not barcode:
+        return
+    existing = (await db.execute(
+        select(model.id, model.title).where(model.barcode == barcode).limit(1)
+    )).first()
+    if existing:
+        kind = "disc" if model is Disc else "tape"
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "duplicate_barcode",
+                "message": f"You already have a {kind} with this barcode: {existing.title}.",
+                "existingId": existing.id,
+                "existingTitle": existing.title,
+            },
+        )
+
+
+def _merged(row, body: dict[str, Any]) -> dict[str, Any]:
+    """body laid over the row's current raw_data — for ?merge=true edits that
+    send only the fields that changed (keys sent as null still clear)."""
+    return {**dict(row.raw_data or {}), **body}
 
 
 def _apply_disc_fields(row: Disc, body: dict[str, Any]) -> None:
@@ -76,6 +167,26 @@ def _apply_tape_fields(row: Tape, body: dict[str, Any]) -> None:
     row.storage_type = body.get("storageType") or body.get("storage_type")
     row.storage_id = body.get("storageId") or body.get("storage_id")
     row.raw_data = body
+
+
+# Movie/series fields other flows own (photo uploads, the assignment
+# orchestrator, Jellyfin organizing). A PUT that simply didn't mention them
+# used to reset them to empty — now they carry over unless sent explicitly.
+_KEPT_BLOBS = {
+    "imageFiles": "image_files",
+    "assignmentSummary": "assignment_summary",
+    "jellyfinInfo": "jellyfin_info",
+    "seriesSummary": "series_summary",
+}
+
+
+def _with_kept_blobs(row, body: dict[str, Any]) -> dict[str, Any]:
+    raw = dict(row.raw_data or {})
+    kept = dict(body)
+    for camel, snake in _KEPT_BLOBS.items():
+        if camel not in body and snake not in body and raw.get(camel) is not None:
+            kept[camel] = raw[camel]
+    return kept
 
 
 def _media_file_to_dict(row: MediaFile) -> dict:
@@ -131,13 +242,32 @@ async def get_movie(movie_id: str, db: AsyncSession = Depends(get_db)) -> dict:
 
 
 @router.put("/movies/{movie_id}", dependencies=[Depends(require_any_auth)])
-async def upsert_movie(movie_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+async def upsert_movie(
+    movie_id: str,
+    body: dict[str, Any],
+    create_only: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Create or replace. With ?create_only=true (the mobile "add" flow) an
+    existing id is a 409 instead of a silent overwrite of the stored record."""
     result = await db.execute(select(Movie).where(Movie.id == movie_id))
     row = result.scalar_one_or_none()
 
     if row is None:
         row = Movie(id=movie_id)
         db.add(row)
+    else:
+        if create_only:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "already_exists",
+                    "message": f"{row.title} is already in your catalog.",
+                    "existingId": row.id,
+                    "existingTitle": row.title,
+                },
+            )
+        body = _with_kept_blobs(row, body)
 
     def _na(val: Any) -> Any:
         """Return None for OMDB sentinel 'N/A' strings, else return the value."""
@@ -165,7 +295,7 @@ async def upsert_movie(movie_id: str, body: dict[str, Any], db: AsyncSession = D
     row.tmdb_id         = str(tmdb["id"]) if tmdb.get("id") else (body.get("externalIds") or {}).get("tmdbId") or row.tmdb_id
     row.collection_id   = body.get("collectionId") or body.get("collection_id")
     row.collection_name = body.get("collectionName") or body.get("collection_name")
-    row.collection_order = body.get("collectionOrder") or body.get("collection_order")
+    row.collection_order = _int_or_none(body.get("collectionOrder") or body.get("collection_order"), "Collection order")
     row.omdb_data       = omdb if omdb else row.omdb_data
     row.tmdb_data       = tmdb if tmdb else row.tmdb_data
     row.image_files     = body.get("imageFiles") or body.get("image_files") or []
@@ -276,13 +406,32 @@ async def get_series(series_id: str, db: AsyncSession = Depends(get_db)) -> dict
 
 
 @router.put("/series/{series_id}", dependencies=[Depends(require_any_auth)])
-async def upsert_series(series_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+async def upsert_series(
+    series_id: str,
+    body: dict[str, Any],
+    create_only: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Create or replace. With ?create_only=true (the mobile "add" flow) an
+    existing id is a 409 instead of a silent overwrite of the stored record."""
     result = await db.execute(select(Series).where(Series.id == series_id))
     row = result.scalar_one_or_none()
 
     if row is None:
         row = Series(id=series_id)
         db.add(row)
+    else:
+        if create_only:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "already_exists",
+                    "message": f"{row.title} is already in your catalog.",
+                    "existingId": row.id,
+                    "existingTitle": row.title,
+                },
+            )
+        body = _with_kept_blobs(row, body)
 
     def _na(val: Any) -> Any:
         return None if val in (None, "N/A", "") else val
@@ -434,7 +583,11 @@ async def search_discs(
 
 
 @router.post("/discs")
-async def create_disc(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+async def create_disc(
+    body: dict[str, Any],
+    check_duplicates: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """
     Create a new disc record with a server-generated id. Unlike PUT /discs/{id}
     (which requires the caller to supply an id, awkward for service-to-service
@@ -448,6 +601,9 @@ async def create_disc(body: dict[str, Any], db: AsyncSession = Depends(get_db)) 
     unauthenticated) rather than the require_any_auth pattern used for
     browser/mobile-driven mutations (PUT/DELETE).
     """
+    if check_duplicates and not body.get("allowDuplicateBarcode"):
+        await _reject_duplicate_barcode(Disc, body, db)
+    body = await _normalize_physical_body(body, db)
     row = Disc(id=str(uuid.uuid4()))
     _apply_disc_fields(row, body)
     db.add(row)
@@ -473,13 +629,24 @@ async def list_disc_files(disc_id: str, db: AsyncSession = Depends(get_db)) -> l
 
 
 @router.put("/discs/{disc_id}", dependencies=[Depends(require_any_auth)])
-async def upsert_disc(disc_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+async def upsert_disc(
+    disc_id: str,
+    body: dict[str, Any],
+    merge: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Create or replace. ?merge=true lays the body over the stored record
+    instead, so an edit that sends only changed fields can't wipe photos,
+    loans or rip-queue state it never loaded."""
+    body = await _normalize_physical_body(body, db)
     result = await db.execute(select(Disc).where(Disc.id == disc_id))
     row = result.scalar_one_or_none()
 
     if row is None:
         row = Disc(id=disc_id)
         db.add(row)
+    elif merge:
+        body = _merged(row, body)
 
     _apply_disc_fields(row, body)
 
@@ -596,16 +763,14 @@ async def add_disc_link(disc_id: str, body: dict[str, Any], db: AsyncSession = D
     if disc_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Disc not found")
 
-    existing = await db.execute(
-        select(DiscMediaLink).where(
-            DiscMediaLink.disc_id == disc_id,
-            DiscMediaLink.media_type == media_type,
-            DiscMediaLink.media_id == media_id,
-        )
+    # ON CONFLICT, not check-then-insert: a retried save racing the first
+    # attempt would otherwise hit the primary key and 500.
+    await db.execute(
+        pg_insert(DiscMediaLink)
+        .values(disc_id=disc_id, media_type=media_type, media_id=media_id)
+        .on_conflict_do_nothing()
     )
-    if existing.scalar_one_or_none() is None:
-        db.add(DiscMediaLink(disc_id=disc_id, media_type=media_type, media_id=media_id))
-        await db.commit()
+    await db.commit()
     return {"discId": disc_id, "mediaType": media_type, "mediaId": media_id}
 
 
@@ -669,12 +834,19 @@ async def search_tapes(
 
 
 @router.post("/tapes")
-async def create_tape(body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+async def create_tape(
+    body: dict[str, Any],
+    check_duplicates: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
     """
     Create a new tape record with a server-generated id. Deliberately NOT
     behind require_any_auth — matches the discs endpoints' trust model
     (see create_disc's docstring).
     """
+    if check_duplicates and not body.get("allowDuplicateBarcode"):
+        await _reject_duplicate_barcode(Tape, body, db)
+    body = await _normalize_physical_body(body, db)
     row = Tape(id=str(uuid.uuid4()))
     _apply_tape_fields(row, body)
     db.add(row)
@@ -700,13 +872,22 @@ async def list_tape_files(tape_id: str, db: AsyncSession = Depends(get_db)) -> l
 
 
 @router.put("/tapes/{tape_id}", dependencies=[Depends(require_any_auth)])
-async def upsert_tape(tape_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+async def upsert_tape(
+    tape_id: str,
+    body: dict[str, Any],
+    merge: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Create or replace; ?merge=true as for upsert_disc."""
+    body = await _normalize_physical_body(body, db)
     result = await db.execute(select(Tape).where(Tape.id == tape_id))
     row = result.scalar_one_or_none()
 
     if row is None:
         row = Tape(id=tape_id)
         db.add(row)
+    elif merge:
+        body = _merged(row, body)
 
     _apply_tape_fields(row, body)
 
@@ -762,16 +943,12 @@ async def add_tape_link(tape_id: str, body: dict[str, Any], db: AsyncSession = D
     if tape_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="Tape not found")
 
-    existing = await db.execute(
-        select(TapeMediaLink).where(
-            TapeMediaLink.tape_id == tape_id,
-            TapeMediaLink.media_type == media_type,
-            TapeMediaLink.media_id == media_id,
-        )
+    await db.execute(
+        pg_insert(TapeMediaLink)
+        .values(tape_id=tape_id, media_type=media_type, media_id=media_id)
+        .on_conflict_do_nothing()
     )
-    if existing.scalar_one_or_none() is None:
-        db.add(TapeMediaLink(tape_id=tape_id, media_type=media_type, media_id=media_id))
-        await db.commit()
+    await db.commit()
     return {"tapeId": tape_id, "mediaType": media_type, "mediaId": media_id}
 
 

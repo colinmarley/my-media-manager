@@ -148,7 +148,12 @@ async def upload_media_image(
         )
     d = _media_image_dir(media_type, media_id)
 
-    safe_name = file.filename or f"image_{uuid4().hex[:8]}{ext}"
+    # The client's filename is only a hint: keep characters _FILENAME_RE
+    # allows (anything else — "photo (1).jpg", "../x" — made a file the
+    # serve/delete endpoints then refused), else fall back to a random name.
+    stem = os.path.splitext(os.path.basename(file.filename or ""))[0]
+    stem = re.sub(r"[^A-Za-z0-9_\-. ]+", "_", stem).strip(" .")[:80]
+    safe_name = f"{stem or 'image_' + uuid4().hex[:8]}{ext}"
     dest = os.path.join(d, safe_name)
     if os.path.exists(dest):
         stem, suffix = os.path.splitext(safe_name)

@@ -52,6 +52,7 @@ from api.cover_scan import router as cover_scan_router
 from api.ripper_proxy import router as ripper_proxy_router
 from api.wishlist import router as wishlist_router
 from api.storage_locations import router as storage_locations_router
+from api.errors import install_error_handling
 from db.database import engine, Base, AsyncSessionLocal
 from db.models import AppConfig
 from services.filesystem_manager import FileSystemManager
@@ -366,6 +367,11 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# JSON error bodies (with correlation_id) for DB errors and anything
+# unhandled. Added first so its catch-all middleware sits innermost —
+# inside CORS (browser can read the 500) and CorrelationMiddleware.
+install_error_handling(app)
 
 # Configure CORS middleware to allow frontend communication
 app.add_middleware(

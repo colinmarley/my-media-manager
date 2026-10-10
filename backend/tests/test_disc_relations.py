@@ -251,13 +251,15 @@ class TestDiscLinks:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_add_disc_link(self, app):
+    async def test_add_disc_link_is_an_idempotent_insert(self, app):
+        """One INSERT ... ON CONFLICT DO NOTHING — a retried save can't 500
+        on the composite primary key, whether or not the link exists."""
         from db.database import get_db
 
         db = _make_db()
         db.execute.side_effect = [
             MagicMock(scalar_one_or_none=lambda: "disc1"),  # disc existence check
-            MagicMock(scalar_one_or_none=lambda: None),  # no existing link
+            MagicMock(),  # the insert
         ]
 
         async def override_db():
@@ -270,31 +272,13 @@ class TestDiscLinks:
                 resp = await ac.post("/api/catalog/discs/disc1/links", json={"mediaType": "movie", "mediaId": "tt1"})
             assert resp.status_code == 200
             assert resp.json() == {"discId": "disc1", "mediaType": "movie", "mediaId": "tt1"}
-            db.add.assert_called_once()
-            db.commit.assert_awaited_once()
-        finally:
-            app.dependency_overrides.clear()
-
-    @pytest.mark.asyncio
-    async def test_add_disc_link_is_idempotent(self, app):
-        from db.database import get_db
-
-        db = _make_db()
-        db.execute.side_effect = [
-            MagicMock(scalar_one_or_none=lambda: "disc1"),  # disc exists
-            MagicMock(scalar_one_or_none=lambda: _make_link()),  # link already exists
-        ]
-
-        async def override_db():
-            yield db
-
-        _override_auth(app)
-        app.dependency_overrides[get_db] = override_db
-        try:
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                resp = await ac.post("/api/catalog/discs/disc1/links", json={"mediaType": "movie", "mediaId": "tt1"})
-            assert resp.status_code == 200
+            from sqlalchemy.dialects import postgresql
+            insert_stmt = db.execute.await_args_list[1].args[0]
+            sql = str(insert_stmt.compile(dialect=postgresql.dialect()))
+            assert "INSERT INTO disc_media_links" in sql
+            assert "ON CONFLICT DO NOTHING" in sql
             db.add.assert_not_called()
+            db.commit.assert_awaited_once()
         finally:
             app.dependency_overrides.clear()
 

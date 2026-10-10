@@ -167,3 +167,12 @@ class TestStorageLocationsIntegration:
         async with sessions() as s:
             d1 = (await s.execute(select(Disc).where(Disc.id == "d1"))).scalar_one()
         assert d1.storage_id == "MED0001"
+
+    @pytest.mark.asyncio
+    async def test_rename_onto_metadata_only_id_is_409_not_500(self, db_app):
+        app, _ = db_app
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            await ac.put("/api/storage-locations/Box/EMPTY01", json={"name": "Spare"})
+            resp = await ac.post("/api/storage-locations/Box/MED0009/rename", json={"newId": "EMPTY01"})
+        assert resp.status_code == 409
+        assert "already exists" in resp.json()["detail"]
