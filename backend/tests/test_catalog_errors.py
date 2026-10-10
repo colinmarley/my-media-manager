@@ -49,7 +49,7 @@ class TestErrorResponses:
         from db.database import get_db
 
         db = MagicMock()
-        db.execute = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("duplicate key")))
+        db.commit = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("duplicate key")))
 
         async def override_db():
             yield db

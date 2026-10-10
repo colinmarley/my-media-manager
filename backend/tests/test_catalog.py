@@ -1214,7 +1214,9 @@ class TestTapeSetsAndLinks:
             assert resp.status_code == 200
             data = resp.json()
             assert data == {"tapeId": "tape1", "mediaType": "movie", "mediaId": "movie1"}
-            db.add.assert_called_once()
+            # Idempotent INSERT ... ON CONFLICT DO NOTHING, not check-then-add.
+            db.add.assert_not_called()
+            assert db.execute.await_count == 2
             db.commit.assert_awaited_once()
         finally:
             app.dependency_overrides.clear()
