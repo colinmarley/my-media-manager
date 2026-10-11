@@ -130,6 +130,16 @@ async def rename_location(
         if clash.scalar_one():
             raise HTTPException(status_code=409, detail=f"{storage_type} {new_id} already has items in it.")
 
+    target_meta = await db.execute(
+        select(GenericDataStore.id).where(
+            GenericDataStore.collection == COLLECTION, GenericDataStore.id == _doc_id(storage_type, new_id)
+        )
+    )
+    if target_meta.scalar_one_or_none() is not None:
+        # Empty, but already named/described — inserting over it was a
+        # primary-key 500.
+        raise HTTPException(status_code=409, detail=f"{storage_type} {new_id} already exists. Delete it first or pick another ID.")
+
     moved = 0
     for model in (Disc, Tape):
         rows = await db.execute(select(model).where(model.storage_type == storage_type, model.storage_id == storage_id))

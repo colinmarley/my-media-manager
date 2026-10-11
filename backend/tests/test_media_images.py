@@ -152,6 +152,34 @@ class TestUploadMediaImage:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("sent, saved", [("photo (1).jpg", "photo _1_.jpg"), ("../../evil.jpg", "evil.jpg")])
+    async def test_upload_sanitizes_filename_so_it_can_be_served_later(self, app, media_archive, sent, saved):
+        from db.database import get_db
+        from api.mobile_auth import require_any_auth
+
+        row = _make_row()
+        db = _make_db_session(rows=row)
+
+        async def override_db():
+            yield db
+
+        async def override_auth():
+            return MagicMock()
+
+        app.dependency_overrides[get_db] = override_db
+        app.dependency_overrides[require_any_auth] = override_auth
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post("/api/media-images/disc/disc1", files={"file": (sent, b"fake-bytes", "image/jpeg")})
+                served = await ac.get(resp.json()["url"])
+            assert resp.status_code == 200
+            assert resp.json()["filename"] == saved
+            assert served.status_code == 200
+            assert os.path.isfile(os.path.join(str(media_archive), "disc", "disc1", saved))
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
     async def test_upload_avoids_filename_collision(self, app, media_archive):
         from db.database import get_db
         from api.mobile_auth import require_any_auth

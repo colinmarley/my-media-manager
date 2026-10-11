@@ -15,6 +15,7 @@ Mirrors the OMDb request shapes already used by the web frontend's
 OmdbService.ts (`s=` search, `i=` lookup) so the two stay easy to compare.
 """
 
+import asyncio
 import re
 
 import requests
@@ -26,6 +27,22 @@ from config.settings import settings
 router = APIRouter(prefix="/api/metadata-search", tags=["Metadata Search"])
 
 _REQUEST_TIMEOUT = 10
+
+
+async def _get(url: str, params: dict) -> requests.Response:
+    """requests is blocking — run it on a worker thread so a slow upstream
+    (up to the 10s timeout) doesn't stall every other request, saves included."""
+    return await asyncio.to_thread(requests.get, url, params=params, timeout=_REQUEST_TIMEOUT)
+
+
+def _json(response: requests.Response, service: str) -> dict:
+    """Upstream sometimes answers with an HTML error page — a 502 with a
+    message, not an unhandled JSONDecodeError (500)."""
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=f"{service} returned an unreadable response.") from exc
+    return payload if isinstance(payload, dict) else {}
 
 
 def _require_omdb_key() -> str:
@@ -46,12 +63,12 @@ async def search_omdb(
         params["type"] = type
 
     try:
-        response = requests.get("https://www.omdbapi.com/", params=params, timeout=_REQUEST_TIMEOUT)
+        response = await _get("https://www.omdbapi.com/", params)
         response.raise_for_status()
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"OMDb request failed: {exc}") from exc
 
-    payload = response.json()
+    payload = _json(response, "OMDb")
     if payload.get("Response") != "True":
         return {"results": []}
     return {"results": payload.get("Search") or []}
@@ -64,12 +81,12 @@ async def get_omdb_details(imdb_id: str = Query(..., alias="imdbId", pattern=r"^
     params = {"apikey": api_key, "i": imdb_id, "plot": "full"}
 
     try:
-        response = requests.get("https://www.omdbapi.com/", params=params, timeout=_REQUEST_TIMEOUT)
+        response = await _get("https://www.omdbapi.com/", params)
         response.raise_for_status()
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"OMDb request failed: {exc}") from exc
 
-    payload = response.json()
+    payload = _json(response, "OMDb")
     if payload.get("Response") != "True":
         raise HTTPException(status_code=404, detail=payload.get("Error") or "Title not found on OMDb.")
     return payload
@@ -192,14 +209,14 @@ async def lookup_upc(code: str = Query(..., pattern=r"^\d{8,14}$")) -> dict:
         return _upc_cache[code]
 
     try:
-        response = requests.get(_UPC_LOOKUP_URL, params={"upc": code}, timeout=_REQUEST_TIMEOUT)
+        response = await _get(_UPC_LOOKUP_URL, {"upc": code})
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"UPC lookup failed: {exc}") from exc
 
     if response.status_code == 429:
         # Don't cache — the same code may well resolve tomorrow.
         raise HTTPException(status_code=503, detail="UPC lookup daily limit reached. Try again tomorrow.")
-    if response.status_code == 400 and (response.json() or {}).get("code") == "INVALID_UPC":
+    if response.status_code == 400 and _json(response, "UPC lookup").get("code") == "INVALID_UPC":
         # Bad check digit / not a real UPC — usually a mis-scan.
         result = {"found": False, "code": code, "reason": "invalid"}
         _upc_cache[code] = result
@@ -213,7 +230,7 @@ async def lookup_upc(code: str = Query(..., pattern=r"^\d{8,14}$")) -> dict:
     except requests.RequestException as exc:
         raise HTTPException(status_code=502, detail=f"UPC lookup failed: {exc}") from exc
 
-    items = response.json().get("items") or []
+    items = _json(response, "UPC lookup").get("items") or []
     result = parse_upc_item(code, items[0]) if items else {"found": False, "code": code}
     _upc_cache[code] = result
     return result
