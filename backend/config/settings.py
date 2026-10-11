@@ -160,11 +160,12 @@ class LibrarySettings(BaseSettings):
     omdb_api_key: str = ""  # Set via environment variable MEDIA_LIBRARY_OMDB_API_KEY
     tmdb_api_key: str = ""  # Set via environment variable MEDIA_LIBRARY_TMDB_API_KEY
 
-    # Local vision model for the mobile "Scan cover" add-flow step. Default is
-    # the docker0 bridge gateway, i.e. the host's Ollama as seen from inside
-    # the backend container on ai-workstation.
-    ollama_host: str = "http://172.17.0.1:11434"  # MEDIA_LIBRARY_OLLAMA_HOST
-    ollama_vision_model: str = "qwen2.5vl:7b"  # MEDIA_LIBRARY_OLLAMA_VISION_MODEL
+    # Local vision model for the mobile "Scan cover" add-flow step, on LocalAI's
+    # OpenAI-compatible API. Default is the docker0 bridge gateway, i.e. the
+    # host's LocalAI as seen from inside the backend container on ai-workstation.
+    localai_url: str = "http://172.17.0.1:8080"  # MEDIA_LIBRARY_LOCALAI_URL
+    localai_api_key: str = ""  # MEDIA_LIBRARY_LOCALAI_API_KEY (LocalAI requires it)
+    localai_vision_model: str = "qwen2.5vl-7b"  # MEDIA_LIBRARY_LOCALAI_VISION_MODEL
 
     # disc-ripper-service, for the mobile app's read-only rip status view.
     # Default reaches the host's port 8083 from inside the backend container.

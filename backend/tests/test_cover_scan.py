@@ -1,7 +1,7 @@
 """
 Tests for backend/api/cover_scan.py
 
-Ollama is never called for real: httpx.AsyncClient is replaced with a stub.
+LocalAI is never called for real: httpx.AsyncClient is replaced with a stub.
 """
 
 import io
@@ -41,6 +41,8 @@ class _StubClient:
     """Stands in for httpx.AsyncClient; records the posted payload."""
 
     posted: dict | None = None
+    posted_url: str | None = None
+    posted_headers: dict | None = None
     content = "{}"
     raise_exc: Exception | None = None
 
@@ -53,18 +55,20 @@ class _StubClient:
     async def __aexit__(self, *exc):
         return False
 
-    async def post(self, url, json=None):
+    async def post(self, url, json=None, headers=None):
         if _StubClient.raise_exc:
             raise _StubClient.raise_exc
         _StubClient.posted = json
+        _StubClient.posted_url = url
+        _StubClient.posted_headers = headers
         resp = MagicMock()
         resp.raise_for_status = MagicMock()
-        resp.json.return_value = {"message": {"content": _StubClient.content}}
+        resp.json.return_value = {"choices": [{"message": {"role": "assistant", "content": _StubClient.content}}]}
         return resp
 
 
 @pytest.fixture()
-def stub_ollama(monkeypatch):
+def stub_localai(monkeypatch):
     _StubClient.posted = None
     _StubClient.raise_exc = None
     _StubClient.content = "{}"
@@ -158,9 +162,9 @@ class TestScanCoverEndpoint:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_sends_downscaled_image_and_returns_normalized_fields(self, app, stub_ollama):
+    async def test_sends_downscaled_image_and_returns_normalized_fields(self, app, stub_localai):
         _override_auth(app)
-        stub_ollama.content = json.dumps(
+        stub_localai.content = json.dumps(
             {"isMediaPackaging": True, "visibleText": ["HEAT", "Pacino De Niro"], "title": "Heat", "year": "1995", "format": "DVD", "confidence": "medium"}
         )
         try:
@@ -170,31 +174,48 @@ class TestScanCoverEndpoint:
             assert resp.json()["title"] == "Heat"
             assert resp.json()["format"] == "DVD"
 
-            sent = stub_ollama.posted
-            assert sent["model"] == cover_scan.settings.ollama_vision_model
-            assert sent["format"] == "json"
+            sent = stub_localai.posted
+            assert stub_localai.posted_url.endswith("/v1/chat/completions")
+            assert sent["model"] == cover_scan.settings.localai_vision_model
+            assert sent["response_format"] == {"type": "json_object"}
             import base64
 
-            image = Image.open(io.BytesIO(base64.b64decode(sent["messages"][1]["images"][0])))
+            image_part = sent["messages"][1]["content"][1]
+            assert image_part["type"] == "image_url"
+            prefix = "data:image/jpeg;base64,"
+            assert image_part["image_url"]["url"].startswith(prefix)
+            image = Image.open(io.BytesIO(base64.b64decode(image_part["image_url"]["url"][len(prefix):])))
             assert max(image.size) == cover_scan._MAX_DIMENSION
         finally:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_non_image_upload_is_400(self, app, stub_ollama):
+    async def test_sends_localai_api_key(self, app, stub_localai, monkeypatch):
+        _override_auth(app)
+        monkeypatch.setattr(cover_scan.settings, "localai_api_key", "k123")
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post("/api/metadata-search/cover-scan", files={"file": ("c.jpg", _jpeg_bytes(), "image/jpeg")})
+            assert resp.status_code == 200
+            assert stub_localai.posted_headers == {"Authorization": "Bearer k123"}
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_non_image_upload_is_400(self, app, stub_localai):
         _override_auth(app)
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.post("/api/metadata-search/cover-scan", files={"file": ("c.jpg", b"not an image", "image/jpeg")})
             assert resp.status_code == 400
-            assert stub_ollama.posted is None
+            assert stub_localai.posted is None
         finally:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_unreachable_model_host_is_503(self, app, stub_ollama):
+    async def test_unreachable_model_host_is_503(self, app, stub_localai):
         _override_auth(app)
-        stub_ollama.raise_exc = httpx.ConnectError("refused")
+        stub_localai.raise_exc = httpx.ConnectError("refused")
         try:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.post("/api/metadata-search/cover-scan", files={"file": ("c.jpg", _jpeg_bytes(), "image/jpeg")})
