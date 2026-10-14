@@ -49,7 +49,6 @@ backend/
 │   ├── ingress_operations.py   # Ingress queue management and health
 │   ├── library_operations.py   # Library scan and path management
 │   ├── library_paths.py        # Library path CRUD
-│   ├── media_operations.py     # Media file inspection
 │   ├── metadata_operations.py  # ffprobe metadata extraction
 │   └── posters.py              # Poster cache serving
 ├── config/
