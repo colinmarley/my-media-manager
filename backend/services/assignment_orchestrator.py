@@ -291,7 +291,7 @@ class AssignmentOrchestrator:
         return payload
 
     def _find_existing_media(self, media_type: str, imdb_id: str):
-        """Media resolution via Firestore was removed; Postgres lookup not yet implemented."""
+        """Postgres media lookup not yet implemented."""
         return None
 
     async def _upsert_media_file(

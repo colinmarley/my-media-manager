@@ -53,7 +53,7 @@ class FileOrganizationService:
         Organize files according to assignment and media info.
 
         Args:
-            assignment: Media assignment from Firestore
+            assignment: Media assignment record
             media: Resolved media information
 
         Returns:
@@ -173,7 +173,6 @@ class FileOrganizationService:
                     file_count=result.get("filesMoved"),
                 )
 
-            # Update assignment status in Firestore
 
             return result
 
@@ -558,7 +557,7 @@ class FileOrganizationService:
         target_path: str,
         operation_result: Dict[str, Any],
     ) -> None:
-        """Update assignment status in Firestore."""
+        """Update assignment status."""
         try:
             update_data = {
                 "organizationStatus": "completed" if success else "failed",

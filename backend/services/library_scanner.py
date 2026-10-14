@@ -8,7 +8,7 @@ Key Features:
     - Asynchronous recursive directory scanning
     - Real-time progress tracking and callbacks
     - Composite key duplicate detection (libraryPath:path)
-    - Dual-mode duplicate checking (online via Firestore, offline via provided data)
+    - Duplicate checking against provided data (offline mode)
     - Configurable metadata extraction
     - Error tracking and recovery
     - Concurrent scan management
@@ -149,13 +149,11 @@ class LibraryScanner:
         Duplicate Detection Modes:
             1. Offline Mode (existingFiles/existingDirectories provided):
                - Uses frontend-provided data for duplicate checking
-               - No Firestore queries required
                - Ideal for development/testing environments
-               
+
             2. Online Mode (no existing data provided):
-               - Queries Firestore for existing files/directories
-               - Requires Firebase credentials
-               - Production mode with centralized data
+               - Postgres lookup of existing files/directories not yet implemented;
+                 every item is currently reported as new
         
         Composite Key Strategy:
             - Keys format: "{libraryPath}:{path}"
@@ -167,7 +165,7 @@ class LibraryScanner:
             callback: Optional callback function for real-time progress updates
             extract_metadata: If True, extract detailed FFmpeg metadata (slower)
             check_duplicates: If True, perform duplicate detection and generate report
-            user_id: User identifier for Firestore queries (online mode)
+            user_id: User identifier (online mode)
             existing_files: List of existing file records (offline mode)
             existing_directories: List of existing directory records (offline mode)
             
@@ -247,7 +245,6 @@ class LibraryScanner:
                             scan_results, user_id, library_path, existing_files, existing_directories
                         )
                     else:
-                        # Use Firestore for online duplicate checking
                         duplicate_report = await self._check_duplicates(scan_results, user_id, library_path)
                     
                     progress.duplicate_report = duplicate_report
@@ -260,7 +257,7 @@ class LibraryScanner:
                             duplicate_paths.add(diff_item.get('path', ''))
                         
                         # Also get paths that have exact duplicates (no differences)
-                        existing_files = {}  # Firestore removed; Postgres duplicate detection not yet implemented
+                        existing_files = {}  # Postgres duplicate detection not yet implemented
                         existing_dirs = {}
                         
                         for result in scan_results:
@@ -578,8 +575,7 @@ class LibraryScanner:
                 "differences": []
             }
             
-            # Get existing files and directories from Firestore
-            existing_files = {}  # Firestore removed; Postgres duplicate detection not yet implemented
+            existing_files = {}  # Postgres duplicate detection not yet implemented
             existing_dirs = {}
             
             new_items = 0
@@ -839,20 +835,19 @@ class LibraryScanner:
                 "differences": []
             }
             
-            # Get existing files and directories from Firestore
-            existing_files = {}  # Firestore removed; Postgres duplicate detection not yet implemented
+            existing_files = {}  # Postgres duplicate detection not yet implemented
             existing_dirs = {}
-            
+
             # Create composite keys for existing data (libraryPath:path)
             existing_file_keys = {}
             for file_path in existing_files:
                 # Assume existing files have both path and libraryPath
                 key = f"{file_path.get('libraryPath', '')}:{file_path.get('path', '')}"
                 existing_file_keys[key] = file_path
-                
+
             existing_dir_keys = {}
             for dir_path in existing_dirs:
-                # Assume existing directories have both path and libraryPath  
+                # Assume existing directories have both path and libraryPath
                 key = f"{dir_path.get('libraryPath', '')}:{dir_path.get('path', '')}"
                 existing_dir_keys[key] = dir_path
             
@@ -893,7 +888,7 @@ class LibraryScanner:
             duplicate_report["newItems"] = new_items
             duplicate_report["differences"] = differences
             
-            logger.info("Duplicate check completed using Firestore", 
+            logger.info("Duplicate check completed",
                        duplicates=duplicates_found, 
                        new_items=new_items, 
                        differences=len(differences))
@@ -901,7 +896,7 @@ class LibraryScanner:
             return duplicate_report
             
         except Exception as e:
-            logger.error("Firestore duplicate checking failed", error=str(e))
+            logger.error("Duplicate checking failed", error=str(e))
             return {
                 "duplicatesFound": 0,
                 "newItems": len(scan_results),

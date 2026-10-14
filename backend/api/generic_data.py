@@ -1,7 +1,6 @@
 """
 Generic Data Store API — CRUD for arbitrary collections stored in the
-`generic_data` table.  Acts as a drop-in replacement for the Firebase
-Firestore collections used by the admin forms (actors, directors, writers,
+`generic_data` table.  Backs the misc collections used by the admin forms (actors, directors, writers,
 AllMedia, MyMedia, etc.).
 
 Catalog collections (movies, series, discs) are NOT routed here — they
