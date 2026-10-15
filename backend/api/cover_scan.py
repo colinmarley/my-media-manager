@@ -2,13 +2,14 @@
 Cover scan (vision OCR)
 =======================
 Reads the title/format/edition off a photo of a disc case, sleeve, or bare
-disc label using a local vision model on Ollama — for the mobile add flow's
+disc label using a local vision model on LocalAI — for the mobile add flow's
 "Scan cover" button, mainly for loose discs with no barcode to look up.
 
   POST /api/metadata-search/cover-scan   multipart `file` -> extracted fields
 
-Runs on ai-workstation's Ollama (same host the disc ripper's failure
-analysis uses), so no cloud OCR account and no image leaves the homelab.
+Runs on ai-workstation's LocalAI (OpenAI-compatible /v1 API, same engine the
+disc ripper's failure analysis uses), so no cloud OCR account and no image
+leaves the homelab.
 The result is a suggestion the app shows for confirmation, never saved as-is.
 """
 
@@ -30,7 +31,9 @@ _MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 # Phone photos are 3-4k px wide; the model reads a cover fine at 1280 and
 # answers several times faster (and fits alongside other GPU work).
 _MAX_DIMENSION = 1280
-_OLLAMA_TIMEOUT = 180.0
+# Generous: LocalAI keeps one model resident, so a scan may first have to swap
+# the vision model in.
+_VISION_TIMEOUT = 180.0
 
 _VALID_FORMATS = {"DVD", "BLURAY", "UHD_BLURAY", "HD_DVD", "LASERDISC", "VHS"}
 _VALID_CONFIDENCE = {"high", "medium", "low"}
@@ -80,7 +83,7 @@ def _parse_model_json(content: str) -> dict:
     try:
         return json.loads(content)
     except json.JSONDecodeError:
-        # Models occasionally wrap the JSON in prose despite format=json.
+        # Models occasionally wrap the JSON in prose despite json_object mode.
         match = re.search(r"\{.*\}", content, re.DOTALL)
         if match:
             try:
@@ -170,20 +173,30 @@ async def scan_cover(file: UploadFile = File(...)) -> dict:
     if not data:
         raise HTTPException(status_code=400, detail="Empty upload.")
 
+    image_b64 = _prepare_image(data)
     payload = {
-        "model": settings.ollama_vision_model,
+        "model": settings.localai_vision_model,
         "messages": [
             {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": _USER_PROMPT, "images": [_prepare_image(data)]},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": _USER_PROMPT},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+                ],
+            },
         ],
-        "stream": False,
-        "format": "json",
-        "options": {"temperature": 0},
+        "response_format": {"type": "json_object"},
+        "temperature": 0,
+        "max_tokens": 1024,
     }
+    headers = {"Authorization": f"Bearer {settings.localai_api_key}"} if settings.localai_api_key else {}
 
     try:
-        async with httpx.AsyncClient(timeout=_OLLAMA_TIMEOUT) as client:
-            response = await client.post(f"{settings.ollama_host.rstrip('/')}/api/chat", json=payload)
+        async with httpx.AsyncClient(timeout=_VISION_TIMEOUT) as client:
+            response = await client.post(
+                f"{settings.localai_url.rstrip('/')}/v1/chat/completions", json=payload, headers=headers
+            )
             response.raise_for_status()
     except httpx.ConnectError as exc:
         raise HTTPException(status_code=503, detail="Cover scanning is unavailable (vision model host unreachable).") from exc
@@ -192,5 +205,6 @@ async def scan_cover(file: UploadFile = File(...)) -> dict:
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Cover scan failed: {exc}") from exc
 
-    content = response.json().get("message", {}).get("content", "")
+    choices = response.json().get("choices") or [{}]
+    content = choices[0].get("message", {}).get("content") or ""
     return normalize_scan(_parse_model_json(content))
