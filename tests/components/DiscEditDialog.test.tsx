@@ -160,6 +160,29 @@ describe('DiscEditDialog', () => {
       expect(await screen.findByText('UPC lookup daily limit reached')).toBeInTheDocument();
     });
 
+    it('warns instead of filling when the barcode is not a disc', async () => {
+      lookupUpcMock.mockResolvedValueOnce({
+        found: true, code: '12345678', title: 'Tortilla Chips', rawTitle: 'Tortilla Chips 12oz', format: null, looksLikeMedia: false,
+      });
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+      fireEvent.change(screen.getByLabelText('Barcode'), { target: { value: '12345678' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Look up' }));
+
+      expect(await screen.findByText(/doesn't look like a disc/)).toBeInTheDocument();
+      expect(screen.getByLabelText('Title', { exact: false })).toHaveValue('');
+    });
+
+    it('rejects a malformed barcode without calling the service', () => {
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+      fireEvent.change(screen.getByLabelText('Barcode'), { target: { value: 'abc' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Look up' }));
+
+      expect(screen.getByText('Enter an 8–14 digit barcode to look up.')).toBeInTheDocument();
+      expect(lookupUpcMock).not.toHaveBeenCalled();
+    });
+
     it('reports when the barcode has no match', async () => {
       lookupUpcMock.mockResolvedValueOnce({ found: false, code: '12345678' });
       render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
@@ -185,6 +208,25 @@ describe('DiscEditDialog', () => {
       expect(await screen.findByText('Cover scan filled: Title, Format. Year on cover: 1975.')).toBeInTheDocument();
       expect(scanCoverMock).toHaveBeenCalledWith(photo);
       expect(screen.getByLabelText('Title', { exact: false })).toHaveValue('Jaws');
+    });
+
+    it('does not overwrite a typed title, and shows a loading state', async () => {
+      let resolve!: (v: unknown) => void;
+      scanCoverMock.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+      const titleInput = screen.getByLabelText('Title', { exact: false });
+      fireEvent.change(titleInput, { target: { value: 'My Jaws' } });
+      fireEvent.change(screen.getByLabelText('Cover photo'), { target: { files: [photo] } });
+      expect(await screen.findByText('Scanning…')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Look up' })).toBeDisabled();
+
+      resolve({ found: true, verified: true, title: 'Jaws', year: null, format: null, edition: null, confidence: 'high' });
+      expect(await screen.findByText(/Lookup suggests different values/)).toBeInTheDocument();
+      expect(titleInput).toHaveValue('My Jaws');
+      fireEvent.click(screen.getByRole('button', { name: 'Keep mine' }));
+      expect(titleInput).toHaveValue('My Jaws');
+      expect(screen.queryByText(/Lookup suggests different values/)).not.toBeInTheDocument();
     });
 
     it('shows an inline error when the scan fails', async () => {
@@ -219,6 +261,23 @@ describe('DiscEditDialog', () => {
       expect(screen.getByLabelText('Title', { exact: false })).toHaveValue('');
       expect(screen.getByLabelText('Barcode')).toHaveValue('');
       expect(screen.getByText('DVD')).toBeInTheDocument();
+    });
+
+    it('keeps the chosen condition for the next entry', async () => {
+      createDiscMock.mockResolvedValue({ id: 'd1', title: 'Alien' });
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Alien' } });
+      fireEvent.mouseDown(screen.getAllByRole('combobox')[1]);
+      fireEvent.click(await screen.findByRole('option', { name: 'Good' }));
+      fireEvent.click(screen.getByRole('button', { name: /save & add another/i }));
+      await screen.findByText('Saved "Alien". Ready for the next disc.');
+      expect(createDiscMock.mock.calls[0][0]).toMatchObject({ condition: 'Good' });
+
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Aliens' } });
+      fireEvent.click(screen.getByRole('button', { name: /save & add another/i }));
+      await waitFor(() => expect(createDiscMock).toHaveBeenCalledTimes(2));
+      expect(createDiscMock.mock.calls[1][0]).toMatchObject({ title: 'Aliens', condition: 'Good' });
     });
 
     it('is not offered when editing an existing disc', () => {
