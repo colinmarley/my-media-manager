@@ -18,6 +18,7 @@ import {
 import { ChevronLeft, Menu as MenuIcon, Settings } from '@mui/icons-material';
 import { usePathname } from 'next/navigation';
 import { MediaSelectorProvider } from '@/context/MediaSelectorContext';
+import { NotificationProvider } from '@/context/NotificationContext';
 import { ThemeProvider } from '@emotion/react';
 import { AppProvider } from '@toolpad/core/AppProvider';
 import ProfileAccess from './_components/ProfileAccess';
@@ -55,6 +56,7 @@ export default function RootLayout({
       <body>
         <AppProvider theme={theme}>
           <ThemeProvider theme={theme}>
+            <NotificationProvider>
             <MediaSelectorProvider>
               <Drawer
                 anchor="left"
@@ -156,6 +158,7 @@ export default function RootLayout({
                 {children}
               </Box>
             </MediaSelectorProvider>
+            </NotificationProvider>
           </ThemeProvider>
         </AppProvider>
       </body>

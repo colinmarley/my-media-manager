@@ -22,6 +22,7 @@ import SubmitButton from '@/app/_components/SubmitButton';
 import { prepareTitleForStorage } from '../../../utils/titleUtils';
 import { FieldLabel, FormSection, FormSectionStack } from './forms/common';
 import { NestedSeasonEditor, SeasonEntry } from './forms/editors';
+import { useNotify } from '@/context/NotificationContext';
 
 interface SeriesValidation {
   title: string | null;
@@ -39,6 +40,7 @@ interface SeriesValidation {
 }
 
 const SeriesForm: React.FC = () => {
+  const notify = useNotify();
   const [title, setTitle] = useState('');
   const [countryOfOrigin, setCountryOfOrigin] = useState('');
   const [directors, setDirectors] = useState<DirectorEntry[]>([]);
@@ -107,7 +109,7 @@ const SeriesForm: React.FC = () => {
       const omdbSearchResults: OmdbSearchResponse[] = await searchByText(title);
       setOmdbResults(omdbSearchResults);
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Series title search failed.');
+      notify(error instanceof Error ? error.message : 'Series title search failed.', 'error');
     }
   };
 

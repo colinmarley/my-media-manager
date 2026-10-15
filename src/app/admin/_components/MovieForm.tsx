@@ -11,7 +11,7 @@ import ImageSearch from '../imageManager/_components/ImageSearch';
 import { retrieveMediaDataById, searchByText } from '@/service/omdb/OmdbService';
 import styles from '../_styles/MovieForm.module.css';
 import RatingsInput from './formInputs/RatingsInput';
-import { Box, FormControl, InputLabel, MenuItem, Select, Typography } from '@mui/material';
+import { Alert, Box, FormControl, InputLabel, MenuItem, Select, Typography } from '@mui/material';
 import { FieldLabel, FormSection, FormSectionStack } from './forms/common';
 import CastInput from './formInputs/common/CastInput';
 import WritersInput from './formInputs/WritersInput';
@@ -30,6 +30,7 @@ import { ActorPreview, MovieDirector } from '@/types/collections/Common.type';
 import useFormStore from '@/store/useFormStore';
 import DirectorDataGrid from './formInputs/common/DirectorDataGrid';
 import { FormInputData } from '@/types/inputs/FormInput.type';
+import { useNotify } from '@/context/NotificationContext';
 
 
 interface ValidationErrors {
@@ -56,6 +57,8 @@ const MovieForm: React.FC = () => {
     const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
     const [mediaSubType, setMediaSubType] = useState<'live_performance' | 'home_video' | ''>('');
     const [livePerformanceYear, setLivePerformanceYear] = useState('');
+    const [formError, setFormError] = useState<string | null>(null);
+    const notify = useNotify();
 
     const {
         shouldShowAddActorModal,
@@ -146,7 +149,7 @@ const MovieForm: React.FC = () => {
         } catch (error) {
             console.error('Movie title search failed:', error);
             setOmdbResultsValue([]);
-            alert(error instanceof Error ? error.message : 'Movie title search failed.');
+            notify(error instanceof Error ? error.message : 'Movie title search failed.', 'error');
         }
     };
 
@@ -170,7 +173,7 @@ const MovieForm: React.FC = () => {
         const existingMovie = await movieService.getDocumentsByField('omdbData.imdbID', selectedImdbId);
         if (existingMovie.length > 0) {
             console.log("Found Movie in DB")
-            alert("Movie already exists in database");
+            notify('Movie already exists in database', 'info');
             return;
         }
         
@@ -195,6 +198,7 @@ const MovieForm: React.FC = () => {
         setHasAttemptedSubmit(false);
         setMediaSubType('');
         setLivePerformanceYear('');
+        setFormError(null);
     };
 
     const associateMovieToPeople = async (movieId: string) => {
@@ -271,9 +275,10 @@ const MovieForm: React.FC = () => {
     const handleLivePerformanceSubmit = async () => {
         const titleValue = title?.value?.trim();
         if (!titleValue) {
-            alert('Please enter a title.');
+            setFormError('Please enter a title.');
             return;
         }
+        setFormError(null);
         const id = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
             ? crypto.randomUUID()
             : `live-${Date.now()}`;
@@ -301,11 +306,11 @@ const MovieForm: React.FC = () => {
             mediaSubType: 'live_performance',
         } as unknown as CatalogMovie;
         await movieService.addDocument(submission).then(() => {
-            alert(`Live performance added successfully: ${titleValue}`);
+            notify(`Live performance added successfully: ${titleValue}`, 'success');
             handleResetFields();
         }).catch((error) => {
             console.error(error);
-            alert('Failed to add live performance entry.');
+            notify('Failed to add live performance entry.', 'error');
         });
     };
 
@@ -317,10 +322,11 @@ const MovieForm: React.FC = () => {
         console.log(`Has Validation Errors: ${hasErrors}`);
         // Validate the form fields before submission, if any found disallow the submission
         if (hasErrors) {
-            alert('Please fix the validation errors before submitting.');
+            setFormError('Please fix the validation errors before submitting.');
             console.log(title?.errors, countries?.errors, directors?.errors, genres?.errors, imageFiles?.errors, languages?.errors, letterboxdLink?.errors, plexLink?.errors, releaseDate?.errors, releases?.errors, runtime?.errors, cast?.errors, writers?.errors, omdbData?.errors);
             return;
         }
+        setFormError(null);
 
         const normalizeImageFiles = (files: any[]) => {
             return files.map(f => ({
@@ -371,7 +377,7 @@ const MovieForm: React.FC = () => {
                 void associateMovieToPeople(movieSubimission.id);
             }
             const alertTitle = title?.value || 'Movie';
-            alert(`Movie added successfully!: ${alertTitle}`);
+            notify(`Movie added successfully!: ${alertTitle}`, 'success');
             handleResetFields();
         }).catch((error) => {
             console.error(error);
@@ -529,6 +535,11 @@ const MovieForm: React.FC = () => {
                             )}
                         </FormSectionStack>
                     </Grid>
+                    {formError && (
+                        <Grid size={12}>
+                            <Alert severity="error" role="alert">{formError}</Alert>
+                        </Grid>
+                    )}
                     <Grid size={3}>
                         {mediaSubType === 'live_performance' ? (
                             <SubmitButton
