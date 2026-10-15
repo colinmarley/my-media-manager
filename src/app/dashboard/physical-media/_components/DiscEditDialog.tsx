@@ -1,16 +1,20 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import {
-  Alert, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle,
-  FormControl, FormControlLabel, InputLabel, MenuItem, Select, Stack, TextField,
-} from '@mui/material';
+import React, { useEffect } from 'react';
+import { Stack } from '@mui/material';
 import { createDisc, updateDisc } from '@/service/catalog/DiscCatalogService';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
-import { DiscFormat, DiscCondition } from '@/types/catalog/Common.type';
+import {
+  FormCheckbox, FormDialog, FormSelectField, FormTextField, useZodForm,
+} from '@/components/form';
+import {
+  DISC_CONDITIONS, DISC_FORMATS, DISC_REGIONS, DiscFormOutput, discFormSchema, toDiscFormValues, toDiscPayload,
+} from './discFormSchema';
 
-const FORMATS: DiscFormat[] = ['DVD', 'BLURAY', 'HD_DVD', 'UHD_BLURAY', 'LASERDISC'];
-const CONDITIONS: DiscCondition[] = ['Mint', 'Good', 'Fair', 'Poor'];
+const toOptions = (values: readonly string[]) => values.map((value) => ({ value }));
+const FORMAT_OPTIONS = toOptions(DISC_FORMATS);
+const CONDITION_OPTIONS = toOptions(DISC_CONDITIONS);
+const REGION_OPTIONS = toOptions(DISC_REGIONS);
 
 export default function DiscEditDialog({
   open,
@@ -24,141 +28,60 @@ export default function DiscEditDialog({
   onSaved: (disc: CatalogDisc) => void;
 }) {
   const isEdit = !!disc;
-
-  const [title, setTitle] = useState('');
-  const [format, setFormat] = useState<DiscFormat | ''>('');
-  const [barcode, setBarcode] = useState('');
-  const [condition, setCondition] = useState<DiscCondition | ''>('');
-  const [regionCode, setRegionCode] = useState('');
-  const [discNumber, setDiscNumber] = useState('');
-  const [language, setLanguage] = useState('');
-  const [purchaseDate, setPurchaseDate] = useState('');
-  const [releaseDate, setReleaseDate] = useState('');
-  const [isPartOfSet, setIsPartOfSet] = useState(false);
-  const [isRentalDisc, setIsRentalDisc] = useState(false);
-  const [containsSpecialFeatures, setContainsSpecialFeatures] = useState(false);
-
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
+  const form = useZodForm(discFormSchema, { defaultValues: toDiscFormValues(disc) });
+  const { reset } = form;
 
   useEffect(() => {
-    if (!open) return;
-    setTitle(disc?.title ?? '');
-    setFormat(disc?.format ?? '');
-    setBarcode(disc?.barcode ?? '');
-    setCondition(disc?.condition ?? '');
-    setRegionCode(disc?.regionCode ?? '');
-    setDiscNumber(disc?.discNumber != null ? String(disc.discNumber) : '');
-    setLanguage(disc?.language ?? '');
-    setPurchaseDate(disc?.purchaseDate ?? '');
-    setReleaseDate(disc?.releaseDate ?? '');
-    setIsPartOfSet(disc?.isPartOfSet ?? false);
-    setIsRentalDisc(disc?.isRentalDisc ?? false);
-    setContainsSpecialFeatures(disc?.containsSpecialFeatures ?? false);
-    setError('');
-  }, [open, disc]);
+    if (open) reset(toDiscFormValues(disc));
+  }, [open, disc, reset]);
 
-  const handleSave = async () => {
-    if (!title.trim()) { setError('Title is required'); return; }
-    setSaving(true);
-    setError('');
-    const payload: Partial<CatalogDisc> = {
-      title: title.trim(),
-      format: format || undefined,
-      barcode: barcode || undefined,
-      condition: condition || undefined,
-      regionCode: regionCode || undefined,
-      discNumber: discNumber ? Number(discNumber) : undefined,
-      language: language || undefined,
-      purchaseDate: purchaseDate || undefined,
-      releaseDate: releaseDate || undefined,
-      isPartOfSet,
-      isRentalDisc,
-      containsSpecialFeatures,
-    };
-    try {
-      const saved = isEdit
-        ? await updateDisc(disc!.id, payload)
-        : await createDisc(payload);
-      onSaved(saved);
-      onClose();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to save disc');
-    } finally {
-      setSaving(false);
-    }
+  const handleSave = async (values: DiscFormOutput) => {
+    const payload = toDiscPayload(values);
+    const saved = isEdit
+      ? await updateDisc(disc!.id, payload)
+      : await createDisc(payload);
+    onSaved(saved);
+    onClose();
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle>{isEdit ? 'Edit Disc' : 'New Disc'}</DialogTitle>
-      <DialogContent>
-        <Stack spacing={2} sx={{ mt: 1 }}>
-          {error && <Alert severity="error">{error}</Alert>}
-          <TextField
-            label="Title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            required
-            fullWidth
-            autoFocus
-          />
-          <Stack direction="row" spacing={2}>
-            <FormControl fullWidth size="small">
-              <InputLabel>Format</InputLabel>
-              <Select label="Format" value={format} onChange={(e) => setFormat(e.target.value as DiscFormat)}>
-                <MenuItem value=""><em>None</em></MenuItem>
-                {FORMATS.map((f) => <MenuItem key={f} value={f}>{f}</MenuItem>)}
-              </Select>
-            </FormControl>
-            <FormControl fullWidth size="small">
-              <InputLabel>Condition</InputLabel>
-              <Select label="Condition" value={condition} onChange={(e) => setCondition(e.target.value as DiscCondition)}>
-                <MenuItem value=""><em>None</em></MenuItem>
-                {CONDITIONS.map((c) => <MenuItem key={c} value={c}>{c}</MenuItem>)}
-              </Select>
-            </FormControl>
-          </Stack>
-          <Stack direction="row" spacing={2}>
-            <TextField label="Barcode" value={barcode} onChange={(e) => setBarcode(e.target.value)} fullWidth size="small" />
-            <TextField label="Region Code" value={regionCode} onChange={(e) => setRegionCode(e.target.value)} fullWidth size="small" />
-            <TextField label="Disc #" type="number" value={discNumber} onChange={(e) => setDiscNumber(e.target.value)} sx={{ width: 100 }} size="small" />
-          </Stack>
-          <Stack direction="row" spacing={2}>
-            <TextField label="Language" value={language} onChange={(e) => setLanguage(e.target.value)} fullWidth size="small" />
-            <TextField
-              label="Purchase Date" type="date" value={purchaseDate}
-              onChange={(e) => setPurchaseDate(e.target.value)} fullWidth size="small"
-              slotProps={{ inputLabel: { shrink: true } }}
-            />
-            <TextField
-              label="Release Date" type="date" value={releaseDate}
-              onChange={(e) => setReleaseDate(e.target.value)} fullWidth size="small"
-              slotProps={{ inputLabel: { shrink: true } }}
-            />
-          </Stack>
-          <Stack direction="row" spacing={1} flexWrap="wrap">
-            <FormControlLabel
-              control={<Checkbox checked={isPartOfSet} onChange={(e) => setIsPartOfSet(e.target.checked)} />}
-              label="Part of a set"
-            />
-            <FormControlLabel
-              control={<Checkbox checked={isRentalDisc} onChange={(e) => setIsRentalDisc(e.target.checked)} />}
-              label="Rental disc"
-            />
-            <FormControlLabel
-              control={<Checkbox checked={containsSpecialFeatures} onChange={(e) => setContainsSpecialFeatures(e.target.checked)} />}
-              label="Contains special features"
-            />
-          </Stack>
+    <FormDialog
+      open={open}
+      title={isEdit ? 'Edit Disc' : 'New Disc'}
+      form={form}
+      onSubmit={handleSave}
+      onClose={onClose}
+      submitLabel={isEdit ? 'Save Changes' : 'Create Disc'}
+      submitErrorFallback="Failed to save disc"
+    >
+      <Stack spacing={2} sx={{ mt: 1 }}>
+        <FormTextField name="title" label="Title" required fullWidth autoFocus />
+        <Stack direction="row" spacing={2}>
+          <FormSelectField name="format" label="Format" options={FORMAT_OPTIONS} emptyLabel="None" fullWidth size="small" />
+          <FormSelectField name="condition" label="Condition" options={CONDITION_OPTIONS} emptyLabel="None" fullWidth size="small" />
         </Stack>
-      </DialogContent>
-      <DialogActions>
-        <Button onClick={onClose} disabled={saving}>Cancel</Button>
-        <Button variant="contained" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Disc'}
-        </Button>
-      </DialogActions>
-    </Dialog>
+        <Stack direction="row" spacing={2}>
+          <FormTextField name="barcode" label="Barcode" fullWidth size="small" slotProps={{ htmlInput: { inputMode: 'numeric' } }} />
+          <FormSelectField name="regionCode" label="Region Code" options={REGION_OPTIONS} emptyLabel="None" fullWidth size="small" />
+          <FormTextField name="discNumber" label="Disc #" type="number" sx={{ width: 100, flexShrink: 0 }} size="small" />
+        </Stack>
+        <Stack direction="row" spacing={2}>
+          <FormTextField name="language" label="Language" fullWidth size="small" />
+          <FormTextField
+            name="purchaseDate" label="Purchase Date" type="date" fullWidth size="small"
+            slotProps={{ inputLabel: { shrink: true } }}
+          />
+          <FormTextField
+            name="releaseDate" label="Release Date" type="date" fullWidth size="small"
+            slotProps={{ inputLabel: { shrink: true } }}
+          />
+        </Stack>
+        <Stack direction="row" spacing={1} flexWrap="wrap">
+          <FormCheckbox name="isPartOfSet" label="Part of a set" />
+          <FormCheckbox name="isRentalDisc" label="Rental disc" />
+          <FormCheckbox name="containsSpecialFeatures" label="Contains special features" />
+        </Stack>
+      </Stack>
+    </FormDialog>
   );
 }
