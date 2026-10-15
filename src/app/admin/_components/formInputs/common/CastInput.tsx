@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Button, TextField, Box, Autocomplete } from '@mui/material';
+import { Button, TextField, Box, Autocomplete, FormHelperText } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import { ActorPreview } from '@/types/collections/Common.type';
 import useFormStore from '@/store/useFormStore';
@@ -13,6 +13,7 @@ const CastInput: React.FC<CastInputProps> = ({ castList, onAddCastMember }) => {
   const { actorOptions, openAddActorModal, refreshActorOptions } = useFormStore();
 
   const [newActor, setNewActor] = useState<ActorPreview>({ name: '', actorId: '', characters: [] });
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     void refreshActorOptions();
@@ -22,8 +23,9 @@ const CastInput: React.FC<CastInputProps> = ({ castList, onAddCastMember }) => {
     if (newActor.name && newActor.actorId && newActor.characters.length > 0) {
       onAddCastMember(newActor);
       setNewActor({ name: '', actorId: '', characters: [] });
+      setError(null);
     } else {
-      alert('Please fill out all fields before adding a new actor.');
+      setError('Please fill out all fields before adding a new actor.');
     }
   };
 
@@ -68,6 +70,7 @@ const CastInput: React.FC<CastInputProps> = ({ castList, onAddCastMember }) => {
           <Button variant="contained" color="primary" onClick={handleAddActor}>
             Add Actor
           </Button>
+          {error && <FormHelperText error>{error}</FormHelperText>}
         </Grid>
       </Grid>
     </Box>
