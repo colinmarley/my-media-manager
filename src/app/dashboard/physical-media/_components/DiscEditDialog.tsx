@@ -6,11 +6,23 @@ import {
   FormControl, FormControlLabel, InputLabel, MenuItem, Select, Stack, TextField,
 } from '@mui/material';
 import { createDisc, updateDisc } from '@/service/catalog/DiscCatalogService';
+import { lookupUpc, scanCover } from '@/service/catalog/DiscLookupService';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
 import { DiscFormat, DiscCondition } from '@/types/catalog/Common.type';
 
 const FORMATS: DiscFormat[] = ['DVD', 'BLURAY', 'HD_DVD', 'UHD_BLURAY', 'LASERDISC'];
 const CONDITIONS: DiscCondition[] = ['Mint', 'Good', 'Fair', 'Poor'];
+
+// Fields a barcode lookup or cover scan can suggest.
+type Suggestion = { title?: string; format?: DiscFormat; releaseDate?: string };
+type SuggestionKey = keyof Suggestion;
+const SUGGESTION_LABELS: Record<SuggestionKey, string> = {
+  title: 'Title', format: 'Format', releaseDate: 'Release date',
+};
+
+function asFormat(value?: string | null): DiscFormat | undefined {
+  return FORMATS.find((f) => f === value);
+}
 
 export default function DiscEditDialog({
   open,
@@ -40,28 +52,137 @@ export default function DiscEditDialog({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+
+  const [lookupBusy, setLookupBusy] = useState<'upc' | 'scan' | null>(null);
+  const [lookupError, setLookupError] = useState('');
+  const [lookupInfo, setLookupInfo] = useState('');
+  const [pendingOverwrite, setPendingOverwrite] = useState<Suggestion | null>(null);
+
+  const clearLookup = () => {
+    setLookupError('');
+    setLookupInfo('');
+    setPendingOverwrite(null);
+  };
+
+  // Per-disc fields; format and condition carry over between "add another" entries.
+  const resetPerDiscFields = (from?: CatalogDisc | null) => {
+    setTitle(from?.title ?? '');
+    setBarcode(from?.barcode ?? '');
+    setRegionCode(from?.regionCode ?? '');
+    setDiscNumber(from?.discNumber != null ? String(from.discNumber) : '');
+    setLanguage(from?.language ?? '');
+    setPurchaseDate(from?.purchaseDate ?? '');
+    setReleaseDate(from?.releaseDate ?? '');
+    setIsPartOfSet(from?.isPartOfSet ?? false);
+    setIsRentalDisc(from?.isRentalDisc ?? false);
+    setContainsSpecialFeatures(from?.containsSpecialFeatures ?? false);
+    clearLookup();
+  };
 
   useEffect(() => {
     if (!open) return;
-    setTitle(disc?.title ?? '');
+    resetPerDiscFields(disc);
     setFormat(disc?.format ?? '');
-    setBarcode(disc?.barcode ?? '');
     setCondition(disc?.condition ?? '');
-    setRegionCode(disc?.regionCode ?? '');
-    setDiscNumber(disc?.discNumber != null ? String(disc.discNumber) : '');
-    setLanguage(disc?.language ?? '');
-    setPurchaseDate(disc?.purchaseDate ?? '');
-    setReleaseDate(disc?.releaseDate ?? '');
-    setIsPartOfSet(disc?.isPartOfSet ?? false);
-    setIsRentalDisc(disc?.isRentalDisc ?? false);
-    setContainsSpecialFeatures(disc?.containsSpecialFeatures ?? false);
     setError('');
+    setInfo('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, disc]);
 
-  const handleSave = async () => {
+  const setters: Record<SuggestionKey, (v: string) => void> = {
+    title: setTitle,
+    format: (v) => setFormat(v as DiscFormat),
+    releaseDate: setReleaseDate,
+  };
+
+  // Fill empty fields; anything the user already typed is held back for confirmation.
+  const applySuggestion = (source: string, suggestion: Suggestion, note = '') => {
+    const current: Record<SuggestionKey, string> = { title, format, releaseDate };
+    const filled: string[] = [];
+    const conflicts: Suggestion = {};
+    (Object.keys(SUGGESTION_LABELS) as SuggestionKey[]).forEach((key) => {
+      const value = suggestion[key];
+      if (!value) return;
+      if (!current[key].trim()) {
+        setters[key](value);
+        filled.push(SUGGESTION_LABELS[key]);
+      } else if (current[key] !== value) {
+        (conflicts as Record<SuggestionKey, string>)[key] = value;
+      }
+    });
+    setLookupInfo(
+      (filled.length ? `${source} filled: ${filled.join(', ')}.` : `${source}: no empty fields to fill.`) + note,
+    );
+    setPendingOverwrite(Object.keys(conflicts).length ? conflicts : null);
+  };
+
+  const applyOverwrite = () => {
+    if (!pendingOverwrite) return;
+    const keys = Object.keys(pendingOverwrite) as SuggestionKey[];
+    keys.forEach((key) => setters[key](pendingOverwrite[key]!));
+    setLookupInfo(`Replaced: ${keys.map((k) => SUGGESTION_LABELS[k]).join(', ')}.`);
+    setPendingOverwrite(null);
+  };
+
+  const handleLookup = async () => {
+    const code = barcode.trim();
+    clearLookup();
+    if (!/^\d{8,14}$/.test(code)) { setLookupError('Enter an 8–14 digit barcode to look up.'); return; }
+    setLookupBusy('upc');
+    try {
+      const result = await lookupUpc(code);
+      if (!result.found) {
+        setLookupError(`No match found for barcode ${code}.`);
+      } else if (result.looksLikeMedia === false) {
+        setLookupError(`Barcode matched "${result.rawTitle || result.title}", which doesn't look like a disc. Check the barcode.`);
+      } else {
+        applySuggestion('Barcode lookup', {
+          title: result.title || undefined,
+          format: asFormat(result.format),
+          releaseDate: result.releaseDate || undefined,
+        });
+      }
+    } catch (e: unknown) {
+      setLookupError(e instanceof Error ? e.message : 'Barcode lookup failed');
+    } finally {
+      setLookupBusy(null);
+    }
+  };
+
+  const handleScan = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    clearLookup();
+    setLookupBusy('scan');
+    try {
+      const result = await scanCover(file);
+      if (!result.found || !result.title) {
+        setLookupError("Couldn't read a title from that photo.");
+      } else {
+        const notes = [
+          result.year ? `Year on cover: ${result.year}` : '',
+          !result.verified || result.confidence === 'low' ? 'Low confidence — please check' : '',
+        ].filter(Boolean);
+        applySuggestion(
+          'Cover scan',
+          { title: result.title, format: asFormat(result.format) },
+          notes.length ? ` ${notes.join('. ')}.` : '',
+        );
+      }
+    } catch (err: unknown) {
+      setLookupError(err instanceof Error ? err.message : 'Cover scan failed');
+    } finally {
+      setLookupBusy(null);
+    }
+  };
+
+  const handleSave = async (addAnother = false) => {
     if (!title.trim()) { setError('Title is required'); return; }
     setSaving(true);
     setError('');
+    setInfo('');
     const payload: Partial<CatalogDisc> = {
       title: title.trim(),
       format: format || undefined,
@@ -81,7 +202,12 @@ export default function DiscEditDialog({
         ? await updateDisc(disc!.id, payload)
         : await createDisc(payload);
       onSaved(saved);
-      onClose();
+      if (addAnother) {
+        resetPerDiscFields(null);
+        setInfo(`Saved "${saved.title}". Ready for the next disc.`);
+      } else {
+        onClose();
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to save disc');
     } finally {
@@ -95,6 +221,38 @@ export default function DiscEditDialog({
       <DialogContent>
         <Stack spacing={2} sx={{ mt: 1 }}>
           {error && <Alert severity="error">{error}</Alert>}
+          {info && <Alert severity="success">{info}</Alert>}
+          <Stack direction="row" spacing={1} alignItems="center">
+            <TextField label="Barcode" value={barcode} onChange={(e) => setBarcode(e.target.value)} fullWidth size="small" />
+            <Button
+              variant="outlined" onClick={handleLookup}
+              disabled={!!lookupBusy || !barcode.trim()} sx={{ whiteSpace: 'nowrap' }}
+            >
+              {lookupBusy === 'upc' ? 'Looking up…' : 'Look up'}
+            </Button>
+            <Button variant="outlined" component="label" disabled={!!lookupBusy} sx={{ whiteSpace: 'nowrap' }}>
+              {lookupBusy === 'scan' ? 'Scanning…' : 'Scan cover'}
+              <input hidden type="file" accept="image/*" aria-label="Cover photo" onChange={handleScan} />
+            </Button>
+          </Stack>
+          {lookupError && <Alert severity="warning">{lookupError}</Alert>}
+          {lookupInfo && <Alert severity="info">{lookupInfo}</Alert>}
+          {pendingOverwrite && (
+            <Alert
+              severity="warning"
+              action={(
+                <>
+                  <Button color="inherit" size="small" onClick={applyOverwrite}>Replace</Button>
+                  <Button color="inherit" size="small" onClick={() => setPendingOverwrite(null)}>Keep mine</Button>
+                </>
+              )}
+            >
+              Lookup suggests different values:{' '}
+              {(Object.keys(pendingOverwrite) as SuggestionKey[])
+                .map((k) => `${SUGGESTION_LABELS[k]}: "${pendingOverwrite[k]}"`)
+                .join('; ')}
+            </Alert>
+          )}
           <TextField
             label="Title"
             value={title}
@@ -120,7 +278,6 @@ export default function DiscEditDialog({
             </FormControl>
           </Stack>
           <Stack direction="row" spacing={2}>
-            <TextField label="Barcode" value={barcode} onChange={(e) => setBarcode(e.target.value)} fullWidth size="small" />
             <TextField label="Region Code" value={regionCode} onChange={(e) => setRegionCode(e.target.value)} fullWidth size="small" />
             <TextField label="Disc #" type="number" value={discNumber} onChange={(e) => setDiscNumber(e.target.value)} sx={{ width: 100 }} size="small" />
           </Stack>
@@ -155,7 +312,10 @@ export default function DiscEditDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={onClose} disabled={saving}>Cancel</Button>
-        <Button variant="contained" onClick={handleSave} disabled={saving}>
+        {!isEdit && (
+          <Button onClick={() => handleSave(true)} disabled={saving}>Save &amp; add another</Button>
+        )}
+        <Button variant="contained" onClick={() => handleSave()} disabled={saving}>
           {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Disc'}
         </Button>
       </DialogActions>
