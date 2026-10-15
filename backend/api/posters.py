@@ -31,6 +31,7 @@ from services.poster_cache_service import (
     get_poster_path,
     refresh_if_stale,
 )
+from utils.logging import logger
 
 router = APIRouter(prefix="/api/posters", tags=["Posters"])
 
@@ -114,7 +115,7 @@ async def _resolve_poster_url(media_type: str, media_id: str, db: AsyncSession) 
             try:
                 flag_modified(row, "raw_data")
             except Exception:
-                pass
+                logger.warning("flag_modified(raw_data) failed", media_id=media_id, exc_info=True)
             if hasattr(db, "commit"):
                 await db.commit()
             if hasattr(db, "refresh"):
@@ -173,7 +174,7 @@ async def _resolve_poster_url(media_type: str, media_id: str, db: AsyncSession) 
             try:
                 flag_modified(row, "raw_data")
             except Exception:
-                pass
+                logger.warning("flag_modified(raw_data) failed", media_id=media_id, exc_info=True)
             if hasattr(db, "commit"):
                 await db.commit()
             if hasattr(db, "refresh"):
@@ -264,7 +265,7 @@ async def update_poster_source(
     try:
         flag_modified(row, "raw_data")
     except Exception:
-        pass
+        logger.warning("flag_modified(raw_data) failed", media_id=media_id, exc_info=True)
 
     await db.commit()
     await db.refresh(row)

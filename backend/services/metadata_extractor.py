@@ -1,3 +1,20 @@
+"""
+FFmpeg/ffprobe-based metadata extractor (``MetadataExtractor``).
+
+Ownership:
+    - This module: raw ffprobe output (snake_case dicts) and thumbnail
+      generation via ffmpeg. Used by the ``/api/metadata`` endpoints
+      (``extract_video_metadata``, ``get_video_thumbnail``) and passed to
+      ``LibraryScanner`` from ``main.py``.
+    - ``services/media_metadata_extractor.py`` (``MediaMetadataExtractor``):
+      pymediainfo-based extraction shaped to the frontend ``MediaFile``
+      interface (camelCase ``videoMetadata``/``audioTracks``/...). Used by
+      ``FileSystemManager``, ``LibraryScanner`` and library compliance.
+
+New code that needs ``MediaFile``-shaped data should use
+``MediaMetadataExtractor``.
+"""
+
 import ffmpeg
 import subprocess
 import json
@@ -26,8 +43,8 @@ class MetadataExtractor:
             if result.returncode == 0:
                 return result.stdout.strip()
         except Exception:
-            pass
-        
+            logger.warning("'which ffprobe' failed; trying fallback paths", exc_info=True)
+
         # Fallback paths
         fallback_paths = [
             '/usr/bin/ffprobe',

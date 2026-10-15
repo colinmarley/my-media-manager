@@ -162,7 +162,8 @@ async def batch_extract_metadata(request: BatchExtractRequest, req: Request):
                     if request.extractThumbnails:
                         thumbnail_path = metadata_extractor.get_video_thumbnail(file_path)
                 except Exception:
-                    pass  # Continue even if media extraction fails
+                    # Continue even if media extraction fails
+                    logger.warning("Media metadata extraction failed", file_path=file_path, exc_info=True)
                 
                 results.append({
                     "filePath": file_path,

@@ -1132,7 +1132,7 @@ class LibraryComplianceService:
                     if isinstance(height, int) and height > 0:
                         return f"{height}p"
         except Exception:
-            pass
+            logger.warning("Quality metadata lookup failed; using filename", file_path=file_path, exc_info=True)
 
         stem = os.path.splitext(os.path.basename(file_path))[0]
         quality_hint = re.search(r"(2160p|1080p|720p|576p|480p|4k|8k|uhd|fhd|hd|sd)", stem, re.IGNORECASE)

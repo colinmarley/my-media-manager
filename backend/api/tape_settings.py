@@ -15,6 +15,7 @@ from api.auth import require_session
 from db.database import get_db
 from db.models import AppConfig
 from config.settings import settings
+from utils.logging import logger
 
 router = APIRouter(prefix="/api/settings", tags=["Settings"])
 
@@ -41,7 +42,7 @@ async def _load(db: AsyncSession) -> dict:
         try:
             return json.loads(row.value)
         except Exception:
-            pass
+            logger.warning("Failed to parse stored tape ingest settings", exc_info=True)
     return {}
 
 
