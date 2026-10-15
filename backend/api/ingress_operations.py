@@ -868,11 +868,10 @@ async def get_ingress_config(req: Request):
 
 @router.put("/config")
 async def update_ingress_config(payload: UpdateConfigRequest, req: Request):
-    """Update runtime ingress config and persist to Firestore."""
+    """Update the in-memory runtime ingress config."""
     runtime_config: Dict[str, Any] = req.app.state.ingress_runtime_config
     queue_service = req.app.state.ingress_queue_service
     auto_matcher_service = getattr(req.app.state, "auto_matcher_service", None)
-    firestore_service = getattr(req.app.state, "firestore_service", None)
 
     if payload.autoAssignThreshold is not None:
         runtime_config["autoAssignThreshold"] = payload.autoAssignThreshold

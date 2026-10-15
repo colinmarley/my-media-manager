@@ -33,7 +33,6 @@ from config.settings import settings
 from api.file_operations import router as file_router
 from api.library_operations import router as library_router
 from api.metadata_operations import router as metadata_router
-from api.media_operations import router as media_router, initialize_organization_services
 from api.file_browser import router as file_browser_router
 from api.ingress_operations import router as ingress_router
 from api.auth import router as auth_router
@@ -278,9 +277,6 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Destination mount not found - file organization will fail", path=dest_base)
 
-    # Initialize Phase 4 services for file organization
-    initialize_organization_services(None)
-    
     file_watcher_service = FileWatcherService(
         file_manager=file_manager,
         queue_callback=ingress_queue_service.add_from_watcher,
@@ -398,7 +394,6 @@ app.include_router(file_router, prefix="/api/files", tags=["File Operations"])
 app.include_router(file_browser_router, tags=["File Browser"])
 app.include_router(library_router, prefix="/api/library", tags=["Library Operations"])
 app.include_router(metadata_router, prefix="/api/metadata", tags=["Metadata Operations"])
-app.include_router(media_router, prefix="/api/media", tags=["Media Operations"])
 app.include_router(auth_router, prefix="/api")
 app.include_router(catalog_router)
 app.include_router(generic_data_router)

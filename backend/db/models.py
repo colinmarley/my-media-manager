@@ -693,7 +693,7 @@ class IngressConfig(Base):
 
 
 # ---------------------------------------------------------------------------
-# Generic Data Store — replaces Firestore for misc collections
+# Generic Data Store — misc collections
 # (actors, directors, writers, AllMedia, MyMedia, releases, etc.)
 # ---------------------------------------------------------------------------
 
