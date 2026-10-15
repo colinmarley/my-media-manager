@@ -41,7 +41,7 @@ def _get_file_duration(file_path: str) -> Optional[float]:
             if track.track_type == "General" and track.duration is not None:
                 return float(track.duration)
     except Exception:
-        pass
+        logger.warning("MediaInfo duration lookup failed", file_path=file_path, exc_info=True)
     return None
 
 

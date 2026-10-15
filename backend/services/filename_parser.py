@@ -290,10 +290,6 @@ class FilenameParser:
             is_companion=is_companion,
         )
 
-    def detect_media_type(self, filename: str) -> str:
-        """Return the likely media type for the provided filename."""
-        return self.parse_filename(filename).media_type
-
     def is_generic_companion_label(self, value: str) -> bool:
         """Return True when a title/folder is just a generic extras label."""
         normalized = self.normalize_title(value)

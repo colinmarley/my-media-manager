@@ -761,7 +761,8 @@ class LibraryScanner:
             try:
                 self.scan_callbacks[scan_id](progress)
             except Exception:
-                pass  # Don't fail scan if callback fails
+                # Don't fail scan if callback fails
+                logger.warning("Scan progress callback failed", scan_id=scan_id, exc_info=True)
         
         # Log progress periodically
         if progress.processed_items % 100 == 0:  # Every 100 items
