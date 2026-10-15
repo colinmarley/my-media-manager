@@ -9,6 +9,9 @@ import {
   MovieMetadata,
   TvShowMetadata,
   PromoMetadata,
+  TapeBrand,
+  TapeCondition,
+  RecordingSpeed,
 } from '@/types/tape-ingest/TapeIngest.type';
 
 type ScanStatus = 'idle' | 'scanning' | 'done' | 'error';
