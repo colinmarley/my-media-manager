@@ -21,8 +21,8 @@ export default function TvShowSearchDialog({ open, fileName, onClose, onAssign }
     setLoading(true); setError(''); setResults([]); setSelectedSeries(null); setEpisodeTitle('');
     try {
       const res = await searchByText(query, 'series');
-      setResults((res.Search ?? []) as typeof results);
-      if (!res.Search?.length) setError('No results found.');
+      setResults(res);
+      if (!res.length) setError('No results found.');
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Search failed'); }
     finally { setLoading(false); }
   };
