@@ -229,6 +229,41 @@ describe('DiscEditDialog', () => {
       expect(screen.queryByText(/Lookup suggests different values/)).not.toBeInTheDocument();
     });
 
+    it('does not overwrite a title typed while the scan is running', async () => {
+      let resolve!: (v: unknown) => void;
+      scanCoverMock.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+      fireEvent.change(screen.getByLabelText('Cover photo'), { target: { files: [photo] } });
+      expect(await screen.findByText('Scanning…')).toBeInTheDocument();
+      const titleInput = screen.getByLabelText('Title', { exact: false });
+      fireEvent.change(titleInput, { target: { value: 'Typed While Waiting' } });
+
+      resolve({ found: true, verified: true, title: 'Jaws', year: null, format: 'DVD', edition: null, confidence: 'high' });
+      expect(await screen.findByText(/Lookup suggests different values/)).toBeInTheDocument();
+      expect(titleInput).toHaveValue('Typed While Waiting');
+      expect(screen.getByText('Cover scan filled: Format.')).toBeInTheDocument();
+    });
+
+    it('ignores a scan result that arrives after "Save & add another"', async () => {
+      let resolve!: (v: unknown) => void;
+      scanCoverMock.mockReturnValueOnce(new Promise((r) => { resolve = r; }));
+      createDiscMock.mockResolvedValueOnce({ id: 'd1', title: 'Alien' });
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Alien' } });
+      fireEvent.change(screen.getByLabelText('Cover photo'), { target: { files: [photo] } });
+      expect(await screen.findByText('Scanning…')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: /save & add another/i }));
+      await screen.findByText('Saved "Alien". Ready for the next disc.');
+      expect(screen.getByText('Scan cover')).toBeInTheDocument();
+
+      resolve({ found: true, verified: true, title: 'Jaws', year: null, format: 'DVD', edition: null, confidence: 'high' });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(screen.getByLabelText('Title', { exact: false })).toHaveValue('');
+      expect(screen.queryByText(/Cover scan filled/)).not.toBeInTheDocument();
+    });
+
     it('shows an inline error when the scan fails', async () => {
       scanCoverMock.mockRejectedValueOnce(new Error('Cover scan timed out. Try again.'));
       render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);

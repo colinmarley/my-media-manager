@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle,
   FormControl, FormControlLabel, InputLabel, MenuItem, Select, Stack, TextField,
@@ -59,6 +59,12 @@ export default function DiscEditDialog({
   const [lookupInfo, setLookupInfo] = useState('');
   const [pendingOverwrite, setPendingOverwrite] = useState<Suggestion | null>(null);
 
+  // Lookups can take minutes: compare results against the values on screen when they
+  // arrive, and drop results that belong to a previous entry.
+  const latest = useRef<Record<SuggestionKey, string>>({ title, format, releaseDate });
+  latest.current = { title, format, releaseDate };
+  const lookupSeq = useRef(0);
+
   const clearLookup = () => {
     setLookupError('');
     setLookupInfo('');
@@ -77,6 +83,8 @@ export default function DiscEditDialog({
     setIsPartOfSet(from?.isPartOfSet ?? false);
     setIsRentalDisc(from?.isRentalDisc ?? false);
     setContainsSpecialFeatures(from?.containsSpecialFeatures ?? false);
+    lookupSeq.current += 1;
+    setLookupBusy(null);
     clearLookup();
   };
 
@@ -98,7 +106,7 @@ export default function DiscEditDialog({
 
   // Fill empty fields; anything the user already typed is held back for confirmation.
   const applySuggestion = (source: string, suggestion: Suggestion, note = '') => {
-    const current: Record<SuggestionKey, string> = { title, format, releaseDate };
+    const current = latest.current;
     const filled: string[] = [];
     const conflicts: Suggestion = {};
     (Object.keys(SUGGESTION_LABELS) as SuggestionKey[]).forEach((key) => {
@@ -130,8 +138,10 @@ export default function DiscEditDialog({
     clearLookup();
     if (!/^\d{8,14}$/.test(code)) { setLookupError('Enter an 8–14 digit barcode to look up.'); return; }
     setLookupBusy('upc');
+    const seq = ++lookupSeq.current;
     try {
       const result = await lookupUpc(code);
+      if (seq !== lookupSeq.current) return;
       if (!result.found) {
         setLookupError(`No match found for barcode ${code}.`);
       } else if (result.looksLikeMedia === false) {
@@ -144,9 +154,9 @@ export default function DiscEditDialog({
         });
       }
     } catch (e: unknown) {
-      setLookupError(e instanceof Error ? e.message : 'Barcode lookup failed');
+      if (seq === lookupSeq.current) setLookupError(e instanceof Error ? e.message : 'Barcode lookup failed');
     } finally {
-      setLookupBusy(null);
+      if (seq === lookupSeq.current) setLookupBusy(null);
     }
   };
 
@@ -156,8 +166,10 @@ export default function DiscEditDialog({
     if (!file) return;
     clearLookup();
     setLookupBusy('scan');
+    const seq = ++lookupSeq.current;
     try {
       const result = await scanCover(file);
+      if (seq !== lookupSeq.current) return;
       if (!result.found || !result.title) {
         setLookupError("Couldn't read a title from that photo.");
       } else {
@@ -172,9 +184,9 @@ export default function DiscEditDialog({
         );
       }
     } catch (err: unknown) {
-      setLookupError(err instanceof Error ? err.message : 'Cover scan failed');
+      if (seq === lookupSeq.current) setLookupError(err instanceof Error ? err.message : 'Cover scan failed');
     } finally {
-      setLookupBusy(null);
+      if (seq === lookupSeq.current) setLookupBusy(null);
     }
   };
 
