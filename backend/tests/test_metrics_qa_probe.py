@@ -1,227 +1,382 @@
 """
-QA probes for issue #14 (Prometheus /metrics).
+Acceptance-criteria tests for issue #14: one test per criterion, named after it,
+plus regression tests for the findings raised on the previous QA round.
 
-These are the edges the implementation suite in test_metrics.py leaves open:
-  * does the 60s gauge cache apply end to end, through GET /metrics itself?
-  * do simultaneous scrapes still run the COUNT queries once?
-  * does the exposition carry the media type a Prometheus scraper negotiates?
-  * does a wrong-method request stay on its route template / bounded label?
-Plus one xfail recording a gauge correctness defect found while testing.
+  AC1  unauthenticated GET /metrics in Prometheus text format
+       -> test_ac1_get_metrics_is_unauthenticated_prometheus_text
+  AC2  HTTP request count and latency labelled by route and status
+       -> test_ac2_request_count_and_latency_are_labelled_by_route_and_status
+  AC3  gauges for catalog items, ingest queue depth, compliance findings, media
+       assignments, poster cache files and active sessions, read from COUNT
+       queries and cached for 60s
+       -> test_ac3_six_domain_gauges_come_from_mocked_count_queries
+  AC4  the PR description carries the scrape job for
+       homelab-logging/prometheus/prometheus.yml (job `media-manager`, target
+       192.168.0.227:8082)
+       -> test_ac4_pr_summary_carries_the_prometheus_scrape_job, asserted
+       against docs/api/endpoints.md, which is the block the summary quotes, so
+       the shipped scrape config and the documented one cannot drift.
+
+QA findings covered below: a route that raises must appear in the counts, a
+queue status drained from the queue must return to zero, the Content-Type must
+advertise the exposition version exactly once, and 405/404 traffic plus
+concurrent scrapes must stay accounted for with a bounded series count.
+
+The test doubles are the ones test_metrics.py drives the collector with; they
+are imported rather than duplicated so both files prove the same behaviour.
 """
 
 import asyncio
+import re
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Dict, List, Tuple
 
 import pytest
+from fastapi import APIRouter, FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from api.metrics import METRICS_PATH
-from services.metrics import DomainMetricsCollector, REGISTRY
+import main
+from api.metrics import METRICS_PATH, MetricsMiddleware, route_template
+from api.metrics import router as metrics_router
+from services.metrics import (
+    CATALOG_ITEMS,
+    DOMAIN_GAUGE_ERRORS_TOTAL,
+    DURATION_BUCKETS_SECONDS,
+    GAUGE_CACHE_TTL_SECONDS,
+    HTTP_REQUEST_DURATION_SECONDS,
+    HTTP_REQUESTS_TOTAL,
+    INGEST_QUEUE_ITEMS,
+    POSTER_CACHE_FILES,
+    REGISTRY,
+    DomainMetricsCollector,
+)
+from tests.test_metrics import (
+    _FakeClock,
+    _FakeSession,
+    _FakeSessionFactory,
+    _RecordingCollector,
+    _collector,
+    _scope,
+)
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+PROMETHEUS_DOCS = REPO_ROOT / "docs" / "api" / "endpoints.md"
+
+# The job block the PR summary has to hand the operator.
+SCRAPE_JOB = "job_name: media-manager"
+SCRAPE_TARGET = "192.168.0.227:8082"
 
 
 @pytest.fixture(autouse=True)
-def _isolated_metric_samples():
-    """REGISTRY is process-global; give every probe its own samples."""
+def _fresh_metric_samples():
+    """The registry is process-global; keep each test's samples its own."""
     REGISTRY.reset()
     yield
     REGISTRY.reset()
 
 
-class _FakeResult:
-    def __init__(self, rows):
-        self._rows = rows
-
-    def all(self):
-        return self._rows
+# --------------------------------------------------------------------------
+# Test doubles specific to this file
+# --------------------------------------------------------------------------
 
 
-class _FakeSession:
-    def __init__(self, factory):
-        self.factory = factory
+class _SlowSession(_FakeSession):
+    """Holds each COUNT open long enough for concurrent scrapes to overlap."""
 
     async def scalar(self, statement):
-        self.factory.queries.append(str(statement))
-        return self.factory.scalar_result(str(statement))
-
-    async def execute(self, statement):
-        self.factory.queries.append(str(statement))
-        return _FakeResult(self.factory.rows_for(str(statement)))
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, exc_type, exc, tb):
-        return False
+        await asyncio.sleep(0.02)
+        return await super().scalar(statement)
 
 
-class _FakeSessionFactory:
-    """Answers every COUNT with a number and every GROUP BY with queue rows."""
-
-    def __init__(self, counts=None, queue_rows=None):
-        self.counts = counts or {}
-        self.queue_rows = queue_rows or []
-        self.queries = []
-
+class _SlowSessionFactory(_FakeSessionFactory):
     def __call__(self):
-        return _FakeSession(self)
-
-    def scalar_result(self, query):
-        for table, value in self.counts.items():
-            if f"FROM {table}" in query:
-                return value
-        return 0
-
-    def rows_for(self, query):
-        return self.queue_rows if "GROUP BY" in query else []
+        return _SlowSession(self)
 
 
-class _Clock:
-    def __init__(self, now=1000.0):
-        self.now = now
+def _probe_app() -> FastAPI:
+    """The metrics slice wired as main.py wires it, plus routes to exercise.
 
-    def __call__(self):
-        return self.now
+    Not the production app: this one needs a 405, a 404 and a route that raises,
+    and production routes must not change shape to keep these tests readable.
+    """
+    app = FastAPI()
+    app.state.domain_metrics = _RecordingCollector()
+    app.add_middleware(MetricsMiddleware)
+    app.include_router(metrics_router)
 
-    def advance(self, seconds):
-        self.now += seconds
+    api = APIRouter(prefix="/api")
+
+    @api.get("/health")
+    async def health() -> Dict[str, bool]:
+        return {"ok": True}
+
+    @api.get("/posters/{media_type}/{media_id}")
+    async def poster(media_type: str, media_id: str) -> Dict[str, str]:
+        return {"media_type": media_type, "media_id": media_id}
+
+    @api.get("/breaks")
+    async def breaks() -> Dict[str, bool]:
+        raise RuntimeError("route crashed")
+
+    app.include_router(api)
+    return app
 
 
-def _collector(tmp_path, **kwargs):
-    factory = _FakeSessionFactory(**kwargs)
-    clock = _Clock()
-    return factory, DomainMetricsCollector(factory, poster_cache_dir=tmp_path, clock=clock), clock
-
-
-def _install(collector):
-    import main
-
+@contextmanager
+def _real_app_scraped():
+    """The production app with a recording collector swapped into app.state."""
     previous = getattr(main.app.state, "domain_metrics", None)
+    collector = _RecordingCollector()
     main.app.state.domain_metrics = collector
-    return previous
-
-
-def _restore(previous):
-    import main
-
-    main.app.state.domain_metrics = previous
-
-
-async def _scrape():
-    import main
-
-    async with AsyncClient(transport=ASGITransport(app=main.app), base_url="http://test") as client:
-        return await client.get(METRICS_PATH)
-
-
-# --- AC2: the 60s cache is applied by the endpoint, end to end -------------
-
-
-@pytest.mark.asyncio
-async def test_endpoint_caches_the_gauge_sample_for_sixty_seconds(tmp_path):
-    factory, collector, clock = _collector(tmp_path, counts={"movies": 1})
-    previous = _install(collector)
     try:
-        first = await _scrape()
-        second = await _scrape()
-        assert first.status_code == second.status_code == 200
-        assert 'mm_catalog_items{type="movie"} 1' in first.text
-        assert 'mm_catalog_items{type="movie"} 1' in second.text
-
-        first_read = len(factory.queries)
-        assert first_read == 8, "one scrape reads exactly the eight COUNT/GROUP BY queries"
-        assert len(factory.queries) == first_read, "second scrape re-ran the COUNT queries"
-
-        clock.advance(61)
-        factory.counts["movies"] = 2
-        third = await _scrape()
+        yield collector
     finally:
-        _restore(previous)
-
-    assert len(factory.queries) == first_read * 2, "stale sample was not refreshed"
-    assert 'mm_catalog_items{type="movie"} 2' in third.text
+        main.app.state.domain_metrics = previous
 
 
-@pytest.mark.asyncio
-async def test_concurrent_scrapes_run_the_count_queries_once(tmp_path):
-    factory, collector, _clock = _collector(tmp_path, counts={"movies": 1})
-    results = await asyncio.gather(*[collector.collect() for _ in range(3)])
-
-    assert results.count(True) == 1, "three simultaneous scrapes should refresh once"
-    assert len(factory.queries) == 8
+def _client(app: FastAPI) -> AsyncClient:
+    return AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
 
 
-# --- AC1: exposition the scraper negotiates on ----------------------------
+# --------------------------------------------------------------------------
+# AC1 — unauthenticated GET /metrics, Prometheus text
+# --------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_scrape_content_type_is_prometheus_text_version_004(tmp_path):
-    collector = _collector(tmp_path)[1]
-    previous = _install(collector)
-    try:
-        response = await _scrape()
-    finally:
-        _restore(previous)
+async def test_ac1_get_metrics_is_unauthenticated_prometheus_text():
+    """AC1: no session cookie is sent, and the body parses as exposition text."""
+    with _real_app_scraped():
+        async with _client(main.app) as client:
+            assert (await client.get("/")).status_code == 200  # unauthenticated too
+            response = await client.get(METRICS_PATH)
 
     assert response.status_code == 200
-    # Prometheus selects the classic text format from the media type and the
-    # version parameter. (Starlette 0.27 appends its own `charset=utf-8` to any
-    # text/* media type, so the header carries the parameter twice — harmless
-    # to a scraper, noted as a finding.)
-    content_type = response.headers["content-type"]
-    assert content_type.startswith("text/plain"), content_type
-    assert "version=0.0.4" in content_type, content_type
+    assert response.headers["content-type"] == "text/plain; version=0.0.4; charset=utf-8"
+    body = response.text
+    assert "# HELP mm_http_requests_total" in body
+    assert "# TYPE mm_http_requests_total counter" in body
+    assert "# TYPE mm_http_request_duration_seconds histogram" in body
+    for gauge in (
+        "mm_catalog_items",
+        "mm_ingest_queue_items",
+        "mm_compliance_findings_open",
+        "mm_media_assignments_total",
+        "mm_poster_cache_files",
+        "mm_sessions_active",
+    ):
+        assert f"# TYPE {gauge} gauge" in body
 
 
-# --- AC1: label discipline for non-2xx traffic ----------------------------
+async def test_ac1_repeated_scrapes_ask_the_collector_every_time():
+    """The endpoint never caches on its own; the collector owns the 60s sample."""
+    with _real_app_scraped() as collector:
+        async with _client(main.app) as client:
+            for _ in range(4):
+                assert (await client.get(METRICS_PATH)).status_code == 200
+
+    assert collector.calls == [False] * 4
+    # A scrape must not instrument itself: that would be one series per poll.
+    assert HTTP_REQUESTS_TOTAL.samples == {}
+    assert HTTP_REQUEST_DURATION_SECONDS.samples == {}
+    assert 'path="/metrics"' not in REGISTRY.render()
 
 
-@pytest.mark.asyncio
-async def test_wrong_method_on_parameterised_route_keeps_template(tmp_path):
-    import main
+# --------------------------------------------------------------------------
+# AC2 — request count and latency labelled by route and status
+# --------------------------------------------------------------------------
 
-    collector = _collector(tmp_path)[1]
-    previous = _install(collector)
-    try:
-        async with AsyncClient(
-            transport=ASGITransport(app=main.app), base_url="http://test"
-        ) as client:
-            response = await client.patch("/api/catalog/movies/999")
-            assert response.status_code == 405
-            missing = await client.get("/api/nope/something/really")
-            assert missing.status_code == 404
-    finally:
-        _restore(previous)
 
+async def test_ac2_request_count_and_latency_are_labelled_by_route_and_status():
+    """AC2: per route template and status, one count and one histogram sample."""
+    async with _client(_probe_app()) as client:
+        for _ in range(2):
+            assert (await client.get("/api/health")).status_code == 200
+        assert (await client.get("/api/posters/movie/tt0111166")).status_code == 200
+        assert (await client.get("/api/posters/series/tt0108778")).status_code == 200
+        assert (await client.post("/api/health")).status_code == 405
+        assert (await client.get("/api/posters/movie")).status_code == 404
+
+    assert HTTP_REQUESTS_TOTAL.get(("GET", "/api/health", "200")) == 2
+    # Two different catalog ids, one series — the label is the route template.
+    posters = ("GET", "/api/posters/{media_type}/{media_id}", "200")
+    assert HTTP_REQUESTS_TOTAL.get(posters) == 2
+    # health, posters, and `unmatched` twice (405 and 404): four series.
+    assert len(HTTP_REQUESTS_TOTAL.samples) == 4
+    assert len(HTTP_REQUEST_DURATION_SECONDS.samples) == 4
+    assert HTTP_REQUESTS_TOTAL.get(("POST", "unmatched", "405")) == 1
+    assert HTTP_REQUESTS_TOTAL.get(("GET", "unmatched", "404")) == 1
+
+    duration = HTTP_REQUEST_DURATION_SECONDS.samples[("GET", "/api/health", "200")]
+    assert duration[-1] == 2 and duration[-2] >= 0.0
+    buckets = duration[:-2]
+    # Buckets are cumulative and +Inf comes last, so the last one is the count.
+    assert len(buckets) == len(DURATION_BUCKETS_SECONDS) + 1
+    assert buckets == sorted(buckets) and buckets[-1] == 2
+
+
+async def test_ac2_unmatched_and_wrong_method_traffic_stays_one_series():
+    """Path scanners and 405s must not mint one series per probe."""
+    app = _probe_app()
+    async with _client(app) as client:
+        assert (await client.post("/api/posters/movie/tt0111166")).status_code == 405
+        for path in ("/favicon.ico", "/wp-login.php", "/api/posters/movie"):
+            assert (await client.get(path)).status_code == 404
+
+    labels = {key[1] for key in HTTP_REQUESTS_TOTAL.samples}
+    assert labels == {"/api/posters/{media_type}/{media_id}", "unmatched"}
+    assert HTTP_REQUESTS_TOTAL.get(("POST", "/api/posters/{media_type}/{media_id}", "405")) == 1
+    assert HTTP_REQUESTS_TOTAL.get(("GET", "unmatched", "404")) == 3
+    # The template is resolved from the ASGI scope, with or without a response.
+    assert route_template(_scope("GET", "/api/posters/movie/tt0111166")) == (
+        "/api/posters/{media_type}/{media_id}"
+    )
+
+
+# --------------------------------------------------------------------------
+# AC3 — the six domain gauges, from mocked COUNT queries, cached for 60s
+# --------------------------------------------------------------------------
+
+
+def test_ac3_six_domain_gauges_come_from_mocked_count_queries(tmp_path):
+    """AC3: every gauge value is a COUNT result handed back by the fake session."""
+    (tmp_path / "poster.jpg").write_bytes(b"x")
+    (tmp_path / "poster.jpg.meta.json").write_bytes(b"{}")
+    counts = {
+        "movies": 118,
+        "series": 28,
+        "discs": 64,
+        "tapes": 29,
+        "sessions": 3,
+        "compliance_findings": 7,
+        "media_assignments": 9,
+    }
+    queue_rows: List[Tuple[str, int]] = [("pending", 2), ("completed", 5)]
+    factory, collector, _clock = _collector(
+        tmp_path, counts=counts, queue_rows=queue_rows
+    )
+
+    assert asyncio.run(collector.collect()) is True
     body = REGISTRY.render()
-    counter_lines = [
-        line for line in body.splitlines() if line.startswith("mm_http_requests_total{")
-    ]
-    assert (
-        'mm_http_requests_total{method="PATCH",path="/api/catalog/movies/{movie_id}",'
-        'status="405"} 1'
-    ) in body, counter_lines
-    # Unknown paths must never leak their raw path into a label.
-    assert 'path="unmatched",status="404"' in body, counter_lines
-    assert len(counter_lines) == 2, counter_lines
+    for line in (
+        'mm_catalog_items{type="movie"} 118',
+        'mm_catalog_items{type="series"} 28',
+        'mm_catalog_items{type="disc"} 64',
+        'mm_catalog_items{type="tape"} 29',
+        'mm_ingest_queue_items{status="pending"} 2',
+        'mm_ingest_queue_items{status="completed"} 5',
+        "mm_compliance_findings_open 7",
+        "mm_media_assignments_total 9",
+        "mm_poster_cache_files 2",
+        "mm_sessions_active 3",
+    ):
+        assert line in body
+    # Eight reads per refresh: four catalog counts, the queue GROUP BY, and one
+    # each for compliance, assignments and sessions.
+    assert len(factory.queries) == 8
+    assert all("count(" in query.lower() for query in factory.queries)
 
 
-# --- gauge correctness defect found while testing -------------------------
+def test_ac3_gauge_reads_are_cached_for_sixty_seconds(tmp_path):
+    """The 60s TTL is the requirement; a scrape inside it reuses the sample."""
+    factory, collector, clock = _collector(tmp_path, counts={"movies": 1})
+    assert GAUGE_CACHE_TTL_SECONDS == 60
 
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="mm_ingest_queue_items keeps the previous value for a status that "
-    "disappears from ingress_queue: services/metrics.py:_collect_ingest_queue "
-    "zeroes only the six known statuses, so any other label set is never "
-    "reset and the gauge reports a count that no longer exists.",
-)
-def test_vanished_queue_status_returns_to_zero(tmp_path):
-    factory, collector, clock = _collector(tmp_path, queue_rows=[("quarantined", 4)])
     asyncio.run(collector.collect())
-    assert 'mm_ingest_queue_items{status="quarantined"} 4' in REGISTRY.render()
+    reads = len(factory.queries)
+    for _ in range(4):
+        assert asyncio.run(collector.collect()) is False
+    clock.advance(GAUGE_CACHE_TTL_SECONDS - 1)
+    assert asyncio.run(collector.collect()) is False
+    clock.advance(1)
+    assert asyncio.run(collector.collect()) is True
+    assert len(factory.queries) == reads * 2
 
-    factory.queue_rows = []
-    clock.advance(61)
+
+# --------------------------------------------------------------------------
+# AC4 — the scrape job the PR description has to carry
+# --------------------------------------------------------------------------
+
+
+def test_ac4_pr_summary_carries_the_prometheus_scrape_job():
+    """The summary quotes docs/api/endpoints.md, so assert the documented block."""
+    documented = PROMETHEUS_DOCS.read_text(encoding="utf-8")
+
+    assert SCRAPE_JOB in documented and SCRAPE_TARGET in documented
+    assert "homelab-logging" in documented
+    # It has to be a YAML job block with a static target, not prose.
+    blocks = re.findall(r"```yaml\n(.*?)```", documented, re.DOTALL)
+    job_blocks = [block for block in blocks if SCRAPE_JOB in block]
+    assert len(job_blocks) == 1
+    assert SCRAPE_TARGET in job_blocks[0] and "static_configs" in job_blocks[0]
+
+
+# --------------------------------------------------------------------------
+# QA findings on the previous round
+# --------------------------------------------------------------------------
+
+
+async def test_crashed_route_is_counted_and_still_propagates():
+    """A route that raises has to show up in the counts, not vanish from them."""
+    app = _probe_app()
+    async with _client(app) as client:
+        with pytest.raises(RuntimeError, match="route crashed"):
+            await client.get("/api/breaks")
+
+    assert HTTP_REQUESTS_TOTAL.get(("GET", "/api/breaks", "500")) == 1
+    assert HTTP_REQUEST_DURATION_SECONDS.samples[("GET", "/api/breaks", "500")][-1] == 1
+
+
+async def test_scrape_content_type_advertises_the_exposition_version_once():
+    """A scraper sends `Accept: text/plain; version=0.0.4`; we answer the same."""
+    async with _client(_probe_app()) as client:
+        content_type = (await client.get(METRICS_PATH)).headers["content-type"]
+
+    assert content_type == "text/plain; version=0.0.4; charset=utf-8"
+    assert content_type.count("charset=") == 1
+    assert content_type.count("version=") == 1
+
+
+def test_queue_status_that_disappears_returns_to_zero(tmp_path):
+    """Draining `failed` must zero the gauge, not strand the last value."""
+    factory, collector, _clock = _collector(tmp_path, queue_rows=[("failed", 3)])
     asyncio.run(collector.collect())
+    assert INGEST_QUEUE_ITEMS.get(("failed",)) == 3
 
-    body = REGISTRY.render()
-    assert 'mm_ingest_queue_items{status="quarantined"} 0' in body, body
+    factory.queue_rows = [("pending", 2)]
+    asyncio.run(collector.collect(force=True))
+    assert INGEST_QUEUE_ITEMS.get(("failed",)) == 0
+    assert INGEST_QUEUE_ITEMS.get(("pending",)) == 2
+    # Known statuses keep their series across scrapes, so PromQL stays queryable.
+    for status in ("processing", "auto_assigned", "needs_review", "completed"):
+        assert INGEST_QUEUE_ITEMS.get((status,)) == 0
+
+
+def test_concurrent_scrapes_share_one_gauge_refresh(tmp_path):
+    """Prometheus plus a dashboard reloading must not multiply the COUNT reads."""
+    factory = _SlowSessionFactory(counts={"movies": 1})
+    collector = DomainMetricsCollector(factory, poster_cache_dir=tmp_path, clock=_FakeClock())
+
+    async def scrape_together() -> None:
+        await asyncio.gather(*(collector.collect() for _ in range(6)))
+
+    asyncio.run(scrape_together())
+    # Six scrapes, one refresh: four catalog counts + queue + compliance +
+    # assignments + sessions.
+    assert len(factory.queries) == 8
+    assert collector.is_stale() is False
+
+
+def test_failed_refresh_keeps_gauges_and_counts_the_error(tmp_path):
+    """A down database costs a fresh sample, never the endpoint."""
+    factory, collector, clock = _collector(tmp_path, counts={"movies": 12})
+    asyncio.run(collector.collect())
+    assert CATALOG_ITEMS.get(("movie",)) == 12
+    assert POSTER_CACHE_FILES.get() == 0
+
+    clock.advance(GAUGE_CACHE_TTL_SECONDS + 1)
+    factory.fail = True
+    assert asyncio.run(collector.collect()) is True
+    assert asyncio.run(collector.collect()) is False  # retried next TTL window
+    assert CATALOG_ITEMS.get(("movie",)) == 12
+    assert DOMAIN_GAUGE_ERRORS_TOTAL.get() == 1

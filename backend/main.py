@@ -391,10 +391,8 @@ app.add_middleware(
 # log line emitted while handling this request carries the same searchable ID.
 app.add_middleware(CorrelationMiddleware)
 
-# Request count + latency for the Prometheus RED dashboards. Added last so it is
-# the outermost of the app middlewares and observes the final response status
-# (after the JSON error handling and CORS), with the route template as the label
-# so parameterised paths stay one series. /metrics itself is skipped.
+# Request count + latency for the Prometheus RED dashboards, added last so it is
+# the outermost middleware and sees the final response status. /metrics is skipped.
 app.add_middleware(MetricsMiddleware)
 
 # Include API routers with prefixes and tags for OpenAPI documentation

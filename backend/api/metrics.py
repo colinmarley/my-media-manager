@@ -1,16 +1,11 @@
 """
 GET /metrics plus the HTTP request instrumentation (issue #14).
 
-Prometheus pulls metrics, so this endpoint is unauthenticated — same contract as
-GET /health, and required for a scraper that has no media-manager credentials.
-
-Two pieces:
-  * route_template() + MetricsMiddleware: per-request count and latency, always
-    labelled with the matched route *template* so parameterised URLs
-    (/api/posters/movie/tt0111166) collapse into one series instead of one per
-    catalog record.
-  * the metrics router: renders the registry and refreshes the cached domain
-    gauges when their TTL has expired.
+Prometheus pulls metrics, so the endpoint is unauthenticated — same contract as
+GET /health, and required for a scraper with no media-manager credentials.
+route_template() and MetricsMiddleware label every request with the matched route
+*template*, so /api/posters/movie/tt0111166 stays one series instead of one per
+record; the router renders the registry and refreshes the cached domain gauges.
 """
 
 import time
@@ -27,51 +22,43 @@ from services.metrics import (
     REGISTRY,
 )
 
-# Requests to /metrics itself are not instrumented: a 15s scrape interval would
-# otherwise add its own series (and latency samples) to the data it exports.
+# Scrapes of /metrics are not instrumented: they would pollute their own data.
 METRICS_PATH = "/metrics"
 
-# Everything that matches no route (favicon, path scanners, deleted endpoints)
-# shares one label. A raw path would blow up cardinality on every probe.
+# Requests matching no route (favicon, path scanners, deleted endpoints) share one
+# label; a raw path would mint one series per probe.
 UNMATCHED_PATH_LABEL = "unmatched"
 
 
 def route_template(scope: dict) -> str:
-    """Route template for an ASGI scope: path_format() with its {param} back."""
-    route = scope.get("route")
-    if route is not None:
-        template = getattr(route, "path", None) or getattr(route, "path_format", None)
-        if template:
-            return template
+    """Route template for an ASGI scope, with its {param} placeholders kept."""
+    template = getattr(scope.get("route"), "path", None)
+    if template:
+        return template
 
-    app = scope.get("app")
-    for candidate in getattr(app, "routes", []) if app is not None else []:
-        match, child_scope = candidate.matches(scope)
-        if match == Match.NONE:
-            continue
-        if match == Match.PARTIAL and not child_scope.get("path_params"):
-            # A partial match with no parameters is a Mount prefix (no route of
-            # ours served this path), not the 405-on-a-parameterised-route case.
-            return UNMATCHED_PATH_LABEL
-        # path_format keeps the {param} placeholders; path is the same for the
-        # function-decorated routes that have no parameters.
-        template = getattr(candidate, "path_format", None) or getattr(candidate, "path", None)
-        return template or UNMATCHED_PATH_LABEL
-    return UNMATCHED_PATH_LABEL
+    match_template = None
+    for route in getattr(scope.get("app"), "routes", ()):
+        matched, child_scope = route.matches(scope)
+        # A full match serves the request; a partial match *with* parameters is a
+        # wrong-method hit on the same route. A partial match with no parameters
+        # is a Mount prefix no route of ours answered, so it stays unmatched.
+        if matched == Match.FULL or (matched != Match.NONE and child_scope.get("path_params")):
+            match_template = match_template or getattr(route, "path_format", None) or route.path
+    return match_template or UNMATCHED_PATH_LABEL
+
+
+def _record(labels: list, started: float) -> None:
+    key = tuple(labels)
+    HTTP_REQUESTS_TOTAL.inc(key)
+    HTTP_REQUEST_DURATION_SECONDS.observe(key, time.perf_counter() - started)
 
 
 class MetricsMiddleware(BaseHTTPMiddleware):
-    """Counts and times every request once the response is decided.
+    """Counts and times every request once its response is decided.
 
-    The latency sample is taken when the response *starts*, which is the same as
-    its completion for the JSON routes here and time-to-first-byte for any route
-    that streams its body.
+    The latency sample is taken when the response *starts*: completion for the
+    JSON routes here, time-to-first-byte for anything that streams.
     """
-
-    @staticmethod
-    def _record(labels: tuple, started: float) -> None:
-        HTTP_REQUESTS_TOTAL.inc(labels)
-        HTTP_REQUEST_DURATION_SECONDS.observe(labels, time.perf_counter() - started)
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.scope.get("path", "")
@@ -79,21 +66,21 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         started = time.perf_counter()
-        # Route template is resolved before dispatching: a route that raises
-        # unwinds the scope without it, and that request still has to be counted.
+        # Resolved before dispatching: a route that raises unwinds the scope
+        # without it, and that request still has to be counted.
         labels = [request.method, route_template(request.scope)]
         try:
             response = await call_next(request)
             labels.append(str(getattr(response, "status_code", 200)))
         except Exception:
             # Record it, then put the exception back on its way so the error
-            # middleware still turns it into a 500 body — a crashing route must
-            # show up in the counts instead of vanishing from them.
+            # middleware still turns it into a 500 body: a crashing route shows up
+            # in the counts instead of vanishing from them.
             labels.append("500")
-            self._record(tuple(labels), started)
+            _record(labels, started)
             raise
 
-        self._record(tuple(labels), started)
+        _record(labels, started)
         return response
 
 
@@ -102,7 +89,7 @@ router = APIRouter()
 
 @router.get(METRICS_PATH, include_in_schema=False)
 async def metrics(request: Request) -> Response:
-    """Prometheus text exposition of HTTP metrics and the domain gauges."""
+    """Prometheus text exposition of the HTTP metrics and the domain gauges."""
     collector = getattr(request.app.state, "domain_metrics", None)
     if collector is not None:
         await collector.collect()

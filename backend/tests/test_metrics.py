@@ -8,32 +8,37 @@ exposition is asserted line by line. The endpoint tests use the real app: an
 unauthenticated 200 is the contract (same as /health), because a Prometheus
 scraper has no session cookie to send.
 
-Issue #14 acceptance criteria -> the tests that pin them (16 tests, all in this
-file):
+Issue #14 acceptance criteria -> the tests that pin them (test_metrics.py
+first, test_metrics_qa_probe.py holds the one-test-per-criterion mapping):
 
-  AC1 GET /metrics, unauthenticated, Prometheus text, request count and latency
-      per route template and status:
+  AC1 an unauthenticated GET /metrics endpoint in Prometheus text format:
         test_metrics_endpoint_is_unauthenticated_prometheus_text
         test_rendered_exposition_parses_as_prometheus_text
         test_scrape_of_a_dead_database_still_returns_parsable_metrics
         test_metrics_endpoint_asks_the_collector_on_every_scrape
         test_metrics_scrapes_are_not_instrumented
+        -> plus test_ac1_get_metrics_is_unauthenticated_prometheus_text
+  AC2 HTTP request count and latency labelled by route and status:
         test_metrics_middleware_records_crashed_requests_as_500
         test_route_template_collapses_parameterised_paths
         test_route_template_groups_unmatched_paths_into_one_series
         test_parameterised_routes_stay_one_series_through_the_middleware
         test_unmatched_requests_share_one_series
-  AC2 the six domain gauges, from cheap COUNT queries cached for 60s:
+        -> plus test_ac2_request_count_and_latency_are_labelled_by_route_and_status
+  AC3 gauges for catalog items, ingest queue depth, compliance findings, media
+      assignments, poster cache files and active sessions, read from cheap
+      COUNT queries and cached for 60s:
         test_domain_gauges_read_counts_from_the_database
         test_gauge_reads_are_filtered_counts_not_table_scans
         test_gauge_counts_are_cached_for_sixty_seconds
         test_failed_gauge_collection_keeps_the_previous_values
         test_ingest_queue_gauge_always_emits_the_known_statuses
         test_poster_cache_gauge_counts_files_on_disk
-  AC3 endpoint renders + gauges read from mocked counts:
-      the whole file; the two named checks are
-      test_metrics_endpoint_is_unauthenticated_prometheus_text (renders) and
-      test_domain_gauges_read_counts_from_the_database (mocked counts).
+        -> plus test_ac3_six_domain_gauges_come_from_mocked_count_queries
+  AC4 the PR description carries the Prometheus scrape job
+      (job media-manager, target 192.168.0.227:8082, documented in
+      docs/api/endpoints.md):
+        -> test_ac4_pr_summary_carries_the_prometheus_scrape_job
 """
 
 import asyncio
@@ -620,12 +625,10 @@ async def test_scrape_of_a_dead_database_still_returns_parsable_metrics():
         main.app.state.domain_metrics = previous
 
     assert response.status_code == 200
-    # Starlette appends its own charset to any text/* media type, so the header
-    # carries a duplicated `charset=utf-8` parameter; the media type and the
-    # version parameter are what the Prometheus scraper keys on.
+    # Starlette adds `; charset=utf-8` to the `text/plain; version=0.0.4` media
+    # type, so the header carries the exposition version and one charset.
     content_type = response.headers["content-type"]
-    assert content_type.startswith("text/plain")
-    assert "version=0.0.4" in content_type
+    assert content_type == "text/plain; version=0.0.4; charset=utf-8"
     _assert_prometheus_text(response.text)
     for gauge in (
         "mm_catalog_items",
