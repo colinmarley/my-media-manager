@@ -7,6 +7,33 @@ against a fake session factory whose COUNT results are known and the rendered
 exposition is asserted line by line. The endpoint tests use the real app: an
 unauthenticated 200 is the contract (same as /health), because a Prometheus
 scraper has no session cookie to send.
+
+Issue #14 acceptance criteria -> the tests that pin them (16 tests, all in this
+file):
+
+  AC1 GET /metrics, unauthenticated, Prometheus text, request count and latency
+      per route template and status:
+        test_metrics_endpoint_is_unauthenticated_prometheus_text
+        test_rendered_exposition_parses_as_prometheus_text
+        test_scrape_of_a_dead_database_still_returns_parsable_metrics
+        test_metrics_endpoint_asks_the_collector_on_every_scrape
+        test_metrics_scrapes_are_not_instrumented
+        test_metrics_middleware_records_crashed_requests_as_500
+        test_route_template_collapses_parameterised_paths
+        test_route_template_groups_unmatched_paths_into_one_series
+        test_parameterised_routes_stay_one_series_through_the_middleware
+        test_unmatched_requests_share_one_series
+  AC2 the six domain gauges, from cheap COUNT queries cached for 60s:
+        test_domain_gauges_read_counts_from_the_database
+        test_gauge_reads_are_filtered_counts_not_table_scans
+        test_gauge_counts_are_cached_for_sixty_seconds
+        test_failed_gauge_collection_keeps_the_previous_values
+        test_ingest_queue_gauge_always_emits_the_known_statuses
+        test_poster_cache_gauge_counts_files_on_disk
+  AC3 endpoint renders + gauges read from mocked counts:
+      the whole file; the two named checks are
+      test_metrics_endpoint_is_unauthenticated_prometheus_text (renders) and
+      test_domain_gauges_read_counts_from_the_database (mocked counts).
 """
 
 import asyncio
