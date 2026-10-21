@@ -69,7 +69,7 @@ const BULK_SELECTABLE_STATUSES = new Set(['needs_review', 'auto_assigned']);
 const ACTIVE_QUEUE_STATUSES = new Set(['pending', 'processing', 'needs_review', 'auto_assigned']);
 const ASSIGN_RESULTS_BATCH_SIZE = 10;
 
-export function isQueueItemSelectable(item: IngressQueueItem): boolean {
+function isQueueItemSelectable(item: IngressQueueItem): boolean {
   return ACTIVE_QUEUE_STATUSES.has(item.status) && BULK_SELECTABLE_STATUSES.has(item.status);
 }
 
