@@ -3,6 +3,7 @@
 import React, { useEffect } from 'react';
 import { Stack } from '@mui/material';
 import { createDisc, updateDisc } from '@/service/catalog/DiscCatalogService';
+import { lookupUpc, scanCover } from '@/service/catalog/DiscLookupService';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
 import {
   FormCheckbox, FormDialog, FormSelectField, FormTextField, useZodForm,
@@ -15,6 +16,17 @@ const toOptions = (values: readonly string[]) => values.map((value) => ({ value 
 const FORMAT_OPTIONS = toOptions(DISC_FORMATS);
 const CONDITION_OPTIONS = toOptions(DISC_CONDITIONS);
 const REGION_OPTIONS = toOptions(DISC_REGIONS);
+
+// Fields a barcode lookup or cover scan can suggest.
+type Suggestion = { title?: string; format?: DiscFormat; releaseDate?: string };
+type SuggestionKey = keyof Suggestion;
+const SUGGESTION_LABELS: Record<SuggestionKey, string> = {
+  title: 'Title', format: 'Format', releaseDate: 'Release date',
+};
+
+function asFormat(value?: string | null): DiscFormat | undefined {
+  return FORMATS.find((f) => f === value);
+}
 
 export default function DiscEditDialog({
   open,

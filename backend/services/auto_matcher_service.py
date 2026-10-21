@@ -147,53 +147,6 @@ class AutoMatcherService:
             "best_match": best_candidate.to_dict() if best_candidate else None,
         }
 
-    def _count_episode_level_assignments(
-        self,
-        series_id: str,
-        season: Optional[int],
-        episode: Optional[int],
-    ) -> int:
-        if season is None or episode is None:
-            return 0
-
-        return 0  # Postgres episode count not yet implemented
-
-    def _extract_file_association_count(self, payload: Dict[str, Any]) -> int:
-        assignment_summary = payload.get("assignmentSummary") or {}
-        if isinstance(assignment_summary, dict):
-            total_files = assignment_summary.get("totalFiles")
-            if isinstance(total_files, int):
-                return max(total_files, 0)
-
-        file_count = payload.get("fileCount")
-        if isinstance(file_count, int):
-            return max(file_count, 0)
-
-        library_files = payload.get("libraryFiles")
-        if isinstance(library_files, list):
-            return len(library_files)
-
-        return 0
-
-    def _extract_year_from_doc(self, payload: Dict[str, Any]) -> Optional[int]:
-        external_year = payload.get("year")
-        if isinstance(external_year, int):
-            return external_year
-
-        omdb_data = payload.get("omdbData")
-        if isinstance(omdb_data, dict):
-            return self._parse_year(str(omdb_data.get("Year") or ""))
-
-        release_date = payload.get("releaseDate")
-        if isinstance(release_date, str):
-            return self._parse_year(release_date)
-
-        running_dates = payload.get("runningDates")
-        if isinstance(running_dates, str):
-            return self._parse_year(running_dates)
-
-        return None
-
     def _extract_imdb_id(self, payload: Dict[str, Any]) -> Optional[str]:
         external_ids = payload.get("externalIds")
         if isinstance(external_ids, dict):

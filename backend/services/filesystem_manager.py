@@ -10,7 +10,6 @@ from pathvalidate import validate_filepath, ValidationError
 from config.settings import settings
 from utils.exceptions import (
     PathSecurityError,
-    InsufficientPermissionsError,
     FileOperationError
 )
 from utils.logging import log_file_operation, logger

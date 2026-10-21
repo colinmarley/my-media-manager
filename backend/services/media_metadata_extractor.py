@@ -1,6 +1,10 @@
 """
 Enhanced media metadata extractor for video, audio, and subtitle tracks.
 Extracts comprehensive technical specifications to populate MediaFile interface.
+
+Owns MediaFile-shaped (camelCase) metadata built from pymediainfo. Raw ffprobe
+output and thumbnail generation live in ``services/metadata_extractor.py``
+(``MetadataExtractor``); see that module's docstring for the split.
 """
 
 import os

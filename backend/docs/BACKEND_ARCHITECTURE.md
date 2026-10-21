@@ -242,12 +242,7 @@ _format_duration()            # Format duration values
 
 **Core Methods**:
 ```python
-submit_task()                 # Submit new background task
-get_task_status()            # Retrieve task status
-cancel_task()                # Cancel running task
-get_all_tasks()              # List all tasks
-cleanup_old_tasks()          # Remove completed tasks
-_run_task()                  # Execute task with progress
+cleanup_old_tasks()          # Remove completed tasks (called on shutdown)
 ```
 
 **Task States**:
