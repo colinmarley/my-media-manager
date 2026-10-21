@@ -51,9 +51,11 @@ from api.cover_scan import router as cover_scan_router
 from api.ripper_proxy import router as ripper_proxy_router
 from api.wishlist import router as wishlist_router
 from api.storage_locations import router as storage_locations_router
+from api.metrics import MetricsMiddleware, router as metrics_router
 from api.errors import install_error_handling
 from db.database import engine, Base, AsyncSessionLocal
 from db.models import AppConfig
+from services.metrics import DomainMetricsCollector
 from services.filesystem_manager import FileSystemManager
 from services.file_watcher_service import FileWatcherService
 from services.ingress_queue_service import IngressQueueService
@@ -389,6 +391,12 @@ app.add_middleware(
 # log line emitted while handling this request carries the same searchable ID.
 app.add_middleware(CorrelationMiddleware)
 
+# Request count + latency for the Prometheus RED dashboards. Added last so it is
+# the outermost of the app middlewares and observes the final response status
+# (after the JSON error handling and CORS), with the route template as the label
+# so parameterised paths stay one series. /metrics itself is skipped.
+app.add_middleware(MetricsMiddleware)
+
 # Include API routers with prefixes and tags for OpenAPI documentation
 app.include_router(file_router, prefix="/api/files", tags=["File Operations"])
 app.include_router(file_browser_router, tags=["File Browser"])
@@ -411,6 +419,12 @@ app.include_router(ripper_proxy_router)
 app.include_router(wishlist_router)
 app.include_router(storage_locations_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
+# Unauthenticated like /health — Prometheus pulls metrics and has no session cookie.
+app.include_router(metrics_router)
+
+# Gauges (catalog counts, ingest queue, compliance, assignments, poster cache,
+# sessions). Built at import so tests can override app.state.domain_metrics.
+app.state.domain_metrics = DomainMetricsCollector(AsyncSessionLocal)
 
 @app.get("/")
 async def root():
