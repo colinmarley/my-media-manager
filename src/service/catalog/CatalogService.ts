@@ -11,6 +11,7 @@
  */
 import { api } from '../api/apiClient';
 import { LibraryPath } from '../../types/library/LibraryTypes';
+import { notify } from '../../context/NotificationContext';
 
 const CATALOG_COLLECTIONS = new Set(['movies', 'series', 'discs']);
 
@@ -51,7 +52,7 @@ class CatalogService {
         (data.fullName as string) ||
         (data.name as string) ||
         'document';
-      alert(`Added ${displayName} to the database`);
+      notify(`Added ${displayName} to the database`, 'success');
     } catch (e) {
       console.error('Error adding document:', e);
     }
