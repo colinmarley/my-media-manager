@@ -10,11 +10,12 @@ scraper has no session cookie to send.
 """
 
 import asyncio
+import re
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from api.metrics import METRICS_PATH, route_template
+from api.metrics import METRICS_PATH, MetricsMiddleware, route_template
 from services.metrics import (
     DOMAIN_GAUGE_ERRORS_TOTAL,
     DURATION_BUCKETS_SECONDS,
@@ -403,3 +404,208 @@ def test_route_template_groups_unmatched_paths_into_one_series():
     # A scanner probing arbitrary paths must not add a series per probe.
     for path in ("/favicon.ico", "/api/does-not-exist", "/api/posters/movie"):
         assert route_template(_scope("GET", path)) == "unmatched"
+
+
+@pytest.mark.asyncio
+async def test_parameterised_routes_stay_one_series_through_the_middleware():
+    """End-to-end: two different ids must not mint two series."""
+    from fastapi import FastAPI
+
+    service = FastAPI()
+    service.add_middleware(MetricsMiddleware)
+
+    @service.get("/api/items/{item_id}")
+    async def item(item_id: str):
+        return {"id": item_id}
+
+    async with AsyncClient(
+        transport=ASGITransport(app=service), base_url="http://test"
+    ) as client:
+        assert (await client.get("/api/items/tt0111166")).status_code == 200
+        assert (await client.get("/api/items/tt0108778")).status_code == 200
+
+    body = REGISTRY.render()
+    expected = 'mm_http_requests_total{method="GET",path="/api/items/{item_id}",status="200"}'
+    assert f"{expected} 2" in body
+    assert (
+        'mm_http_request_duration_seconds_count{method="GET",'
+        'path="/api/items/{item_id}",status="200"} 2' in body
+    )
+    # A concrete catalog id in a label would mean one series per record.
+    assert "tt0111166" not in body
+    assert "tt0108778" not in body
+
+
+class _StatementCapturingSession(_FakeSession):
+    async def scalar(self, statement):
+        self.factory.statements.append(statement)
+        return await super().scalar(statement)
+
+    async def execute(self, statement):
+        self.factory.statements.append(statement)
+        return await super().execute(statement)
+
+
+class _StatementCapturingSessionFactory(_FakeSessionFactory):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.statements = []
+
+    def __call__(self):
+        return _StatementCapturingSession(self)
+
+
+def test_gauge_reads_are_filtered_counts_not_table_scans(tmp_path):
+    factory = _StatementCapturingSessionFactory(
+        counts={"compliance_findings": 7, "sessions": 4, "media_assignments": 9}
+    )
+    collector = DomainMetricsCollector(factory, poster_cache_dir=tmp_path, clock=_FakeClock())
+    asyncio.run(collector.collect())
+
+    flat = [" ".join(str(statement).split()) for statement in factory.statements]
+    assert len(flat) == 8
+    for statement in flat:
+        assert "count(" in statement.lower(), statement
+        assert " limit " not in statement.lower(), statement
+
+    compliance = next(item for item in flat if "FROM compliance_findings" in item)
+    assert "WHERE compliance_findings.status =" in compliance
+    compliance_statement = next(
+        statement
+        for statement in factory.statements
+        if "FROM compliance_findings" in " ".join(str(statement).split())
+    )
+    assert "'open'" in str(compliance_statement.compile(compile_kwargs={"literal_binds": True}))
+
+    sessions = next(item for item in flat if "FROM sessions" in item)
+    assert "WHERE sessions.expires_at >" in sessions
+    session_statement = next(
+        statement
+        for statement in factory.statements
+        if "FROM sessions" in " ".join(str(statement).split())
+    )
+    cutoff = list(session_statement.compile().params.values())[0]
+    # sessions.expires_at is timestamptz: a naive datetime here would either
+    # error in Postgres or count every expired session as active.
+    assert cutoff.tzinfo is not None
+
+    assignments = next(item for item in flat if "FROM media_assignments" in item)
+    assert "WHERE" not in assignments
+
+
+# --------------------------------------------------------------------------
+# Exposition format conformance — a scrape has to parse
+# --------------------------------------------------------------------------
+
+
+_LABEL_PAIR = r'[a-zA-Z_][a-zA-Z0-9_]*="(?:[^"\\\n]|\\[n"\\])*"'
+_SAMPLE_LINE = re.compile(
+    r"^[a-zA-Z_:][a-zA-Z0-9_:]*"
+    r"(?:\{" + _LABEL_PAIR + r"(?:," + _LABEL_PAIR + r")*\})?"
+    r" -?(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\+Inf|-Inf|NaN)$"
+)
+_HELP_LINE = re.compile(r"^# HELP [a-zA-Z_:][a-zA-Z0-9_:]*( .*)?$")
+_TYPE_LINE = re.compile(r"^# TYPE [a-zA-Z_:][a-zA-Z0-9_:]* (counter|gauge|untyped|histogram|summary)$")
+
+
+def _assert_prometheus_text(body: str) -> None:
+    """Line-by-line check against the text exposition grammar."""
+    families = {}
+    for line in body.splitlines():
+        if not line:
+            continue
+        if line.startswith("# TYPE "):
+            match = _TYPE_LINE.match(line)
+            assert match, line
+            name = line.split()[2]
+            assert name not in families, f"duplicate TYPE for {name}"
+            families[name] = match.group(1)
+            continue
+        if line.startswith("# HELP "):
+            assert _HELP_LINE.match(line), line
+            continue
+        assert not line.startswith("#"), line
+        assert _SAMPLE_LINE.match(line), line
+        sample = line.split("{")[0].split(" ")[0]
+        assert any(
+            sample == name or sample.startswith(f"{name}_") for name in families
+        ), f"{sample} is exported without a TYPE line"
+
+    # Histogram buckets: one cumulative run per series, +Inf last and never
+    # decreasing, which is what PromQL histogram_quantile() depends on.
+    buckets: dict[str, list[tuple[str, int]]] = {}
+    for line in body.splitlines():
+        if "_bucket{" not in line:
+            continue
+        series, _, rest = line.partition(',le="')
+        bound, _quote, tail = rest.partition('"')
+        buckets.setdefault(series, []).append((bound, int(tail.lstrip("} "))))
+    for series, samples in buckets.items():
+        assert samples[-1][0] == "+Inf", series
+        previous = -1
+        for bound, value in samples:
+            assert value >= previous, f"buckets are not cumulative: {bound}"
+            previous = value
+
+
+def test_rendered_exposition_parses_as_prometheus_text():
+    from services.metrics import (
+        CATALOG_ITEMS,
+        HTTP_REQUEST_DURATION_SECONDS,
+        HTTP_REQUESTS_TOTAL,
+        INGEST_QUEUE_ITEMS,
+        POSTER_CACHE_FILES,
+    )
+
+    HTTP_REQUESTS_TOTAL.inc(("GET", "/api/items/{item_id}", "200"))
+    HTTP_REQUESTS_TOTAL.inc(("GET", "/api/items/{item_id}", "200"), amount=3)
+    HTTP_REQUEST_DURATION_SECONDS.observe(("GET", "/api/items/{item_id}", "200"), 0.0031)
+    HTTP_REQUEST_DURATION_SECONDS.observe(("GET", "/api/items/{item_id}", "200"), 12.5)
+    CATALOG_ITEMS.set(("movie",), 118)
+    INGEST_QUEUE_ITEMS.set(("needs_review",), 0)
+    POSTER_CACHE_FILES.set(value=41)
+
+    body = REGISTRY.render()
+    _assert_prometheus_text(body)
+    assert body.endswith("\n")
+    assert (
+        'mm_http_requests_total{method="GET",path="/api/items/{item_id}",status="200"} 4' in body
+    )
+    inf_line = next(line for line in body.splitlines() if 'le="+Inf"' in line)
+    assert inf_line.endswith(" 2")
+
+
+@pytest.mark.asyncio
+async def test_scrape_of_a_dead_database_still_returns_parsable_metrics():
+    """The real collector against an unreachable DB: 200, never a 500."""
+    from db.database import AsyncSessionLocal
+
+    import main
+
+    previous = getattr(main.app.state, "domain_metrics", None)
+    main.app.state.domain_metrics = DomainMetricsCollector(AsyncSessionLocal)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=main.app), base_url="http://test"
+        ) as client:
+            response = await client.get(METRICS_PATH)
+    finally:
+        main.app.state.domain_metrics = previous
+
+    assert response.status_code == 200
+    # Starlette appends its own charset to any text/* media type, so the header
+    # carries a duplicated `charset=utf-8` parameter; the media type and the
+    # version parameter are what the Prometheus scraper keys on.
+    content_type = response.headers["content-type"]
+    assert content_type.startswith("text/plain")
+    assert "version=0.0.4" in content_type
+    _assert_prometheus_text(response.text)
+    for gauge in (
+        "mm_catalog_items",
+        "mm_ingest_queue_items",
+        "mm_compliance_findings_open",
+        "mm_media_assignments_total",
+        "mm_poster_cache_files",
+        "mm_sessions_active",
+    ):
+        assert f"# TYPE {gauge} gauge" in response.text
