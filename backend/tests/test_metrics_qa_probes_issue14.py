@@ -8,6 +8,23 @@ not a zero), histogram bucket boundaries (le is inclusive), and a *production*
 parameterised route minting one series per catalog record.
 
 Nothing here changes product code.
+
+Issue #14 acceptance criteria -> the probes this file adds (the one test per
+criterion lives in test_metrics_qa_probe.py):
+
+  AC1 unauthenticated GET /metrics in Prometheus text format:
+        test_qa_empty_database_still_exposes_every_gauge_as_zero
+        test_qa_counter_never_renders_a_float_for_whole_counts
+        test_qa_concurrent_endpoint_scrapes_both_succeed
+  AC2 request count and latency labelled by route template and status:
+        test_qa_real_app_parameterised_routes_stay_one_series
+        test_qa_status_labels_carry_the_real_statuses
+        test_qa_histogram_buckets_are_inclusive_and_cumulative
+  AC3 the six gauges, from cheap COUNT queries, cached for 60s:
+        test_qa_empty_database_still_exposes_every_gauge_as_zero
+        test_qa_second_scrape_of_an_empty_database_keeps_the_zeros
+  AC4 the scrape job for homelab-logging/prometheus/prometheus.yml:
+        test_ac4_pr_summary_carries_the_prometheus_scrape_job
 """
 
 import asyncio
