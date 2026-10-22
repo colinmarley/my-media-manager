@@ -4,7 +4,9 @@ Comprehensive documentation for the Media Library Management System.
 
 Folder layout: `architecture/` — current-state technical references;
 `api/` — endpoint reference; `guides/` — how-to docs for contributors;
-`completed/` — implementation logs for finished work, kept for history.
+`plans/` — proposals for work that has not been built yet (each slice is written as a
+ready-to-file issue body); `completed/` — implementation logs for finished work, kept
+for history.
 
 ## Table of Contents
 
@@ -21,6 +23,9 @@ Folder layout: `architecture/` — current-state technical references;
 - **[Poster Cache](./guides/POSTER_CACHE.md)** — How poster images are downloaded, cached, and served
 - **[Ingress Assignment Reference](./guides/INGRESS_ASSIGNMENT_REFERENCE.md)** — Auto-matching and confidence scoring
 - **[Collection Cataloguing Workflow](./guides/COLLECTION_CATALOGUING_WORKFLOW.md)** — User-facing walkthrough: catalogue from the mobile app, rip here, check what's unripped, find a disc physically — spans this repo, media-manager-mobile, and disc-ripper-service
+
+### Plans (not yet built)
+- **[Ingest Review Backlog — Epic #17 Slice Plan](./plans/ingest-review-backlog/README.md)** — issue-ready split: DB-backed grouped triage API, grouped triage UI, Jev confidence bulk-accept, and the queue-stall investigation
 
 ### Completed Work (implementation logs, kept for history)
 - **[Firebase → PostgreSQL Migration](./completed/FIREBASE_TO_POSTGRES_MIGRATION.md)** — How the data layer was migrated from Firestore to PostgreSQL
