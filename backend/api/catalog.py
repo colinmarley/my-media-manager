@@ -20,6 +20,7 @@ from typing import Any
 from db.database import get_db
 from db.models import Movie, Series, Disc, DiscSet, DiscMediaLink, Tape, TapeMediaLink, MediaFile
 from api.mobile_auth import require_any_auth
+from services.catalog_stats import RECENT_DAYS_DEFAULT, build_catalog_stats
 from config.settings import settings
 
 router = APIRouter(prefix="/api/catalog", tags=["Catalog"])
@@ -1280,3 +1281,35 @@ async def reassign_discs(body: dict[str, Any], db: AsyncSession = Depends(get_db
 def _detect_media_type(media_id: str, db: Any) -> str:
     """Placeholder — type is inferred from query in the endpoint above."""
     return "movie"
+
+
+# ---------------------------------------------------------------------------
+# Collection Stats
+# ---------------------------------------------------------------------------
+
+@router.get("/stats")
+async def catalog_stats(
+    recent_days: int = Query(default=RECENT_DAYS_DEFAULT, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Whole-catalog summary: counts by type, disc format and release
+    decade, what was added in the last `recent_days` (30 by default),
+    storage-location coverage, and what's currently lent out.
+
+    There is no existing stats endpoint to reuse — /metrics is Prometheus
+    scraping, not catalog figures — so the counting happens once here (in
+    services/catalog_stats.py) and the web page and mobile screen can share
+    it instead of each deriving totals from the list endpoints. Read-only
+    like every other GET in this router (no require_any_auth), at one query
+    per catalog table.
+
+    Loans have no column of their own, so "lent out" is read out of the
+    raw_data the mobile app writes (`loans` / `loanedTo` / `onLoan`).
+    """
+    movies = (await db.execute(select(Movie))).scalars().all()
+    series = (await db.execute(select(Series))).scalars().all()
+    discs = (await db.execute(select(Disc))).scalars().all()
+    tapes = (await db.execute(select(Tape))).scalars().all()
+    return build_catalog_stats(
+        movies=movies, series=series, discs=discs, tapes=tapes, recent_days=recent_days
+    )
