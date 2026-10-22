@@ -1329,6 +1329,13 @@ async def catalog_stats(
     `recentlyAdded.items` and `lentOut.items` are capped at 12 entries while
     their `count` stays the whole total — callers (the web stats page) show
     "Showing 12 of N" rather than pretending the list is the lot.
+
+    Issue #16 AC1 is pinned by backend/tests/test_catalog_stats.py::
+    test_ac1_endpoint_returns_every_breakdown_the_criterion_names (mocked DB),
+    with the route/auth/real-ORM/window/loan-shape probes in
+    tests/test_catalog_stats_qa_probes.py and
+    tests/test_catalog_stats_qa_probes_round2.py, and the per-figure
+    aggregator tests in tests/test_catalog_stats_builder.py.
     """
     movies = (await db.execute(select(Movie))).scalars().all()
     series = (await db.execute(select(Series))).scalars().all()

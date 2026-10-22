@@ -20,6 +20,37 @@ was still open after the rework:
 Note the endpoint takes no clock: `build_catalog_stats(now=...)` is only for
 tests, and the route leaves it out — so these probes build their rows off
 the real wall clock instead of a fixed date.
+
+Issue #16 acceptance criteria -> the tests here (issue #16):
+
+  AC1 "A backend endpoint `GET /api/catalog/stats`: counts by type, by disc
+      format, by decade of release, recently added (last 30 days),
+      with/without a storage location, lent out."
+      the whole path — route, one select per catalog table, aggregator, FastAPI
+      serialisation — over real ORM rows
+        -> backend/tests/test_catalog_stats_qa_probes_round2.py::test_endpoint_aggregates_real_orm_rows_end_to_end
+      recently added (last 30 days): the window reaches the aggregator, the
+      boundary is inclusive, NULL created_at rows are counted but never recent,
+      naive datetimes are read as UTC
+        -> ::test_recent_days_window_reaches_the_aggregator,
+           ::test_window_is_inclusive_exactly_at_the_boundary,
+           ::test_null_created_at_rows_are_counted_but_never_recent,
+           ::test_naive_created_at_is_treated_as_utc
+      lent out on every catalog type, and a nested borrower with no name
+        -> ::test_every_catalog_type_can_be_reported_as_lent_out,
+           ::test_nested_borrower_without_a_name_is_unspecified
+      item lists capped at twelve while the count stays the whole total
+        -> ::test_endpoint_caps_both_lists_but_keeps_the_whole_count
+      NULL raw_data (the column is nullable) breaks no figure
+        -> ::test_null_raw_data_column_does_not_break_any_figure
+
+  AC3 "Backend unit test for the endpoint (mocked DB) ..."
+        -> every test here drives the route through an AsyncMock session
+           injected with the `get_db` override; no database is contacted.
+
+AC2 (the /dashboard/stats page and its nav link) is traced in the frontend:
+tests/components/CatalogStatsPage.test.tsx, tests/components/CatalogStatsPageRound2.test.tsx,
+tests/components/AppShellNav.test.tsx.
 """
 
 from datetime import datetime, timedelta, timezone

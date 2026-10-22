@@ -8,6 +8,14 @@
  * out what it returns. Charts are plain width-scaled bars rather than a
  * charting dependency: the data is a handful of labelled counts, and a bar
  * is legible, printable and screen-reader friendly with a little markup.
+ *
+ * Issue #16 AC2 ("a `/dashboard/stats` page with summary tiles and simple
+ * charts (MUI or a light chart library already in use), linked from the nav")
+ * — the tests that pin this page and its nav link:
+ *   tests/components/CatalogStatsPage.test.tsx  (AC2 tiles/charts, AC3 render test)
+ *   tests/components/CatalogStatsPageRound2.test.tsx (loading, empty, retry, bar scaling)
+ *   tests/components/AppShellNav.test.tsx (the Stats link in the drawer)
+ *   tests/utils/CatalogStatsService.test.ts (the request this page issues)
  */
 
 import React, { useCallback, useEffect, useState } from 'react';

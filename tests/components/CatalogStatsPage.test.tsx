@@ -5,6 +5,34 @@
  * CatalogStatsService — mocking that module keeps this a pure render test
  * (no fetch stubbing, no backend) and pins the payload shape the backend
  * test asserts on.
+ *
+ * Issue #16 acceptance criteria -> the test that pins them here:
+ *
+ *   AC2 "A `/dashboard/stats` page with summary tiles and simple charts (MUI
+ *       or a light chart library already in use), linked from the nav."
+ *       tiles and charts in one page -> 'AC2 the page renders the summary tiles and
+ *                                       the simple charts the criterion asks for',
+ *                                       'fetches catalog stats and renders the summary tiles',
+ *                                       'charts items by type, disc format and release decade',
+ *                                       'lists recently added items and what is lent out',
+ *                                       'says what a capped list is leaving out',
+ *                                       'shows a retryable error instead of zeroes when the
+ *                                       endpoint fails'
+ *       the nav link (the other half of AC2) -> tests/components/AppShellNav.test.tsx ::
+ *                                       'links to the stats page from the drawer'
+ *       loading / empty / retry / refresh / bar scaling ->
+ *                                       tests/components/CatalogStatsPageRound2.test.tsx
+ *
+ *   AC3 "Backend unit test for the endpoint (mocked DB) and a render test for
+ *       the page."
+ *       the render test half of AC3 -> 'AC3 the render test needs no backend: one mocked
+ *                                       service call draws the whole page'
+ *                                       (the page never touches the network itself)
+ *       the mocked-DB endpoint half -> backend/tests/test_catalog_stats.py ::
+ *                                       test_ac3_the_endpoint_unit_tests_build_no_real_session
+ *
+ * AC1 (the GET /api/catalog/stats payload itself) is pinned server-side in
+ * backend/tests/test_catalog_stats.py; this file is what consumes that shape.
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
@@ -60,6 +88,7 @@ describe('StatsPage', () => {
   beforeEach(() => {
     getCatalogStats.mockReset();
     getCatalogStats.mockResolvedValue(stats);
+    vi.unstubAllGlobals();
   });
 
   it('fetches catalog stats and renders the summary tiles', async () => {
@@ -144,6 +173,41 @@ describe('StatsPage', () => {
     ).toEqual(['Showing 12 of 21', 'Showing 12 of 13']);
     expect(screen.getByText('Lent title 11')).toBeInTheDocument();
     expect(screen.queryByText('Recent title 12')).not.toBeInTheDocument();
+  });
+
+  it('AC2 the page renders the summary tiles and the simple charts the criterion asks for', async () => {
+    // AC2 names two things: summary tiles and simple charts. Count them both,
+    // so a page that keeps the tiles but loses a chart (or draws charts with
+    // no tiles) cannot pass on the more specific tests below.
+    render(<StatsPage />);
+
+    await screen.findByText('Total items');
+
+    const tiles = screen.getAllByTestId(/^tile-/);
+    expect(tiles.length).toBe(8); // total, movie, series, disc, tape, lent, no location, recent
+
+    for (const chart of ['By type', 'By disc format', 'By release decade', 'Storage locations']) {
+      expect(screen.getByText(chart)).toBeInTheDocument();
+    }
+    // "Simple charts" here means labelled bars drawn by this page — one bar per
+    // bucket, no charting dependency in the payload contract.
+    expect(screen.getAllByRole('progressbar')).toHaveLength(10);
+  });
+
+  it('AC3 the render test needs no backend: one mocked service call draws the whole page', async () => {
+    // AC3 asks for a render test of the page, not an integration test. The page
+    // must get everything from CatalogStatsService and never reach for the
+    // network itself, which is what lets this file run without a backend.
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+
+    render(<StatsPage />);
+
+    expect(await screen.findByText('Total items')).toBeInTheDocument();
+    expect(getCatalogStats).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
   });
 
   it('shows a retryable error instead of zeroes when the endpoint fails', async () => {

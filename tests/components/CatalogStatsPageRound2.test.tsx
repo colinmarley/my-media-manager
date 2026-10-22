@@ -12,6 +12,27 @@
  *     the largest bucket, not decoration;
  *   * undated counts of zero stay silent (the caption would otherwise read
  *     "0 record(s) have no release year").
+ *
+ * Issue #16 acceptance criteria -> the tests here:
+ *
+ *   AC2 "A `/dashboard/stats` page with summary tiles and simple charts (MUI
+ *       or a light chart library already in use), linked from the nav."
+ *       the page keeps its tiles when the catalog is empty
+ *         -> tests/components/CatalogStatsPageRound2.test.tsx::StatsPage round-2 probes > labels every panel as empty instead of drawing empty charts
+ *       the bars are charts, scaled to the largest bucket in their chart
+ *         -> ::draws one labelled bar per bucket, scaled to the largest in its chart
+ *       the page is usable while loading and recoverable after a failure
+ *         -> ::shows a loading indicator before the first payload arrives,
+ *            ::recovers through the Retry button after a failed load,
+ *            ::re-fetches when Refresh is pressed
+ *       the nav link half of AC2
+ *         -> tests/components/AppShellNav.test.tsx::app shell navigation (QA probe) > links to the stats page from the drawer
+ *
+ * AC1 (GET /api/catalog/stats) is pinned in backend/tests/test_catalog_stats.py;
+ * AC3 (a mocked-DB endpoint unit test and a page render test) resolves to
+ * backend/tests/test_catalog_stats.py::test_ac3_the_endpoint_unit_tests_build_no_real_session
+ * and tests/components/CatalogStatsPage.test.tsx::StatsPage > AC3 the render test
+ * needs no backend: one mocked service call draws the whole page.
  */
 import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';

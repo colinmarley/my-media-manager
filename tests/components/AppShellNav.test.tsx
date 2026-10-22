@@ -1,10 +1,25 @@
 /**
- * QA probe for the app shell (issue #16 AC2: "/dashboard/stats … linked from nav").
+ * QA probe for the app shell (issue #16 AC2: "A `/dashboard/stats` page with
+ * summary tiles and simple charts (MUI or a light chart library already in
+ * use), linked from the nav").
  *
  * The stats page test renders the page component in isolation, so nothing in
  * the suite proved the link exists in the drawer users actually click. This
  * renders the real root layout, opens the drawer and asserts the Stats link
  * points at /dashboard/stats.
+ *
+ * Issue #16 acceptance criteria -> the test here:
+ *
+ *   AC2 "... linked from the nav."
+ *     -> tests/components/AppShellNav.test.tsx::app shell navigation (QA probe) > links to the stats page from the drawer
+ *        (the tiles-and-charts half of AC2 is traced in
+ *         tests/components/CatalogStatsPage.test.tsx::StatsPage > AC2 the page
+ *         renders the summary tiles and the simple charts the criterion asks for)
+ *
+ *   AC1 (GET /api/catalog/stats) -> backend/tests/test_catalog_stats.py::test_ac1_endpoint_returns_every_breakdown_the_criterion_names
+ *   AC3 (mocked-DB endpoint test, page render test)
+ *     -> backend/tests/test_catalog_stats.py::test_ac3_the_endpoint_unit_tests_build_no_real_session
+ *     -> tests/components/CatalogStatsPage.test.tsx::StatsPage > AC3 the render test needs no backend: one mocked service call draws the whole page
  */
 
 import React from 'react';

@@ -1,22 +1,79 @@
 """
 Tests for GET /api/catalog/stats (issue #16 — web stats page).
 
-Uses the same mocked-AsyncSession pattern as test_catalog.py, so no real
-database is required.
+Uses the same mocked-AsyncSession pattern as test_catalog.py: an AsyncMock is
+injected through the `get_db` override, so no real database is required.
 
-Issue #16 acceptance criteria -> the test that covers it:
-  AC1 GET /api/catalog/stats returns collection counts:
-        test_stats_returns_counts_by_type_and_totals
-  AC2 by disc format / by release decade:
-        test_stats_groups_disc_formats_and_release_decades
-  AC3 recently added (last 30 days):
-        test_stats_recently_added_covers_only_the_last_thirty_days
-  AC4 with / without storage location:
-        test_stats_counts_storage_location_coverage
-  AC5 lent out items:
-        test_stats_counts_lent_out_items_and_skips_returned_loans
-        test_stats_reads_open_loans_from_the_mobile_loan_array
-        test_stats_skips_a_returned_bare_field_loan
+Issue #16 acceptance criteria -> the tests that pin them.  The three criteria
+are quoted from the issue; every one of them resolves to a named test, here or
+in a file named under it.
+
+  AC1 "A backend endpoint `GET /api/catalog/stats`: counts by type, by disc
+      format, by decade of release, recently added (last 30 days),
+      with/without a storage location, lent out."
+      all seven figures in one call -> test_ac1_endpoint_returns_every_breakdown_the_criterion_names
+      counts by type                -> test_stats_returns_counts_by_type_and_totals
+      by disc format                -> test_stats_groups_disc_formats_and_release_decades
+      by decade of release          -> test_stats_groups_disc_formats_and_release_decades
+      recently added (last 30 days) -> test_stats_recently_added_covers_only_the_last_thirty_days,
+                                      test_stats_recent_window_is_configurable
+      with / without a storage location
+                                    -> test_stats_counts_storage_location_coverage
+      lent out                      -> test_stats_counts_lent_out_items_and_skips_returned_loans,
+                                      test_stats_reads_open_loans_from_the_mobile_loan_array,
+                                      test_stats_skips_a_returned_bare_field_loan
+      item lists are capped, counts are not
+                                    -> test_stats_caps_its_item_lists_but_not_the_counts
+      the route exists, is not shadowed by `GET /api/catalog/{media_type}`
+      and shares the sibling GETs' auth posture
+                                    -> tests/test_catalog_stats_qa_probes.py ::
+                                      test_stats_route_registered_and_not_shadowed,
+                                      test_stats_endpoint_is_reachable_through_http,
+                                      test_stats_auth_posture_matches_sibling_catalog_gets
+      the same figures over real ORM rows rather than stand-in mocks
+                                    -> tests/test_catalog_stats_builder.py,
+                                      tests/test_catalog_stats_qa_probes.py ::
+                                      test_aggregates_real_orm_rows,
+                                      tests/test_catalog_stats_qa_probes_round2.py ::
+                                      test_endpoint_aggregates_real_orm_rows_end_to_end
+      regression: an empty catalog still answers 200 with empty buckets
+                                    -> test_stats_on_an_empty_catalog
+
+  AC2 "A `/dashboard/stats` page with summary tiles and simple charts (MUI or
+      a light chart library already in use), linked from the nav."
+      Traced in the frontend suite (`npx vitest run`), file::describe > test:
+      summary tiles and charts
+        -> tests/components/CatalogStatsPage.test.tsx::StatsPage > AC2 the page
+           renders the summary tiles and the simple charts the criterion asks for
+        -> tests/components/CatalogStatsPage.test.tsx::StatsPage > fetches
+           catalog stats and renders the summary tiles (tiles)
+        -> tests/components/CatalogStatsPage.test.tsx::StatsPage > charts items
+           by type, disc format and release decade (charts)
+        -> tests/components/CatalogStatsPage.test.tsx::StatsPage > lists
+           recently added items and what is lent out, > says what a capped list
+           is leaving out
+      linked from the nav
+        -> tests/components/AppShellNav.test.tsx::app shell navigation (QA
+           probe) > links to the stats page from the drawer
+      loading, empty, retry, refresh and bar scaling
+        -> tests/components/CatalogStatsPageRound2.test.tsx::StatsPage round-2
+           probes > (5 tests: loading indicator, empty panels, bar scaling,
+           Retry, Refresh)
+      the request the page issues
+        -> tests/utils/CatalogStatsService.test.ts::CatalogStatsService (QA
+           probes) > hits GET /api/catalog/stats through the backend proxy with
+           the 30-day window
+
+  AC3 "Backend unit test for the endpoint (mocked DB) and a render test for
+      the page."
+      backend unit test on a mocked DB, never a real session
+        -> backend/tests/test_catalog_stats.py::test_ac3_the_endpoint_unit_tests_build_no_real_session
+           (every other test in this file also drives the route through the
+           `get_db` override rather than a session factory)
+      render test for the page
+        -> tests/components/CatalogStatsPage.test.tsx::StatsPage > AC3 the
+           render test needs no backend: one mocked service call draws the
+           whole page
 
 The row fixtures here are mocks standing in for `scalars().all()` results, so
 the same figures are re-checked against real Movie/Series/Disc/Tape objects
@@ -242,6 +299,60 @@ async def test_stats_caps_its_item_lists_but_not_the_counts(app):
     assert len(stats["recentlyAdded"]["items"]) == 12
     assert stats["lentOut"]["count"] == 23
     assert len(stats["lentOut"]["items"]) == 12
+
+
+@pytest.mark.asyncio
+async def test_ac1_endpoint_returns_every_breakdown_the_criterion_names(app):
+    """AC1 read as one sentence, checked in one call: counts by type, by disc
+    format, by decade of release, recently added in the last 30 days, with /
+    without a storage location, and lent out — all seven in a single GET."""
+    movies, series, discs, tapes = _sample_rows()
+
+    stats = await _get_stats(app, _make_sequential_db(movies, series, discs, tapes))
+
+    assert stats["totalItems"] == 7
+    assert stats["byType"] == {"movie": 2, "series": 1, "disc": 3, "tape": 1}
+    assert stats["byDiscFormat"] == [
+        {"label": "Blu-ray", "count": 2},
+        {"label": "LaserDisc", "count": 1},
+    ]
+    assert stats["byDecade"] == [
+        {"label": "1970s", "startYear": 1970, "count": 3},
+        {"label": "2010s", "startYear": 2010, "count": 2},
+    ]
+    assert stats["recentDays"] == 30
+    assert stats["recentlyAdded"]["days"] == 30
+    assert stats["recentlyAdded"]["count"] == 4
+    assert stats["storage"] == {
+        "total": 4,
+        "withLocation": 2,
+        "withoutLocation": 2,
+        "byType": [{"label": "Binder", "count": 1}, {"label": "Box", "count": 1}],
+    }
+    assert stats["lentOut"] == {
+        "count": 1,
+        "items": [{"id": "d3", "title": "Mad Max Blu-ray", "type": "disc", "borrower": "Sam"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_ac3_the_endpoint_unit_tests_build_no_real_session(app, monkeypatch):
+    """AC3 asks for a backend unit test of the endpoint on a *mocked* DB, which
+    is what this file is.  Sabotage the real session factory to prove it: the
+    route must answer entirely from the injected AsyncMock (one select per
+    catalog table).  Were any test to fall back to `AsyncSessionLocal`, the
+    factory raises instead of quietly opening a connection to the dev DB."""
+
+    def no_real_sessions():
+        raise AssertionError("stats unit tests must not build a real DB session")
+
+    monkeypatch.setattr("db.database.AsyncSessionLocal", no_real_sessions)
+    session = _make_sequential_db([], [], [], [])
+
+    stats = await _get_stats(app, session)
+
+    assert session.execute.await_count == 4  # movies, series, discs, tapes
+    assert stats["totalItems"] == 0
 
 
 @pytest.mark.asyncio

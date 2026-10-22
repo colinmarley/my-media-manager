@@ -6,6 +6,23 @@
  * or a lost `recent_days` param would keep every page test green while the
  * live page 404s. These probes pin the request the page depends on, plus the
  * "errors are not swallowed" contract the page's retry panel relies on.
+ *
+ * Issue #16 acceptance criteria -> the tests here:
+ *
+ *   AC1 "A backend endpoint `GET /api/catalog/stats` ..." — the web half: what
+ *       the page actually asks that endpoint for.
+ *     -> tests/utils/CatalogStatsService.test.ts::CatalogStatsService (QA probes) > hits GET /api/catalog/stats through the backend proxy with the 30-day window
+ *     -> ::passes a custom window through as recent_days
+ *     -> ::rejects instead of returning zeroes when the endpoint fails
+ *        (figures, not zeros, come from the endpoint itself —
+ *         backend/tests/test_catalog_stats.py::test_ac1_endpoint_returns_every_breakdown_the_criterion_names)
+ *
+ *   AC2 "A `/dashboard/stats` page ..." — the request the page is built on.
+ *     -> the first test above; the page itself is rendered in
+ *        tests/components/CatalogStatsPage.test.tsx
+ *
+ *   AC3 — these probes are the mocked-fetch (no backend) counterpart of the
+ *        mocked-DB endpoint unit test AC3 asks for.
  */
 
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';

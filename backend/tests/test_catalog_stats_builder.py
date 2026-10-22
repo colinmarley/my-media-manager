@@ -10,6 +10,40 @@ a `MagicMock` answers every attribute, so it stays green if the service
 reads a column that does not exist, mis-orders the two sources, or invents a
 key in the payload. No database is needed — the service only reads
 attributes.
+
+Issue #16 acceptance criteria -> the tests here.  These are the aggregator
+half of AC1 and the "no database" half of AC3; the endpoint-level map lives in
+tests/test_catalog_stats.py.
+
+  AC1 "counts by type"            -> test_counts_by_type_totals_and_recent_window,
+                                    test_empty_catalog_has_no_buckets
+  AC1 "recently added (last 30 days)"
+                                  -> test_recent_window_is_inclusive_of_the_requested_days,
+                                    test_lists_are_capped_but_the_count_stays_the_whole_total
+  AC1 "by disc format"            -> test_disc_format_reads_the_column_then_raw_data_and_ignores_series_and_tapes,
+                                    test_disc_format_labels_are_normalised_not_verbatim,
+                                    test_unknown_or_missing_disc_format_buckets_as_unspecified
+  AC1 "by decade of release"      -> test_decades_prefer_running_years_then_carry_undated,
+                                    test_decades_read_the_mirrored_columns_before_raw_data,
+                                    test_invalid_year_text_never_opens_a_decade_bucket,
+                                    test_the_raw_data_year_fallback_holds_the_same_bounds
+  AC1 "with/without a storage location"
+                                  -> test_storage_locations_column_and_bare_counts_as_without
+  AC1 "lent out"                  -> test_unreturned_loans_count_as_lent_out_whatever_shape_they_are,
+                                    test_lent_out_items_carry_the_person_and_the_record_id,
+                                    test_returned_or_unreadable_loan_entries_are_not_lent_out,
+                                    test_a_return_marker_on_the_record_closes_a_bare_loan,
+                                    test_false_or_empty_return_markers_do_not_close_a_bare_loan,
+                                    test_an_explicit_false_loan_flag_outranks_a_stale_borrower_name,
+                                    test_a_loan_scoped_status_closes_the_loan,
+                                    test_a_series_status_is_never_a_loan_marker,
+                                    test_a_record_status_in_raw_data_is_not_a_loan_field,
+                                    test_both_loan_shapes_are_read_together
+  AC3 "backend unit test ... (mocked DB)"
+                                  -> every test in this file: the rows are real
+                                     Movie/Series/Disc/Tape instances built in
+                                     memory and never flushed, so no engine,
+                                     session or connection is involved.
 """
 
 from datetime import datetime, timedelta, timezone

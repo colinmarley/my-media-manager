@@ -19,6 +19,38 @@ Two probes used to carry `xfail(strict=True)` markers for a QA-found defect (a
 returned bare-field loan, or one closed by a plain boolean `returned`, still
 counting as lent out). The aggregator now reads both loan shapes and the full
 set of return markers, so the markers came off with the fix.
+
+Issue #16 acceptance criteria -> the tests here:
+
+  AC1 "A backend endpoint `GET /api/catalog/stats` ..." (what the other two
+      files leave unproven)
+      the route is registered, not shadowed by `/api/catalog/{media_type}`,
+      reachable over ASGI HTTP and shares the sibling GETs' auth posture
+                                  -> test_stats_route_registered_and_not_shadowed,
+                                    test_stats_endpoint_is_reachable_through_http,
+                                    test_stats_auth_posture_matches_sibling_catalog_gets
+      counts by type, by disc format, by decade, with/without a storage
+      location, lent out, recently added — over real ORM rows, serialisable
+      as JSON                                -> test_aggregates_real_orm_rows,
+                                                 test_real_rows_are_serialisable_as_json
+      recently added (last 30 days) boundary and `recent_days` validation
+                                  -> test_recently_added_window_boundary,
+                                    test_recent_days_is_validated_at_the_endpoint
+      lent out, in every loan shape mobile writes and every way a loan comes
+      home                        -> test_open_loan_shapes_count_as_lent_out,
+                                    test_returned_or_malformed_loans_are_not_lent_out,
+                                    test_boolean_returned_loan_is_not_lent_out,
+                                    test_returned_bare_field_loan_is_not_lent_out
+
+  AC3 "Backend unit test for the endpoint (mocked DB) ..."
+                                  -> every test here runs on an AsyncMock
+                                     session injected through the `get_db`
+                                     override; no database is contacted.
+
+AC2 (the /dashboard/stats page, its tiles/charts and the nav link) is traced
+in the frontend suite: tests/components/CatalogStatsPage.test.tsx,
+tests/components/CatalogStatsPageRound2.test.tsx and
+tests/components/AppShellNav.test.tsx.
 """
 
 from datetime import datetime, timedelta, timezone
