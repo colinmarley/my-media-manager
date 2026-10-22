@@ -66,6 +66,7 @@ from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
 from services.library_compliance_service import LibraryComplianceService
 from services.task_manager import AsyncTaskManager
+from services.retention_service import run_retention_loop
 from utils.logging import logger
 
 # Global service instances - initialized during application startup
@@ -332,7 +333,11 @@ async def lifespan(app: FastAPI):
             run_ingress_auto_processor(app)
         )
         app.state.ingress_auto_processor_task = ingress_auto_processor_task
-    
+
+    retention_task = None
+    if settings.retention_enabled:
+        retention_task = asyncio.create_task(run_retention_loop(AsyncSessionLocal))
+
     logger.info("Services initialized successfully")
     
     yield
@@ -355,6 +360,13 @@ async def lifespan(app: FastAPI):
         ingress_auto_processor_task.cancel()
         try:
             await ingress_auto_processor_task
+        except asyncio.CancelledError:
+            pass
+
+    if retention_task:
+        retention_task.cancel()
+        try:
+            await retention_task
         except asyncio.CancelledError:
             pass
 
