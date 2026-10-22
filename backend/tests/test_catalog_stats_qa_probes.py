@@ -1,22 +1,24 @@
 """
 QA probes for GET /api/catalog/stats (issue #16 — web Stats page parity).
 
-These complement builder/tests/test_catalog_stats.py rather than repeating
-it. What that file does NOT do is exercise the real ORM classes: every row
-in it is a MagicMock with the handful of columns the aggregator happens to
-read pre-set to None, so a rename in db/models.py, a column the aggregator
-never sets, or a real-instance default would pass there and be wrong in
-production. Probe 2 pins that with actual Movie/Series/Disc/Tape objects.
+These complement tests/test_catalog_stats.py (the endpoint) and
+tests/test_catalog_stats_builder.py (the service) rather than repeating
+them. What the endpoint tests do NOT do is exercise the real ORM classes:
+every row in them is a MagicMock with the handful of columns the aggregator
+happens to read pre-set to None, so a rename in db/models.py, a column the
+aggregator never sets, or a real-instance default would pass there and be
+wrong in production. Probe 2 pins that with actual Movie/Series/Disc/Tape
+objects.
 
 The rest pin the things the mocked tests leave open: route registration and
 ordering (a `/api/catalog/{id}`-style route placed earlier would swallow
 /stats), the recently-added window boundary, recent_days validation, and
 the loan shapes the "lent out" figure is inferred from.
 
-Two probes are marked xfail(strict=True): they document a real defect found
-during QA (a returned bare-field loan still counts as lent out). Strict so
-that the moment the defect is fixed the suite fails until the marker comes
-off — the fix must come with the marker's removal, not a silent XPASS.
+Two probes used to carry `xfail(strict=True)` markers for a QA-found defect (a
+returned bare-field loan, or one closed by a plain boolean `returned`, still
+counting as lent out). The aggregator now reads both loan shapes and the full
+set of return markers, so the markers came off with the fix.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -252,12 +254,6 @@ def test_returned_or_malformed_loans_are_not_lent_out(raw):
     assert _lent(raw)[0] == 0, raw
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA #16 defect: the return markers _RETURN_MARKERS look at (returnedAt, returnDate, ...) "
-           "miss a plain boolean `returned`, so a loan recorded as {loanedTo, returned: true} is "
-           "still reported as 'Out on loan right now'. Fix the aggregator, then drop this marker.",
-)
 @pytest.mark.parametrize("raw", [
     {"loans": [{"loanedTo": "Bo", "returned": True}]},
     {"loans": [{"loanedTo": "Bo", "returned": "2026-02-04"}]},
@@ -266,12 +262,6 @@ def test_boolean_returned_loan_is_not_lent_out(raw):
     assert _lent(raw)[0] == 0, raw
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="QA #16 defect: _active_loan() applies return markers only inside the loans array, so a "
-           "returned bare-field loan (loanedTo + returnedAt, or an explicit onLoan=False) is still "
-           "reported as 'Out on loan right now'. Fix the aggregator, then drop this marker.",
-)
 @pytest.mark.parametrize("raw", [
     {"loanedTo": "Ana", "returnedAt": "2026-02-04"},
     {"onLoan": False, "loanedTo": "Ana"},

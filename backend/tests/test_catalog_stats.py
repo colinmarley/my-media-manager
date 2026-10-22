@@ -16,6 +16,12 @@ Issue #16 acceptance criteria -> the test that covers it:
   AC5 lent out items:
         test_stats_counts_lent_out_items_and_skips_returned_loans
         test_stats_reads_open_loans_from_the_mobile_loan_array
+        test_stats_skips_a_returned_bare_field_loan
+
+The row fixtures here are mocks standing in for `scalars().all()` results, so
+the same figures are re-checked against real Movie/Series/Disc/Tape objects
+in tests/test_catalog_stats_builder.py (builder level) and in
+tests/test_catalog_stats_qa_probes.py.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -204,6 +210,38 @@ async def test_stats_reads_open_loans_from_the_mobile_loan_array(app):
         ("Flagged As Out", "Unspecified"),
         ("Out For A Ride", "Ana"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_stats_skips_a_returned_bare_field_loan(app):
+    """Loans are written into `raw_data` either as a `loans` array or as bare
+    fields, and a bare loan closed by `returnedAt` (or `onLoan: false`) is
+    home: mobile keeps the borrower name on the record after it is returned."""
+    discs = [
+        _row("d1", "Home Again", raw_data={"loanedTo": "Sam", "loanedAt": "2026-01-04", "returnedAt": "2026-02-04"}),
+        _row("d2", "Flagged Back", raw_data={"onLoan": False, "loanedTo": "Ana"}),
+        _row("d3", "Still Out", raw_data={"loanedTo": "Bo", "loanedAt": "2026-01-04"}),
+    ]
+    stats = await _get_stats(app, _make_sequential_db([], [], discs, []))
+
+    assert stats["lentOut"] == {
+        "count": 1,
+        "items": [{"id": "d3", "title": "Still Out", "type": "disc", "borrower": "Bo"}],
+    }
+
+
+@pytest.mark.asyncio
+async def test_stats_caps_its_item_lists_but_not_the_counts(app):
+    """`recentlyAdded.items` / `lentOut.items` are capped at twelve, `count`
+    stays the whole total, and no extra key carries the limit — the page
+    derives "showing 12 of 23" from the two figures it already has."""
+    discs = [_row(f"d{n}", f"Disc {n}", raw_data={"loanedTo": "Sam"}) for n in range(1, 24)]
+    stats = await _get_stats(app, _make_sequential_db([], [], discs, []))
+
+    assert stats["recentlyAdded"]["count"] == 23
+    assert len(stats["recentlyAdded"]["items"]) == 12
+    assert stats["lentOut"]["count"] == 23
+    assert len(stats["lentOut"]["items"]) == 12
 
 
 @pytest.mark.asyncio

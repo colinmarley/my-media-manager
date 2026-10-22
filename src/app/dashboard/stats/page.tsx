@@ -31,6 +31,17 @@ function formatDay(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : date.toLocaleDateString();
 }
 
+/**
+ * The server caps `recentlyAdded.items` and `lentOut.items` at twelve while
+ * `count` stays the whole total (see ITEM_LIST_LIMIT in
+ * backend/services/catalog_stats.py). Without a word about it a tile reading
+ * "Lent out (21)" over twelve rows reads as a bug, so the lists say what they
+ * are showing.
+ */
+function listNote(shown: number, total: number): string | undefined {
+  return shown < total ? `Showing ${shown} of ${total}` : undefined;
+}
+
 const StatTile = ({ label, value, caption }: { label: string; value: number; caption?: string }) => (
   <Grid size={{ xs: 6, sm: 4, md: 3 }}>
     <Paper variant="outlined" sx={Styles.tile}>
@@ -88,10 +99,12 @@ const StatsList = ({
   title,
   emptyLabel,
   items,
+  note,
 }: {
   title: string;
   emptyLabel: string;
   items: { key: string; primary: string; secondary: string }[];
+  note?: string;
 }) => (
   <Paper variant="outlined" sx={Styles.panel}>
     <Typography variant="subtitle1" sx={{ mb: 1.5 }}>{title}</Typography>
@@ -108,6 +121,11 @@ const StatsList = ({
           </Stack>
         ))}
       </Stack>
+    )}
+    {note && (
+      <Typography variant="caption" color="text.secondary" data-testid="stats-list-note">
+        {note}
+      </Typography>
     )}
   </Paper>
 );
@@ -221,6 +239,7 @@ const StatsPage = () => {
           <StatsList
             title={`Recently added (${stats.recentlyAdded.count})`}
             emptyLabel={`Nothing added in the last ${stats.recentDays} days.`}
+            note={listNote(stats.recentlyAdded.items.length, stats.recentlyAdded.count)}
             items={stats.recentlyAdded.items.map((item) => ({
               key: `${item.type}-${item.id}`,
               primary: item.title,
@@ -232,6 +251,7 @@ const StatsPage = () => {
           <StatsList
             title={`Lent out (${stats.lentOut.count})`}
             emptyLabel="Nothing is on loan."
+            note={listNote(stats.lentOut.items.length, stats.lentOut.count)}
             items={stats.lentOut.items.map((item) => ({
               key: `${item.type}-${item.id}`,
               primary: item.title,

@@ -1303,8 +1303,32 @@ async def catalog_stats(
     like every other GET in this router (no require_any_auth), at one query
     per catalog table.
 
-    Loans have no column of their own, so "lent out" is read out of the
-    raw_data the mobile app writes (`loans` / `loanedTo` / `onLoan`).
+    Loans have no column or table of their own, so "lent out" is read out of
+    the `raw_data` the mobile app writes. Two shapes are understood, and a
+    record counts while its newest loan is unreturned:
+
+      `loans` (also `loanHistory`/`lendingHistory`, a bare object counts too)
+        a list of loan objects naming who (`loanedTo`/`lentTo`/`borrower`/
+        `who`/`name`, or a nested `{"loanedTo": {"name": …}}`), when it left
+        (`loanedAt`/`date`/`dateOut`), when it is due (`due`), and what closed
+        it — a return date (`returnedAt`/`dateBack`/`returnDate`), a return
+        flag (`returned: true`, not `false`), or a loan `status`/`loanStatus`
+        that reads as back. A loan `status` is read from loan keys only: a
+        record-level `status` on a series is the series status ("Ended"), so
+        it is never a return marker.
+      bare fields on the record
+        `loanedTo`/`lentTo`/`borrower`/`onLoanTo` for the person, `onLoan`/
+        `loanOut`/`isLent` for the flag. `onLoan: false` or a record return
+        marker (`returnedAt`, `dateBack`, `returned`, …) means it came home.
+
+    Both shapes are consulted, so `loans: [{"loanedTo": "Bo"}]` counts even
+    when a stale `returned: true` sits next to it, and `loanedTo: "Sam"` with
+    `returnedAt: "2026-02-04"` does not. `services/catalog_stats.py` states
+    the contract in full next to the code that implements it.
+
+    `recentlyAdded.items` and `lentOut.items` are capped at 12 entries while
+    their `count` stays the whole total — callers (the web stats page) show
+    "Showing 12 of N" rather than pretending the list is the lot.
     """
     movies = (await db.execute(select(Movie))).scalars().all()
     series = (await db.execute(select(Series))).scalars().all()

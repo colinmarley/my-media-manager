@@ -102,6 +102,48 @@ describe('StatsPage', () => {
     expect(screen.getByText('Alien')).toBeInTheDocument();
     expect(screen.getByText('Alien LaserDisc')).toBeInTheDocument();
     expect(screen.getByText('with Sam')).toBeInTheDocument();
+    // Nothing is hidden behind a cap in this payload, so nothing qualifies as
+    // a partial list.
+    expect(screen.queryByTestId('stats-list-note')).not.toBeInTheDocument();
+  });
+
+  it('says what a capped list is leaving out', async () => {
+    // The server caps both lists at twelve (ITEM_LIST_LIMIT) while `count`
+    // stays the whole total. Twelve rows under a "(21)" heading otherwise
+    // reads as a miscount, and the page has to own that difference.
+    const truncated: CatalogStats = {
+      ...stats,
+      recentlyAdded: {
+        days: 30,
+        count: 21,
+        items: Array.from({ length: 12 }, (_, n) => ({
+          id: `m${n}`,
+          title: `Recent title ${n}`,
+          type: 'movie' as const,
+          createdAt: '2026-01-20T10:00:00+00:00',
+        })),
+      },
+      lentOut: {
+        count: 13,
+        items: Array.from({ length: 12 }, (_, n) => ({
+          id: `d${n}`,
+          title: `Lent title ${n}`,
+          type: 'disc' as const,
+          borrower: 'Sam',
+        })),
+      },
+    };
+    getCatalogStats.mockResolvedValue(truncated);
+
+    render(<StatsPage />);
+
+    expect(await screen.findByText('Recently added (21)')).toBeInTheDocument();
+    expect(screen.getByText('Lent out (13)')).toBeInTheDocument();
+    expect(
+      screen.getAllByTestId('stats-list-note').map((note) => note.textContent),
+    ).toEqual(['Showing 12 of 21', 'Showing 12 of 13']);
+    expect(screen.getByText('Lent title 11')).toBeInTheDocument();
+    expect(screen.queryByText('Recent title 12')).not.toBeInTheDocument();
   });
 
   it('shows a retryable error instead of zeroes when the endpoint fails', async () => {
