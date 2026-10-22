@@ -75,7 +75,7 @@ async def db_app(app):
     from db.models import Base, Disc, Tape
 
     engine = create_async_engine(TEST_DB_URL)
-    # Full schema: discs/tapes carry FKs to other tables (releases, disc_sets).
+    # Full schema: discs/tapes carry FKs to other tables (disc_sets).
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
