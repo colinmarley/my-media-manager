@@ -27,7 +27,14 @@ test('my library opens the detail page of one title', async ({ page }) => {
     'No library cards to open: BASE_URL points at an instance with an empty library.',
   ).toBeVisible();
 
-  const title = (await card.getByRole('heading', { level: 6 }).innerText()).trim();
+  // Scoped to the card body on purpose. When a card's poster 404s (the poster
+  // endpoint has nothing cached), my-library/page.tsx swaps in a fallback whose
+  // Typography variant="subtitle1" is also an <h6> and comes first in the DOM,
+  // holding the folder name — an unscoped heading lookup is then a strict-mode
+  // violation (or, with .first(), reads the wrong text).
+  const cardTitle = card.locator('.MuiCardContent-root').getByRole('heading', { level: 6 });
+  await expect(cardTitle, 'Library card rendered no title heading in its card body.').toBeVisible();
+  const title = (await cardTitle.innerText()).trim();
   await card.click();
 
   await expect(page).toHaveURL(/\/dashboard\/my-library\/[^/]+\/[^/]+/);
