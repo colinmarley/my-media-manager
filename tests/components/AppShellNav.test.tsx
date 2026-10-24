@@ -77,4 +77,15 @@ describe('app shell navigation (QA probe)', () => {
     const stats = screen.getByRole('link', { name: /Stats/i });
     expect(stats).toHaveAttribute('href', '/dashboard/stats');
   });
+
+  it('links to the wishlist page from the drawer (issue #39)', () => {
+    render(<RootLayout>{null}</RootLayout>);
+
+    act(() => {
+      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    });
+
+    const wishlist = screen.getByRole('link', { name: /Wishlist/i });
+    expect(wishlist).toHaveAttribute('href', '/dashboard/wishlist');
+  });
 });
