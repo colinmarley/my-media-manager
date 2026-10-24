@@ -18,6 +18,14 @@ import { CatalogTape } from '@/types/catalog/Tape.type';
 import DiscEditDialog from './_components/DiscEditDialog';
 import TapeEditDialog from './_components/TapeEditDialog';
 import ConfirmDeleteDialog from './_components/ConfirmDeleteDialog';
+import { currentLoan, filterCurrentlyLent } from '@/utils/loanUtils';
+
+function LoanChip({ item }: { item: CatalogDisc | CatalogTape }) {
+  const loan = currentLoan(item);
+  if (!loan) return null;
+  const label = `Lent to ${loan.lentTo}${loan.since ? ` since ${loan.since}` : ''}`;
+  return <Chip label={label} size="small" color="secondary" variant="outlined" />;
+}
 
 export default function PhysicalMediaPage() {
   const [tab, setTab] = useState<'discs' | 'tapes'>('discs');
@@ -25,8 +33,18 @@ export default function PhysicalMediaPage() {
   const { discs: allDiscs, loading: discsLoading, error: discsError, refetch: refetchDiscs } = useDiscs();
   const { tapes: allTapes, loading: tapesLoading, error: tapesError, refetch: refetchTapes } = useTapes();
 
-  const discs = needsRippingOnly ? allDiscs.filter((d) => !d.linkedFileCount) : allDiscs;
-  const tapes = needsRippingOnly ? allTapes.filter((t) => !t.linkedFileCount) : allTapes;
+  const [lentOnly, setLentOnly] = useState(false);
+
+  const rippingDiscs = needsRippingOnly ? allDiscs.filter((d) => !d.linkedFileCount) : allDiscs;
+  const rippingTapes = needsRippingOnly ? allTapes.filter((t) => !t.linkedFileCount) : allTapes;
+  const discs = lentOnly ? filterCurrentlyLent(rippingDiscs) : rippingDiscs;
+  const tapes = lentOnly ? filterCurrentlyLent(rippingTapes) : rippingTapes;
+  const emptyNote = (kind: string, otherwise: string) => {
+    if (lentOnly) return `No ${kind} are lent out right now${needsRippingOnly ? ' that need ripping' : ''}.`;
+    return needsRippingOnly
+      ? `Every catalogued ${kind.slice(0, -1)} has at least one linked file — nothing needs ripping.`
+      : otherwise;
+  };
 
   const [discDialogOpen, setDiscDialogOpen] = useState(false);
   const [editingDisc, setEditingDisc] = useState<CatalogDisc | null>(null);
@@ -53,6 +71,10 @@ export default function PhysicalMediaPage() {
             control={<Switch size="small" checked={needsRippingOnly} onChange={(e) => setNeedsRippingOnly(e.target.checked)} />}
             label="Needs ripping only"
           />
+          <FormControlLabel
+            control={<Switch size="small" checked={lentOnly} onChange={(e) => setLentOnly(e.target.checked)} />}
+            label="Currently lent"
+          />
           {tab === 'discs' ? (
             <Button startIcon={<AddIcon />} onClick={() => { setEditingDisc(null); setDiscDialogOpen(true); }}>
               New Disc
@@ -71,9 +93,7 @@ export default function PhysicalMediaPage() {
           {discsError && <Typography color="error">{discsError}</Typography>}
           {!discsLoading && discs.length === 0 && (
             <Typography color="text.secondary">
-              {needsRippingOnly
-                ? 'Every catalogued disc has at least one linked file — nothing needs ripping.'
-                : 'No discs catalogued yet. Click “New Disc” above, or link one while starting a rip.'}
+              {emptyNote('discs', 'No discs catalogued yet. Click “New Disc” above, or link one while starting a rip.')}
             </Typography>
           )}
           {discs.length > 0 && (
@@ -110,6 +130,7 @@ export default function PhysicalMediaPage() {
                           {disc.containsSpecialFeatures && (
                             <Chip label="has extras" size="small" color="info" variant="outlined" />
                           )}
+                          <LoanChip item={disc} />
                         </Stack>
                       </TableCell>
                       <TableCell align="right">
@@ -139,9 +160,7 @@ export default function PhysicalMediaPage() {
           {tapesError && <Typography color="error">{tapesError}</Typography>}
           {!tapesLoading && tapes.length === 0 && (
             <Typography color="text.secondary">
-              {needsRippingOnly
-                ? 'Every catalogued tape has at least one linked file — nothing needs ripping.'
-                : 'No tapes catalogued yet. Click “New Tape” above.'}
+              {emptyNote('tapes', 'No tapes catalogued yet. Click “New Tape” above.')}
             </Typography>
           )}
           {tapes.length > 0 && (
@@ -177,9 +196,12 @@ export default function PhysicalMediaPage() {
                           : '—'}
                       </TableCell>
                       <TableCell>
-                        {!tape.linkedFileCount && (
-                          <Chip label="Unripped" size="small" color="warning" variant="outlined" />
-                        )}
+                        <Stack direction="row" spacing={0.5}>
+                          {!tape.linkedFileCount && (
+                            <Chip label="Unripped" size="small" color="warning" variant="outlined" />
+                          )}
+                          <LoanChip item={tape} />
+                        </Stack>
                       </TableCell>
                       <TableCell align="right">
                         <Tooltip title="Edit">

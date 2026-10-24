@@ -82,4 +82,33 @@ describe('TapeEditDialog', () => {
     expect(updateTapeMock.mock.calls[0][0]).toBe('tape-1');
     expect(updateTapeMock.mock.calls[0][1]).toMatchObject({ title: 'Family Vacation (Restored)' });
   });
+
+  it('pre-fills and saves the loan fields', async () => {
+    const lent = { ...EXISTING_TAPE, loanedTo: 'Sam', loanedAt: '2026-01-02' };
+    render(<TapeEditDialog open tape={lent} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByLabelText('Lent to')).toHaveValue('Sam');
+    expect(screen.getByLabelText('Since')).toHaveValue('2026-01-02');
+
+    fireEvent.change(screen.getByLabelText('Returned on'), { target: { value: '2026-01-09' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(updateTapeMock).toHaveBeenCalledTimes(1);
+    });
+    expect(updateTapeMock.mock.calls[0][1]).toMatchObject({
+      loanedTo: 'Sam', loanedAt: '2026-01-02', returnedAt: '2026-01-09',
+    });
+  });
+
+  it('does not save a loan starting in the future', async () => {
+    render(<TapeEditDialog open tape={EXISTING_TAPE} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Lent to'), { target: { value: 'Sam' } });
+    fireEvent.change(screen.getByLabelText('Since'), { target: { value: '2999-01-01' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/can't be in the future/)).toBeInTheDocument();
+    });
+    expect(updateTapeMock).not.toHaveBeenCalled();
+  });
 });
