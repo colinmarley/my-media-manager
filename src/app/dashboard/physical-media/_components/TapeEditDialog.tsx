@@ -8,6 +8,8 @@ import {
 import { createTape, updateTape } from '@/service/catalog/TapeCatalogService';
 import { CatalogTape } from '@/types/catalog/Tape.type';
 import { TapeType, TapeBrand, TapeCondition, RecordingSpeed } from '@/types/tape-ingest/TapeIngest.type';
+import { LoanFields, loanFields, loanPayload, validateLoan } from '@/utils/loanUtils';
+import LoanInputs from './LoanInputs';
 
 const TAPE_TYPES: TapeType[] = ['vhs', 'vhs_c', 'mini_dv'];
 const BRANDS: TapeBrand[] = ['TDK', 'Maxell', 'Sony', 'BASF', 'Fuji', 'Scotch', 'Memorex', 'Ampex', 'Generic', 'Unknown'];
@@ -35,6 +37,7 @@ export default function TapeEditDialog({
   const [recordingSpeed, setRecordingSpeed] = useState<RecordingSpeed | ''>('');
   const [labelNotes, setLabelNotes] = useState('');
   const [purchaseDate, setPurchaseDate] = useState('');
+  const [loan, setLoan] = useState<LoanFields>(loanFields(null));
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -49,11 +52,14 @@ export default function TapeEditDialog({
     setRecordingSpeed(tape?.recordingSpeed ?? '');
     setLabelNotes(tape?.labelNotes ?? '');
     setPurchaseDate(tape?.purchaseDate ?? '');
+    setLoan(loanFields(tape));
     setError('');
   }, [open, tape]);
 
   const handleSave = async () => {
     if (!title.trim()) { setError('Title is required'); return; }
+    const loanError = validateLoan(loan);
+    if (loanError) { setError(loanError); return; }
     setSaving(true);
     setError('');
     const payload: Partial<CatalogTape> = {
@@ -65,6 +71,7 @@ export default function TapeEditDialog({
       recordingSpeed: recordingSpeed || undefined,
       labelNotes: labelNotes || undefined,
       purchaseDate: purchaseDate || undefined,
+      ...loanPayload(loan, tape),
     };
     try {
       const saved = isEdit
@@ -138,6 +145,7 @@ export default function TapeEditDialog({
             label="Label Notes" value={labelNotes} onChange={(e) => setLabelNotes(e.target.value)}
             fullWidth multiline minRows={2} size="small"
           />
+          <LoanInputs value={loan} onChange={setLoan} />
         </Stack>
       </DialogContent>
       <DialogActions>
