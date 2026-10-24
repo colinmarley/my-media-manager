@@ -4,6 +4,7 @@ import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 import TapeEditDialog from '../../src/app/dashboard/physical-media/_components/TapeEditDialog';
 import { CatalogTape } from '../../src/types/catalog/Tape.type';
+import { currentLoan } from '../../src/utils/loanUtils';
 
 const createTapeMock = vi.fn();
 const updateTapeMock = vi.fn();
@@ -98,6 +99,22 @@ describe('TapeEditDialog', () => {
     expect(updateTapeMock.mock.calls[0][1]).toMatchObject({
       loanedTo: 'Sam', loanedAt: '2026-01-02', returnedAt: '2026-01-09',
     });
+  });
+
+  it('marks a loan from the mobile app\'s loans list returned', async () => {
+    const lent = { ...EXISTING_TAPE, loans: [{ borrower: 'Kim', loanedAt: '2026-09-01' }] };
+    render(<TapeEditDialog open tape={lent} onClose={vi.fn()} onSaved={vi.fn()} />);
+    expect(screen.getByLabelText('Lent to')).toHaveValue('Kim');
+
+    fireEvent.change(screen.getByLabelText('Returned on'), { target: { value: '2026-10-01' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(updateTapeMock).toHaveBeenCalledTimes(1);
+    });
+    const saved = { ...lent, ...updateTapeMock.mock.calls[0][1] };
+    expect(saved.loans).toEqual([{ borrower: 'Kim', loanedTo: 'Kim', loanedAt: '2026-09-01', returnedAt: '2026-10-01' }]);
+    expect(currentLoan(saved)).toBeNull();
   });
 
   it('does not save a loan starting in the future', async () => {

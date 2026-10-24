@@ -214,7 +214,7 @@ export default function DiscEditDialog({
       isPartOfSet,
       isRentalDisc,
       containsSpecialFeatures,
-      ...loanPayload(loan),
+      ...loanPayload(loan, disc),
     };
     try {
       const saved = isEdit

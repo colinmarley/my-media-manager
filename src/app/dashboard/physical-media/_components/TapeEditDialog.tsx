@@ -71,7 +71,7 @@ export default function TapeEditDialog({
       recordingSpeed: recordingSpeed || undefined,
       labelNotes: labelNotes || undefined,
       purchaseDate: purchaseDate || undefined,
-      ...loanPayload(loan),
+      ...loanPayload(loan, tape),
     };
     try {
       const saved = isEdit
