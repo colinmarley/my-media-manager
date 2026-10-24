@@ -16,14 +16,6 @@ import useIngressQueueSelection from '@/hooks/ingress/useIngressQueueSelection';
 import useIngressStatus from '@/hooks/ingress/useIngressStatus';
 import useIngressWatcherControl from '@/hooks/ingress/useIngressWatcherControl';
 
-export {
-  filterSelectableQueueItemIds,
-  getQueueClassificationBadges,
-  isEpisodeMappingValid,
-  runQueueActionsSequentially,
-} from '@/service/ingress/ingressQueueModel';
-export type { EpisodeAssignmentMapping, QueueBadge } from '@/service/ingress/ingressQueueModel';
-
 /**
  * Admin ingress automation dashboard.
  *

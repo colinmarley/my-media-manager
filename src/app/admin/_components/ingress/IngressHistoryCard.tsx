@@ -15,7 +15,7 @@ const IngressHistoryCard: React.FC<Props> = ({ history }) => (
       {history.length === 0 ? (
         <Typography color="text.secondary">No processing history yet.</Typography>
       ) : (
-        getRecentHistoryEntries(history).map(({ entry: item, index }) => (
+        getRecentHistoryEntries(history).map((item, index) => (
           <Box key={`${item.item_id || index}-${index}`} sx={{ mb: 1.5 }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
               <Chip
