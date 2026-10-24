@@ -77,7 +77,7 @@ export default function TapeEditDialog({
       recordingSpeed: recordingSpeed || undefined,
       labelNotes: labelNotes || undefined,
       purchaseDate: purchaseDate || undefined,
-      ...storageLocationPayload(storageType, storageId),
+      ...storageLocationPayload(storageType, storageId, tape?.storageId),
     };
     try {
       const saved = isEdit

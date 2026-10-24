@@ -122,5 +122,14 @@ describe('TapeEditDialog', () => {
       await waitFor(() => expect(updateTapeMock).toHaveBeenCalledTimes(1));
       expect(updateTapeMock.mock.calls[0][1]).toMatchObject({ storageType: null, storageId: null });
     });
+
+    it('keeps an older non-MED#### ID unchanged on save', async () => {
+      const tape: CatalogTape = { ...EXISTING_TAPE, storageType: 'Box', storageId: 'box-b' };
+      render(<TapeEditDialog open tape={tape} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(updateTapeMock).toHaveBeenCalledTimes(1));
+      expect(updateTapeMock.mock.calls[0][1]).toMatchObject({ storageType: 'Box', storageId: 'box-b' });
+    });
   });
 });

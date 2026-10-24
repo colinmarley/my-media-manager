@@ -219,7 +219,7 @@ export default function DiscEditDialog({
       isPartOfSet,
       isRentalDisc,
       containsSpecialFeatures,
-      ...storageLocationPayload(storageType, storageId),
+      ...storageLocationPayload(storageType, storageId, disc?.storageId),
     };
     try {
       const saved = isEdit

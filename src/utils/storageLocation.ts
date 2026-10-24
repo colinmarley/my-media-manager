@@ -28,11 +28,18 @@ export function validateStorageLocation(
   return 'Storage ID must look like MED0001 (MED followed by 4 digits).';
 }
 
-/** The payload fields for a location; both null clears it. */
-export function storageLocationPayload(storageType: StorageType | '', storageId: string) {
-  return storageType
-    ? { storageType, storageId: normalizeStorageId(storageId) }
-    : { storageType: null, storageId: null };
+/** The payload fields for a location; both null clears it. An unchanged
+ * `previousId` is sent exactly as stored: the backend compares IDs
+ * case-sensitively, so re-casing it would move the item to another location. */
+export function storageLocationPayload(
+  storageType: StorageType | '',
+  storageId: string,
+  previousId?: string | null,
+) {
+  if (!storageType) return { storageType: null, storageId: null };
+  const id = normalizeStorageId(storageId);
+  const keep = previousId && id === normalizeStorageId(previousId);
+  return { storageType, storageId: keep ? previousId : id };
 }
 
 export function formatStorageLocation(item: Located): string {

@@ -361,5 +361,15 @@ describe('DiscEditDialog', () => {
       await waitFor(() => expect(updateDiscMock).toHaveBeenCalledTimes(1));
       expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ storageType: null, storageId: null });
     });
+
+    it('keeps an older non-MED#### ID unchanged when only the title is edited', async () => {
+      const disc: CatalogDisc = { ...EXISTING_DISC, storageType: 'Box', storageId: 'Shelf A' };
+      render(<DiscEditDialog open disc={disc} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Aliens' } });
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(updateDiscMock).toHaveBeenCalledTimes(1));
+      expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ title: 'Aliens', storageType: 'Box', storageId: 'Shelf A' });
+    });
   });
 });

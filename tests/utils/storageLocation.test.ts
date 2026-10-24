@@ -38,6 +38,16 @@ describe('storageLocationPayload', () => {
     expect(storageLocationPayload('Box', ' med0001 ')).toEqual({ storageType: 'Box', storageId: 'MED0001' });
   });
 
+  it('keeps an ID saved before the MED#### rule exactly as stored', () => {
+    expect(storageLocationPayload('Box', 'Shelf A', 'Shelf A')).toEqual({ storageType: 'Box', storageId: 'Shelf A' });
+    expect(storageLocationPayload('Box', ' box-b ', 'box-b')).toEqual({ storageType: 'Box', storageId: 'box-b' });
+    expect(storageLocationPayload('Box', 'med0001', 'med0001')).toEqual({ storageType: 'Box', storageId: 'med0001' });
+  });
+
+  it('normalizes a newly entered ID even when the item had an older one', () => {
+    expect(storageLocationPayload('Box', 'med0002', 'Shelf A')).toEqual({ storageType: 'Box', storageId: 'MED0002' });
+  });
+
   it('sends explicit nulls to clear the location', () => {
     expect(storageLocationPayload('', 'MED0001')).toEqual({ storageType: null, storageId: null });
   });
