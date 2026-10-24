@@ -320,4 +320,46 @@ describe('DiscEditDialog', () => {
       expect(screen.queryByRole('button', { name: /save & add another/i })).not.toBeInTheDocument();
     });
   });
+
+  describe('storage location', () => {
+    const pickStorage = async (name: string) => {
+      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Storage' }));
+      fireEvent.click(await screen.findByRole('option', { name }));
+    };
+
+    it('saves a Box location with a normalized MED#### code', async () => {
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Alien' } });
+      await pickStorage('Box');
+      fireEvent.change(screen.getByLabelText('Storage ID'), { target: { value: ' med0012 ' } });
+      fireEvent.click(screen.getByRole('button', { name: /create disc/i }));
+
+      await waitFor(() => expect(createDiscMock).toHaveBeenCalledTimes(1));
+      expect(createDiscMock.mock.calls[0][0]).toMatchObject({ storageType: 'Box', storageId: 'MED0012' });
+    });
+
+    it('blocks saving a malformed code', async () => {
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Alien' } });
+      await pickStorage('Binder');
+      fireEvent.change(screen.getByLabelText('Storage ID'), { target: { value: 'MED12' } });
+      fireEvent.click(screen.getByRole('button', { name: /create disc/i }));
+
+      expect(await screen.findByText(/must look like MED0001/)).toBeInTheDocument();
+      expect(createDiscMock).not.toHaveBeenCalled();
+    });
+
+    it('pre-fills and clears an existing location', async () => {
+      const disc: CatalogDisc = { ...EXISTING_DISC, storageType: 'Binder', storageId: 'MED0003' };
+      render(<DiscEditDialog open disc={disc} onClose={vi.fn()} onSaved={vi.fn()} />);
+      expect(screen.getByLabelText('Storage ID')).toHaveValue('MED0003');
+
+      await pickStorage('None');
+      expect(screen.getByLabelText('Storage ID')).toHaveValue('');
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(updateDiscMock).toHaveBeenCalledTimes(1));
+      expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ storageType: null, storageId: null });
+    });
+  });
 });

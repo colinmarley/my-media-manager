@@ -16,6 +16,7 @@ import { CatalogTape } from '@/types/catalog/Tape.type';
 import { deleteDisc } from '@/service/catalog/DiscCatalogService';
 import { deleteTape } from '@/service/catalog/TapeCatalogService';
 import { disconnectFile, LinkedMediaFile } from '@/service/catalog/MediaFileLinkService';
+import { formatStorageLocation } from '@/utils/storageLocation';
 import DiscEditDialog from '../../_components/DiscEditDialog';
 import TapeEditDialog from '../../_components/TapeEditDialog';
 import ConfirmDeleteDialog from '../../_components/ConfirmDeleteDialog';
@@ -124,6 +125,10 @@ export default function PhysicalMediaDetailPage() {
           {tape && tape.brand && <Chip label={`Brand: ${tape.brand}`} size="small" variant="outlined" />}
           {tape && tape.condition && <Chip label={`Condition: ${tape.condition}`} size="small" variant="outlined" />}
           {tape && tape.recordingSpeed && <Chip label={`Speed: ${tape.recordingSpeed.toUpperCase()}`} size="small" variant="outlined" />}
+
+          {formatStorageLocation(item) && (
+            <Chip label={`Location: ${formatStorageLocation(item)}`} size="small" color="primary" variant="outlined" />
+          )}
         </Stack>
         {tape?.labelNotes && (
           <>
