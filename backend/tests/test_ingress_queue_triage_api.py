@@ -75,7 +75,43 @@ class TestQueueGroupsEndpoint:
             "limit": 10,
             "offset": 5,
             "preview_size": 3,
+            "group_by": "parsed_title",
         }
+
+    @pytest.mark.asyncio
+    async def test_group_by_reaches_the_service(self, app):
+        triage = _wire(app, _StubTriageService())
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.get("/api/ingress/queue/groups", params={"groupBy": "source_folder"})
+
+        assert resp.status_code == 200
+        assert triage.groups_kwargs["group_by"] == "source_folder"
+
+    @pytest.mark.asyncio
+    async def test_400s_when_group_by_is_unknown(self, app):
+        from services.ingress_triage_service import IngressTriageService
+
+        app.state.ingress_queue_service = MagicMock()
+        app.state.ingress_triage_service = IngressTriageService(app.state.ingress_queue_service,
+                                                                db_session_factory=None)
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.get("/api/ingress/queue/groups", params={"groupBy": "size"})
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"]["code"] == "INVALID_GROUP_BY"
+
+    @pytest.mark.asyncio
+    async def test_q_filters_groups_by_file_name_or_parsed_title(self, app):
+        triage = _wire(app, _StubTriageService())
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.get("/api/ingress/queue/groups", params={"q": "matrix"})
+
+        assert resp.status_code == 200
+        assert triage.groups_kwargs["search"] == "matrix"
+        assert triage.groups_kwargs["statuses"] is None
 
     @pytest.mark.asyncio
     async def test_creates_a_triage_service_from_the_queue_service_when_absent(self, app):

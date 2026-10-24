@@ -46,6 +46,11 @@ MAX_PREVIEW_ITEMS = 10
 MAX_PREVIEW_ROWS = 200
 MAX_GROUP_ITEMS = 1000
 
+# Issue #34 grouping knobs: one group per parsed title inside a folder, or one per ingress folder.
+QUEUE_GROUP_BY_TITLE = "parsed_title"
+QUEUE_GROUP_BY_FOLDER = "source_folder"
+QUEUE_GROUP_BY: Tuple[str, ...] = (QUEUE_GROUP_BY_TITLE, QUEUE_GROUP_BY_FOLDER)
+
 
 def _matched(field: str) -> Any:
     """Read a JSON text field from best_match, falling back to parsed_info."""
@@ -68,6 +73,11 @@ GROUP_TITLE = func.lower(
     func.trim(func.regexp_replace(func.coalesce(_matched("title"), DBQueueItem.file_name), r"\s+", " ", "g"))
 )
 GROUP_EXPRS = (GROUP_MEDIA_TYPE, GROUP_PATH, GROUP_TITLE)
+
+
+def group_exprs_for(group_by: str) -> Tuple[Any, ...]:
+    """SQL grouping expressions; media type and ingress path always scope the group."""
+    return (GROUP_MEDIA_TYPE, GROUP_PATH) if group_by == QUEUE_GROUP_BY_FOLDER else GROUP_EXPRS
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -122,33 +132,45 @@ class IngressTriageService:
         limit: int = 25,
         offset: int = 0,
         preview_size: int = MAX_PREVIEW_ITEMS,
+        group_by: str = QUEUE_GROUP_BY_TITLE,
     ) -> Dict[str, Any]:
         """Return Postgres-grouped queue rows: title/path/media_type with counts and previews."""
+        group_by = str(group_by or QUEUE_GROUP_BY_TITLE).strip().lower()
+        if group_by not in QUEUE_GROUP_BY:
+            raise ValueError(f"Unsupported group_by '{group_by}', expected one of {', '.join(QUEUE_GROUP_BY)}")
+        by_folder = group_by == QUEUE_GROUP_BY_FOLDER
+
         requested_statuses = [str(status) for status in (statuses or []) if status]
         page_size = max(1, min(int(limit or 25), MAX_GROUP_PAGE_SIZE))
         page_offset = max(0, int(offset or 0))
         preview_size = max(0, min(int(preview_size or MAX_PREVIEW_ITEMS), MAX_PREVIEW_ITEMS))
 
         filters = self._filters(media_types, ingress_paths, search)
-        groups, status_counts = self._collect_groups(await self._fetch(self._group_statement(filters)), requested_statuses)
+        groups, status_counts = self._collect_groups(
+            await self._fetch(self._group_statement(filters, group_by)), requested_statuses, group_by
+        )
 
         page = groups[page_offset:page_offset + page_size]
         row_offset = sum(group["matching_count"] for group in groups[:page_offset])
         row_limit = min(sum(group["matching_count"] for group in page), MAX_PREVIEW_ROWS)
-        previews = await self._load_items(filters, requested_statuses, row_offset, row_limit) if row_limit else []
+        previews = (
+            await self._load_items(filters, requested_statuses, row_offset, row_limit, group_by) if row_limit else []
+        )
 
-        bucketed: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
+        bucketed: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
         for item in previews:
-            bucketed.setdefault(item_group_key(item), []).append(item)
+            key = item_group_key(item)
+            bucketed.setdefault(key[:2] if by_folder else key, []).append(item)
         for group in page:
-            key = (group["media_type"], group["ingress_path"], group["title"])
-            group["preview_items"] = bucketed.get(key, [])[:preview_size]
+            key = (group["media_type"], group["ingress_path"])
+            group["preview_items"] = bucketed.get(key if by_folder else key + (group["title"],), [])[:preview_size]
 
         return {
             "groups": page,
             "total_groups": len(groups),
             "total_items": sum(group["matching_count"] for group in groups),
             "status_counts": status_counts,
+            "group_by": group_by,
             "limit": page_size,
             "offset": page_offset,
             "preview_size": preview_size,
@@ -315,12 +337,13 @@ class IngressTriageService:
             ))
         return filters
 
-    def _group_statement(self, filters: Sequence[Any]) -> Any:
+    def _group_statement(self, filters: Sequence[Any], group_by: str = QUEUE_GROUP_BY_TITLE) -> Any:
+        labels = [GROUP_MEDIA_TYPE.label("media_type"), GROUP_PATH.label("ingress_path")]
+        if group_by != QUEUE_GROUP_BY_FOLDER:
+            labels.append(GROUP_TITLE.label("title"))
         statement = (
             select(
-                GROUP_MEDIA_TYPE.label("media_type"),
-                GROUP_PATH.label("ingress_path"),
-                GROUP_TITLE.label("title"),
+                *labels,
                 DBQueueItem.status.label("status"),
                 func.count().label("item_count"),
                 func.min(DBQueueItem.confidence_score).label("min_confidence"),
@@ -328,8 +351,8 @@ class IngressTriageService:
                 func.min(DBQueueItem.queued_at).label("first_queued_at"),
                 func.max(DBQueueItem.queued_at).label("last_queued_at"),
             )
-            .group_by(*GROUP_EXPRS, DBQueueItem.status)
-            .order_by(*GROUP_EXPRS)
+            .group_by(*group_exprs_for(group_by), DBQueueItem.status)
+            .order_by(*group_exprs_for(group_by))
         )
         return statement.where(*filters) if filters else statement
 
@@ -337,12 +360,18 @@ class IngressTriageService:
         self,
         rows: Sequence[Any],
         requested_statuses: Sequence[str],
+        group_by: str = QUEUE_GROUP_BY_TITLE,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-        groups: Dict[Tuple[str, str, str], Dict[str, Any]] = {}
+        by_folder = group_by == QUEUE_GROUP_BY_FOLDER
+        groups: Dict[Tuple[str, str, Optional[str]], Dict[str, Any]] = {}
         status_counts: Dict[str, int] = {status: 0 for status in QUEUE_ALL_STATUSES}
 
         for row in rows:
-            key = (str(row.media_type or MEDIA_TYPE_UNCLASSIFIED), str(row.ingress_path or ""), str(row.title or ""))
+            key = (
+                str(row.media_type or MEDIA_TYPE_UNCLASSIFIED),
+                str(row.ingress_path or ""),
+                None if by_folder else str(row.title or ""),
+            )
             group = groups.get(key)
             if group is None:
                 group = {
@@ -379,7 +408,10 @@ class IngressTriageService:
             group["first_queued_at"] = _earlier(group["first_queued_at"], _iso(row.first_queued_at))
             group["last_queued_at"] = _later(group["last_queued_at"], _iso(row.last_queued_at))
 
-        ranked = sorted(groups.values(), key=lambda group: (group["media_type"], group["ingress_path"], group["title"]))
+        ranked = sorted(
+            groups.values(),
+            key=lambda group: (group["media_type"], group["ingress_path"], group["title"] or ""),
+        )
         return [group for group in ranked if group["matching_count"] > 0], status_counts
 
     async def _load_items(
@@ -388,12 +420,13 @@ class IngressTriageService:
         requested_statuses: Sequence[str],
         row_offset: int,
         row_limit: int,
+        group_by: str = QUEUE_GROUP_BY_TITLE,
     ) -> List[Dict[str, Any]]:
         item_filters = list(filters)
         if requested_statuses:
             item_filters.append(DBQueueItem.status.in_(list(requested_statuses)))
         statement = select(DBQueueItem).order_by(
-            *GROUP_EXPRS,
+            *group_exprs_for(group_by),
             DBQueueItem.queued_at.desc(),
             DBQueueItem.file_name,
         ).offset(row_offset).limit(row_limit)
@@ -408,11 +441,9 @@ class IngressTriageService:
         return payloads
 
     async def _hydrate_item(self, item_id: str) -> Optional[Dict[str, Any]]:
-        rows = await self._fetch(select(DBQueueItem).where(DBQueueItem.id == item_id).limit(1))
-        if not rows:
-            return None
-        self.queue_service.hydrate_items(rows)
-        return self.queue_service.get_item(item_id)
+        """Pull a DB-only queue row into the queue service so backlog items stay actionable."""
+        hydrate = getattr(self.queue_service, "hydrate_item", None)
+        return await hydrate(item_id) if hydrate else None
 
     async def _fetch(self, statement: Any) -> List[Any]:
         if self.db_session_factory is None:

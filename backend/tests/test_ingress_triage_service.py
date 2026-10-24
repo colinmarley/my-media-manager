@@ -198,6 +198,44 @@ def test_get_queue_groups_offsets_previews_and_honours_status_filter():
     assert [item['id'] for item in paged['groups'][0]['preview_items']] == ['item-4']
 
 
+def test_get_queue_groups_collapses_titles_for_source_folder_grouping():
+    group_rows = [
+        _group_row('movie', '/inbox', None, QUEUE_PENDING, 3, 40, 91),
+        _group_row('movie', '/inbox', None, QUEUE_FAILED, 1, 30, 30),
+    ]
+    item_rows = [
+        SimpleNamespace(**_matrix_row('item-1', confidence_score=91)),
+        SimpleNamespace(**_persisted_row('item-2', 'the.matrix.revolver.2009.mkv',
+                                         best_match={'media_type': 'movie', 'title': 'The Matrix Revolver'})),
+        SimpleNamespace(**_matrix_row('item-3', status=QUEUE_FAILED, confidence_score=30)),
+        SimpleNamespace(**_persisted_row('item-4', 'firefly.s01e01.mkv', ingress_path='/tv',
+                                         status=QUEUE_NEEDS_REVIEW,
+                                         best_match={'media_type': 'series', 'title': 'Firefly'})),
+    ]
+
+    service = IngressQueueService()
+    triage = IngressTriageService(service, db_session_factory=_FakeSession(group_rows, item_rows))
+
+    data = asyncio.run(triage.get_queue_groups(group_by='source_folder', preview_size=4))
+
+    assert data['group_by'] == 'source_folder'
+    assert data['total_groups'] == 1
+    assert data['total_items'] == 4
+    group = data['groups'][0]
+    assert group['group_key'] == {'media_type': 'movie', 'ingress_path': '/inbox', 'title': None}
+    assert group['item_count'] == 4
+    assert group['status_counts'] == {QUEUE_PENDING: 3, QUEUE_FAILED: 1}
+    assert (group['confidence_min'], group['confidence_max']) == (30, 91)
+    assert [item['id'] for item in group['preview_items']] == ['item-1', 'item-2', 'item-3']
+
+
+def test_get_queue_groups_rejects_unknown_group_by():
+    triage = IngressTriageService(IngressQueueService(), db_session_factory=_FakeSession())
+
+    with pytest.raises(ValueError, match='Unsupported group_by'):
+        asyncio.run(triage.get_queue_groups(group_by='size'))
+
+
 def test_bulk_accept_uses_orchestrator_and_records_one_batch_history_row(tmp_path, monkeypatch):
     monkeypatch.setattr('services.ingress_queue_service.settings.jellyfin_dest_base',
                         os.fspath(tmp_path / 'jellyfin'))
@@ -329,6 +367,16 @@ def test_item_group_key_matches_persisted_row_grouping():
     assert item_group_key({'file_name': 'random.mkv'}) == ('unclassified', '', 'random.mkv')
 
 
+def test_bulk_group_selector_without_a_title_targets_the_whole_folder():
+    service = IngressQueueService()
+    rows = [SimpleNamespace(**_matrix_row('backlog-1')), SimpleNamespace(**_matrix_row('backlog-2'))]
+    triage = IngressTriageService(service, db_session_factory=_FakeSession(rows))
+
+    ids = asyncio.run(triage.resolve_group_item_ids({'media_type': 'movie', 'ingress_path': '/inbox', 'title': None}))
+
+    assert ids == ['backlog-1', 'backlog-2']
+
+
 def test_group_statement_renders_postgres_json_grouping_and_search():
     from sqlalchemy.dialects import postgresql
 
@@ -339,6 +387,27 @@ def test_group_statement_renders_postgres_json_grouping_and_search():
     assert "ingress_queue.best_match ->> " in sql
     assert "ingress_queue.parsed_info ->> " in sql
     assert 'regexp_replace' in sql and 'GROUP BY' in sql and 'ILIKE' in sql
+
+
+def test_group_statement_groups_by_folder_only_when_asked_to():
+    from sqlalchemy.dialects import postgresql
+
+    triage = IngressTriageService(IngressQueueService(), db_session_factory=None)
+
+    def compile(statement):
+        return str(statement.compile(dialect=postgresql.dialect()))
+
+    # regexp_replace() is the parsed-title normalization: it is selected, grouped and ordered by
+    # for parsed_title, and absent altogether when grouping by source folder.
+    title_sql = compile(triage._group_statement([], 'parsed_title'))
+    folder_sql = compile(triage._group_statement([], 'source_folder'))
+    assert title_sql.count('regexp_replace') >= 3
+    assert 'regexp_replace' not in folder_sql
+    assert 'ingress_path' in folder_sql.split('GROUP BY')[1]
+
+    # a q= search still matches parsed titles even when the grouping itself is per folder
+    searched = compile(triage._group_statement(triage._filters(None, None, 'matrix'), 'source_folder'))
+    assert 'ILIKE' in searched and 'regexp_replace' in searched
 
 
 @integration

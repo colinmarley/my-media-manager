@@ -18,7 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from db.database import get_db
 from db.models import MediaAssignment, MediaFile, Movie, Series
-from services.ingress_triage_service import QUEUE_GROUP_MEDIA_TYPES, IngressTriageService
+from services.ingress_triage_service import (
+    QUEUE_GROUP_BY,
+    QUEUE_GROUP_MEDIA_TYPES,
+    IngressTriageService,
+)
 from services.metadata_enrichment_service import metadata_enrichment_service
 from utils.exceptions import ScanOperationError
 from utils.logging import logger
@@ -382,23 +386,36 @@ async def get_ingress_queue_groups(
     status: Optional[str] = Query(default=None, description="comma-separated queue statuses"),
     mediaType: Optional[str] = Query(default=None, description="comma-separated " + "/".join(QUEUE_GROUP_MEDIA_TYPES)),
     ingressPath: Optional[str] = Query(default=None, description="comma-separated ingress paths"),
-    search: Optional[str] = Query(default=None),
+    search: Optional[str] = Query(default=None, description="alias of q"),
+    q: Optional[str] = Query(default=None, description="matches file_name and parsed_info->>'title'"),
     limit: int = Query(default=25, ge=1, le=50),
     offset: int = Query(default=0, ge=0),
     previewSize: int = Query(default=5, ge=0, le=10),
+    groupBy: str = Query(default="parsed_title", description=" | ".join(QUEUE_GROUP_BY)),
+    group_by: Optional[str] = Query(default=None, description="alias of groupBy"),
 ):
     triage_service = _ingress_triage_service(req)
-    return {
-        "success": True,
-        "data": await triage_service.get_queue_groups(
+    try:
+        data = await triage_service.get_queue_groups(
             statuses=_csv_query_param(status),
             media_types=_csv_query_param(mediaType),
             ingress_paths=_csv_query_param(ingressPath),
-            search=search,
+            search=q or search,
             limit=limit,
             offset=offset,
             preview_size=previewSize,
-        ),
+            group_by=group_by or groupBy,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail={
+            "type": "ValidationError",
+            "message": str(exc),
+            "code": "INVALID_GROUP_BY",
+        })
+
+    return {
+        "success": True,
+        "data": data,
         "timestamp": str(int(time.time())),
     }
 

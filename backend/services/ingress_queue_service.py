@@ -518,6 +518,7 @@ class IngressQueueService:
         history_extra: Optional[Dict[str, Any]] = None,
     ) -> Optional[IngressQueueItem]:
         """Retry a failed queue item by placing it back into pending state."""
+        await self.hydrate_item(item_id)
         with self.lock:
             item = self.items_by_id.get(item_id)
             if item is None or item.status in QUEUE_TERMINAL_STATUSES:
@@ -537,6 +538,7 @@ class IngressQueueService:
         history_extra: Optional[Dict[str, Any]] = None,
     ) -> Optional[IngressQueueItem]:
         """Move a queue item to the terminal ignored status (excluded from pending and auto-retry)."""
+        await self.hydrate_item(item_id)
         with self.lock:
             item = self.items_by_id.get(item_id)
             if item is None:
@@ -570,6 +572,32 @@ class IngressQueueService:
                 candidates.append(item.id)
             return candidates
 
+    async def hydrate_item(self, item_id: str) -> Optional[Dict[str, Any]]:
+        """Return the queue item payload, loading the persisted row when the queue lost it (restart)."""
+        with self.lock:
+            tracked = self.items_by_id.get(item_id)
+            if tracked is not None:
+                return tracked.to_dict()
+        if self.db_session_factory is None:
+            return None
+
+        try:
+            async with self.db_session_factory() as session:
+                row = (
+                    await session.execute(
+                        select(DBIngressQueueItem).where(DBIngressQueueItem.id == item_id).limit(1)
+                    )
+                ).scalars().first()
+        except Exception as exc:
+            logger.warning("Failed to hydrate ingress queue item", item_id=item_id, error=str(exc))
+            return None
+
+        if row is None:
+            return None
+
+        self.hydrate_items([row])
+        return self.get_item(item_id)
+
     def hydrate_items(self, rows: Iterable[Any]) -> int:
         """Rebuild in-memory queue items from persisted rows; live state is never overwritten."""
         hydrated = 0
@@ -595,6 +623,7 @@ class IngressQueueService:
         history_extra: Optional[Dict[str, Any]] = None,
     ) -> Optional[IngressQueueItem]:
         """Override the proposed queue classification before acceptance."""
+        await self.hydrate_item(item_id)
         normalized = (classification or "").strip().lower()
         if normalized in ("", "auto", "default", "clear"):
             normalized = None
@@ -632,6 +661,7 @@ class IngressQueueService:
         history_extra: Optional[Dict[str, Any]] = None,
     ) -> Optional[IngressQueueItem]:
         """Mark an item complete and attempt organization to Jellyfin."""
+        await self.hydrate_item(item_id)
         with self.lock:
             item = self.items_by_id.get(item_id)
             if item is None:
@@ -694,6 +724,7 @@ class IngressQueueService:
 
     async def mark_failed(self, item_id: str, reason: str) -> Optional[IngressQueueItem]:
         """Mark an item as failed with a reason."""
+        await self.hydrate_item(item_id)
         with self.lock:
             item = self.items_by_id.get(item_id)
             if item is None:
@@ -721,6 +752,7 @@ class IngressQueueService:
         organize_now: bool = False,
     ) -> Optional[IngressQueueItem]:
         """Manually assign a queue item to explicit media and optionally organize now."""
+        await self.hydrate_item(item_id)
         with self.lock:
             item = self.items_by_id.get(item_id)
             if item is None:
