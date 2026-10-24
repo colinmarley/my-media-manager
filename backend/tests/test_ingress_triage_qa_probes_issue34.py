@@ -37,6 +37,7 @@ from services.ingress_triage_service import (
     MAX_PREVIEW_ROWS,
     QUEUE_GROUP_BY_FOLDER,
     QUEUE_GROUP_BY_TITLE,
+    UNPARSED_TITLE_BUCKET,
     IngressTriageService,
     item_group_key,
 )
@@ -100,9 +101,9 @@ def _id_criteria(statement):
 class _BacklogSession:
     """Async-session stand-in over persisted queue rows.
 
-    GROUP BY statements answer with (media_type, ingress_path, title, status, count) rows and plain
-    SELECTs with the row objects, which is what the two query shapes of #34 expect. Only ``id =``
-    equality is interpreted from WHERE, so probes must not rely on other SQL filtering here.
+    GROUP BY statements answer with (media_type, ingress_path, title, source_folder, status, count) rows
+    and plain SELECTs with the row objects, which is what the two query shapes of #34 expect. Only
+    ``id =`` equality is interpreted from WHERE, so probes must not rely on other SQL filtering here.
     """
 
     def __init__(self, rows):
@@ -130,7 +131,8 @@ class _BacklogSession:
                 media_type=key[0],
                 ingress_path=key[1],
                 title=key[2],
-                status=key[3],
+                source_folder=key[3],
+                status=key[4],
                 item_count=len(members),
                 min_confidence=min(member.confidence_score for member in members),
                 max_confidence=max(member.confidence_score for member in members),
@@ -178,7 +180,8 @@ class _FixtureTriage(IngressTriageService):
         if 'GROUP BY' in str(statement):
             return [
                 SimpleNamespace(
-                    media_type=key[0], ingress_path=key[1], title=key[2], status=key[3], item_count=count,
+                    media_type=key[0], ingress_path=key[1], title=key[2], source_folder=key[4] if len(key) > 4 else '',
+                    status=key[3] if len(key) == 4 else key[4], item_count=count,
                     min_confidence=None, max_confidence=None, first_queued_at=QUEUED_AT, last_queued_at=QUEUED_AT,
                 )
                 for key, count in self.group_counts.items()
@@ -515,13 +518,14 @@ def test_qa_ignored_rows_stay_out_of_the_pending_processor_and_failed_item_auto_
     assert queue_service._get_next_pending_item().id == 'pending-1'
 
 
-def test_qa_source_folder_grouping_keys_on_the_ingress_root_not_the_rip_folder():
-    """Scope check on the AC2 group key: `source_folder` groups the whole ingress_path, rip subfolders collapse.
+def test_qa_source_folder_grouping_keys_on_the_rip_folder_under_the_ingress_root():
+    """AC2 (reopened by QA): `source_folder` is the rip folder relative to `ingress_path`.
 
-    The issue text defines `source_folder` as the path *relative to* the item's `ingress_path` (the disc
-    folder the rip landed in). The implementation groups by the persisted `ingress_path` column, which
-    `_infer_ingress_root` fills with the watched root, so every rip under one watched root merges into
-    a single group. This probe pins what the branch actually does.
+    The issue defines `source_folder` as the path *relative to* the item's `ingress_path`, i.e. the disc
+    folder the rip landed in. Grouping by the persisted `ingress_path` column instead — which
+    `_infer_ingress_root` fills with the watched root — merged every rip under one root into a single
+    group. The probe pins the corrected grouping: the folder is derived from `file_path`, while
+    `ingress_path` still scopes the group so identically named rips under different roots stay apart.
     """
     from sqlalchemy.dialects import postgresql
 
@@ -530,9 +534,9 @@ def test_qa_source_folder_grouping_keys_on_the_ingress_root_not_the_rip_folder()
     group_by_clause = folder_sql.split('GROUP BY', 1)[1]
 
     assert 'ingress_path' in group_by_clause, folder_sql
-    assert 'file_path' not in group_by_clause, group_by_clause  # no rip sub-folder is derived from file_path
+    assert 'ingress_queue.file_path' in group_by_clause, group_by_clause  # the rip folder comes from file_path
 
-    # two discs dropped under the same watched root: parsed_title keeps them apart, source_folder does not
+    # two discs dropped under the same watched root: parsed_title and source_folder both keep them apart
     rows = [
         _row('disc-a', 'The.Matrix.1999.DISC1/movie.mkv', best_match=_matrix()),
         _row('disc-b', 'Heat.2022.DISC1/movie.mkv', best_match={'media_type': 'movie', 'title': 'Heat'}),
@@ -541,11 +545,48 @@ def test_qa_source_folder_grouping_keys_on_the_ingress_root_not_the_rip_folder()
     fixture = IngressTriageService(IngressQueueService(db_session_factory=session), db_session_factory=session)
 
     titles = asyncio.run(fixture.get_queue_groups(limit=10, preview_size=0))
-    folders = asyncio.run(fixture.get_queue_groups(group_by=QUEUE_GROUP_BY_FOLDER, limit=10, preview_size=0))
+    folders = asyncio.run(fixture.get_queue_groups(group_by=QUEUE_GROUP_BY_FOLDER, limit=10, preview_size=5))
 
     assert titles['total_groups'] == 2
     assert [group['group_key']['title'] for group in titles['groups']] == ['heat', 'the matrix']
-    assert folders['total_groups'] == 1
-    assert folders['groups'][0]['group_key'] == {'media_type': 'movie', 'ingress_path': INGRESS_ROOT,
-                                                 'title': None}
-    assert folders['groups'][0]['item_count'] == 2
+    assert folders['total_groups'] == 2
+    assert [
+        (group['group_key']['source_folder'], group['item_count']) for group in folders['groups']
+    ] == [('Heat.2022.DISC1', 1), ('The.Matrix.1999.DISC1', 1)]
+    assert all(group['group_key']['title'] is None for group in folders['groups'])
+    assert [item['id'] for item in folders['groups'][0]['preview_items']] == ['disc-b']
+    assert [item['id'] for item in folders['groups'][1]['preview_items']] == ['disc-a']
+
+    # the same rip folder name under two watched roots stays two groups
+    twin_session = _BacklogSession([
+        _row('root-a', 'The.Matrix.1999.DISC1/movie.mkv', ingress_path=INGRESS_ROOT, best_match=_matrix()),
+        _row('root-b', 'The.Matrix.1999.DISC1/movie.mkv', ingress_path='/mnt/usb', best_match=_matrix()),
+    ])
+    twins = IngressTriageService(IngressQueueService(db_session_factory=twin_session), db_session_factory=twin_session)
+
+    twin_folders = asyncio.run(twins.get_queue_groups(group_by=QUEUE_GROUP_BY_FOLDER, limit=10, preview_size=5))
+    assert [
+        (group['group_key']['ingress_path'], group['group_key']['source_folder'])
+        for group in twin_folders['groups']
+    ] == [(INGRESS_ROOT, 'The.Matrix.1999.DISC1'), ('/mnt/usb', 'The.Matrix.1999.DISC1')]
+
+
+def test_qa_rows_without_a_parsed_title_bucket_as_unparsed():
+    """AC2: a row the parser never filled in is one `(unparsed)` group, not one group per file name."""
+    rows = [
+        _row('no-title-1', 'broken.mkv', parsed_info={}, best_match={}),
+        _row('no-title-2', 'also-broken.mkv', parsed_info={}, best_match={}),
+        _row('titled-1', 'The.Matrix.2000.mkv', parsed_info={'title': 'The Matrix'}),
+    ]
+    session = _BacklogSession(rows)
+    fixture = IngressTriageService(IngressQueueService(db_session_factory=session), db_session_factory=session)
+
+    titles = asyncio.run(fixture.get_queue_groups(limit=10, preview_size=5))
+
+    assert titles['total_groups'] == 2
+    unparsed = next(group for group in titles['groups'] if group['group_key']['title'] == UNPARSED_TITLE_BUCKET)
+    assert unparsed['group_key'] == {'media_type': 'unclassified', 'ingress_path': INGRESS_ROOT,
+                                     'title': UNPARSED_TITLE_BUCKET}
+    assert unparsed['item_count'] == 2
+    assert sorted(item['id'] for item in unparsed['preview_items']) == ['no-title-1', 'no-title-2']
+    assert [group['group_key']['title'] for group in titles['groups'] if group['item_count'] == 1] == ['the matrix']

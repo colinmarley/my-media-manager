@@ -446,10 +446,20 @@ title) and returns one page of groups with per-status counts, confidence range, 
 and preview items — so a backlog detected before a restart can be triaged without re-scanning.
 `status`, `mediaType` (`movie` / `series` / `episode` / `unclassified`) and `ingressPath` accept
 comma-separated values; `q` (alias `search`) matches file name, path, group title and proposed
-path; `groupBy` (alias `group_by`) is `parsed_title` (default, the triple above) or `source_folder`,
-which collapses every parsed title inside one ingress folder into a single group whose
-`group_key.title` is `null`; `limit` is 1-50 groups and `previewSize` 0-10 items per group. An
-unknown `groupBy` returns 400 with `code: "INVALID_GROUP_BY"`.
+path; `limit` is 1-50 groups and `previewSize` 0-10 items per group. An unknown `groupBy` returns
+400 with `code: "INVALID_GROUP_BY"`.
+
+- `groupBy=parsed_title` (default) groups by `{media_type, ingress_path, title}`, where `title` is
+  `lower(trim(regexp_replace(coalesce(best_match->>'title', parsed_info->>'title'), '\s+', ' ', 'g')))`,
+  and a row whose JSON columns hold no title at all lands in one `(unparsed)` bucket rather than
+  one group per file name.
+- `groupBy=source_folder` groups by `{media_type, ingress_path, title, source_folder}` with
+  `title: null`. `source_folder` is the rip folder *under* the watched ingress root — the first path
+  segment of `file_path` below `ingress_path` — so `/ark/ingest/The.Matrix.1999.DISC1/DISC1/movie.mkv`
+  under `/ark/ingest` groups as `The.Matrix.1999.DISC1`, and two rips dropped under one watched root
+  stay two groups. Files sitting directly in the ingress root share the `""` bucket, and
+  `ingress_path` stays part of the key so identically named rip folders under different watched
+  roots never merge.
 
 **Response:**
 ```json
@@ -478,6 +488,9 @@ unknown `groupBy` returns 400 with `code: "INVALID_GROUP_BY"`.
 }
 ```
 
+With `groupBy=source_folder` the group instead carries
+`"group_key": {"media_type": "movie", "ingress_path": "/ark/ingest", "title": null, "source_folder": "The.Matrix.1999.DISC1"}`.
+
 ### Bulk Queue Action
 ```http
 POST /api/ingress/queue/bulk
@@ -498,8 +511,8 @@ assignment/organize path, `ignore` sets the terminal `ignored` status (excluded 
 selection and failed-item auto-retry), `retry` re-queues an item and `classify` needs a
 `classification` of `main_feature` / `special_feature` / `alternate_version`. `statuses` and
 `excludeItemIds` narrow a group selection, and a `group` selector may omit `media_type` and/or
-`title` to address a whole ingress folder — the `group_key` returned with `groupBy=source_folder`
-feeds straight back in. Each mutated item records exactly one
+`title` — for `groupBy=source_folder` it addresses one rip folder with `source_folder` instead — so
+the `group_key` returned by the listing feeds straight back in. Each mutated item records exactly one
 `ingress_processing_history` row carrying the batch's `batch_id`, `action` and `source: "bulk"`.
 
 **Response:**

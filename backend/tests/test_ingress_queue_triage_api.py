@@ -151,6 +151,18 @@ class TestQueueBulkEndpoint:
         assert triage.bulk_kwargs["group"]["title"] == "the matrix"
 
     @pytest.mark.asyncio
+    async def test_passes_a_source_folder_group_selector_through(self, app):
+        triage = _wire(app, _StubTriageService())
+        group = {"media_type": "movie", "ingress_path": "/inbox", "source_folder": "The.Matrix.1999.DISC1"}
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post("/api/ingress/queue/bulk", json={"action": "ignore", "group": group})
+
+        assert resp.status_code == 200
+        assert triage.bulk_kwargs["action"] == "ignore"
+        assert triage.bulk_kwargs["group"] == group
+
+    @pytest.mark.asyncio
     async def test_400s_when_the_bulk_request_is_invalid(self, app):
         from services.ingress_triage_service import IngressTriageService
 

@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import String, case, cast, func, or_, select
+from sqlalchemy import String, and_, case, cast, func, or_, select
 
 from db.database import AsyncSessionLocal
 from db.models import IngressQueueItem as DBQueueItem
@@ -46,10 +46,13 @@ MAX_PREVIEW_ITEMS = 10
 MAX_PREVIEW_ROWS = 200
 MAX_GROUP_ITEMS = 1000
 
-# Issue #34 grouping knobs: one group per parsed title inside a folder, or one per ingress folder.
+# Issue #34 grouping knobs: one group per parsed title inside a folder, or one per source folder.
 QUEUE_GROUP_BY_TITLE = "parsed_title"
 QUEUE_GROUP_BY_FOLDER = "source_folder"
 QUEUE_GROUP_BY: Tuple[str, ...] = (QUEUE_GROUP_BY_TITLE, QUEUE_GROUP_BY_FOLDER)
+
+# Rows whose parsed_info/best_match carry no title land in this bucket instead of the file name.
+UNPARSED_TITLE_BUCKET = "(unparsed)"
 
 
 def _matched(field: str) -> Any:
@@ -69,15 +72,51 @@ GROUP_MEDIA_TYPE = case(
     else_=MEDIA_TYPE_UNCLASSIFIED,
 )
 GROUP_PATH = func.coalesce(DBQueueItem.ingress_path, "")
-GROUP_TITLE = func.lower(
-    func.trim(func.regexp_replace(func.coalesce(_matched("title"), DBQueueItem.file_name), r"\s+", " ", "g"))
+_PARSED_TITLE = func.trim(func.regexp_replace(func.coalesce(_matched("title"), ""), r"\s+", " ", "g"))
+GROUP_TITLE = func.lower(func.coalesce(func.nullif(_PARSED_TITLE, ""), UNPARSED_TITLE_BUCKET))
+
+# `source_folder` is the rip folder the file landed in: the first path segment of file_path below
+# its ingress root (`ingress_path`), empty when the file sits directly in that root. Grouping by the
+# raw ingress_path column would collapse every rip under one watched root into a single group.
+_INGRESS_ROOT = func.rtrim(GROUP_PATH, "/")
+_INGRESS_ROOT_PREFIX = func.concat(_INGRESS_ROOT, "/")
+_RELATIVE_PATH = case(
+    (
+        and_(
+            DBQueueItem.ingress_path.isnot(None),
+            _INGRESS_ROOT != "",
+            func.strpos(DBQueueItem.file_path, _INGRESS_ROOT_PREFIX) == 1,
+        ),
+        func.substr(DBQueueItem.file_path, func.length(_INGRESS_ROOT_PREFIX) + 1),
+    ),
+    else_="",
 )
+GROUP_SOURCE_FOLDER = case(
+    (
+        func.strpos(_RELATIVE_PATH, "/") > 0,
+        func.substr(_RELATIVE_PATH, 1, func.strpos(_RELATIVE_PATH, "/") - 1),
+    ),
+    else_="",
+)
+
 GROUP_EXPRS = (GROUP_MEDIA_TYPE, GROUP_PATH, GROUP_TITLE)
+FOLDER_EXPRS = (GROUP_MEDIA_TYPE, GROUP_PATH, GROUP_SOURCE_FOLDER)
 
 
 def group_exprs_for(group_by: str) -> Tuple[Any, ...]:
     """SQL grouping expressions; media type and ingress path always scope the group."""
-    return (GROUP_MEDIA_TYPE, GROUP_PATH) if group_by == QUEUE_GROUP_BY_FOLDER else GROUP_EXPRS
+    return FOLDER_EXPRS if group_by == QUEUE_GROUP_BY_FOLDER else GROUP_EXPRS
+
+
+def source_folder_for(ingress_path: Any, file_path: Any) -> str:
+    """Python mirror of GROUP_SOURCE_FOLDER, so previews land in the group the query built."""
+    root = str(ingress_path or "").rstrip("/")
+    path = str(file_path or "")
+    if not root or not path.startswith(f"{root}/"):
+        return ""
+    relative = path[len(root) + 1:]
+    folder, separator, _ = relative.partition("/")
+    return folder if separator else ""
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -94,8 +133,8 @@ def _later(current: Optional[str], candidate: Optional[str]) -> Optional[str]:
     return candidate if current is None or (candidate is not None and candidate > current) else current
 
 
-def item_group_key(item: Dict[str, Any]) -> Tuple[str, str, str]:
-    """Mirror GROUP_EXPRS in python so preview rows land in the group the query built."""
+def item_group_key(item: Dict[str, Any]) -> Tuple[str, str, str, str]:
+    """Mirror GROUP_EXPRS/FOLDER_EXPRS in python (media type, path, title, source folder)."""
     best_match = item.get("best_match") or {}
     parsed_info = item.get("parsed_info") or {}
     media_type = str(best_match.get("media_type") or parsed_info.get("media_type") or "").lower()
@@ -107,8 +146,13 @@ def item_group_key(item: Dict[str, Any]) -> Tuple[str, str, str]:
         bucket = MEDIA_TYPE_EPISODE
     else:
         bucket = MEDIA_TYPE_UNCLASSIFIED
-    title = " ".join(str(best_match.get("title") or parsed_info.get("title") or item.get("file_name") or "").split())
-    return (bucket, str(item.get("ingress_path") or ""), title.lower())
+    title = " ".join(str(best_match.get("title") or parsed_info.get("title") or "").split()).lower()
+    return (
+        bucket,
+        str(item.get("ingress_path") or ""),
+        title or UNPARSED_TITLE_BUCKET,
+        source_folder_for(item.get("ingress_path"), item.get("file_path")),
+    )
 
 
 class IngressTriageService:
@@ -134,7 +178,7 @@ class IngressTriageService:
         preview_size: int = MAX_PREVIEW_ITEMS,
         group_by: str = QUEUE_GROUP_BY_TITLE,
     ) -> Dict[str, Any]:
-        """Return Postgres-grouped queue rows: title/path/media_type with counts and previews."""
+        """Return Postgres-grouped queue rows: title/source folder/media type with counts and previews."""
         group_by = str(group_by or QUEUE_GROUP_BY_TITLE).strip().lower()
         if group_by not in QUEUE_GROUP_BY:
             raise ValueError(f"Unsupported group_by '{group_by}', expected one of {', '.join(QUEUE_GROUP_BY)}")
@@ -159,11 +203,14 @@ class IngressTriageService:
 
         bucketed: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
         for item in previews:
-            key = item_group_key(item)
-            bucketed.setdefault(key[:2] if by_folder else key, []).append(item)
+            media_type, ingress_path, title, source_folder = item_group_key(item)
+            key = (media_type, ingress_path, source_folder) if by_folder else (media_type, ingress_path, title)
+            bucketed.setdefault(key, []).append(item)
         for group in page:
-            key = (group["media_type"], group["ingress_path"])
-            group["preview_items"] = bucketed.get(key if by_folder else key + (group["title"],), [])[:preview_size]
+            key = (group["media_type"], group["ingress_path"], group["source_folder"]) if by_folder else (
+                group["media_type"], group["ingress_path"], group["title"],
+            )
+            group["preview_items"] = bucketed.get(key, [])[:preview_size]
 
         return {
             "groups": page,
@@ -241,8 +288,15 @@ class IngressTriageService:
     ) -> List[str]:
         """Resolve a group selector (media_type/ingress_path/title, any subset) to queue item ids."""
         filters = []
-        for expression, field in ((GROUP_MEDIA_TYPE, "media_type"), (GROUP_PATH, "ingress_path"), (GROUP_TITLE, "title")):
-            value = (group or {}).get(field)
+        selector = group or {}
+        expressions = (
+            (GROUP_MEDIA_TYPE, "media_type"),
+            (GROUP_PATH, "ingress_path"),
+            (GROUP_SOURCE_FOLDER, "source_folder"),
+            (GROUP_TITLE, "title"),
+        )
+        for expression, field in expressions:
+            value = selector.get(field)
             if value is not None:
                 filters.append(expression == str(value))
         if not filters:
@@ -338,9 +392,11 @@ class IngressTriageService:
         return filters
 
     def _group_statement(self, filters: Sequence[Any], group_by: str = QUEUE_GROUP_BY_TITLE) -> Any:
+        by_folder = group_by == QUEUE_GROUP_BY_FOLDER
         labels = [GROUP_MEDIA_TYPE.label("media_type"), GROUP_PATH.label("ingress_path")]
-        if group_by != QUEUE_GROUP_BY_FOLDER:
-            labels.append(GROUP_TITLE.label("title"))
+        labels.append(
+            GROUP_SOURCE_FOLDER.label("source_folder") if by_folder else GROUP_TITLE.label("title")
+        )
         statement = (
             select(
                 *labels,
@@ -367,18 +423,24 @@ class IngressTriageService:
         status_counts: Dict[str, int] = {status: 0 for status in QUEUE_ALL_STATUSES}
 
         for row in rows:
-            key = (
-                str(row.media_type or MEDIA_TYPE_UNCLASSIFIED),
-                str(row.ingress_path or ""),
-                None if by_folder else str(row.title or ""),
-            )
+            media_type = str(row.media_type or MEDIA_TYPE_UNCLASSIFIED)
+            ingress_path = str(row.ingress_path or "")
+            source_folder = str(getattr(row, "source_folder", "") or "")
+            title = None if by_folder else str(row.title or "")
+            key = (media_type, ingress_path, source_folder) if by_folder else (media_type, ingress_path, title)
             group = groups.get(key)
             if group is None:
                 group = {
-                    "group_key": {"media_type": key[0], "ingress_path": key[1], "title": key[2]},
-                    "media_type": key[0],
-                    "ingress_path": key[1],
-                    "title": key[2],
+                    "group_key": (
+                        {"media_type": media_type, "ingress_path": ingress_path, "title": None,
+                         "source_folder": source_folder}
+                        if by_folder
+                        else {"media_type": media_type, "ingress_path": ingress_path, "title": title}
+                    ),
+                    "media_type": media_type,
+                    "ingress_path": ingress_path,
+                    "title": title,
+                    "source_folder": source_folder,
                     "item_count": 0,
                     "matching_count": 0,
                     "status_counts": {},
@@ -410,7 +472,9 @@ class IngressTriageService:
 
         ranked = sorted(
             groups.values(),
-            key=lambda group: (group["media_type"], group["ingress_path"], group["title"] or ""),
+            key=lambda group: (
+                group["media_type"], group["ingress_path"], group["source_folder"], group["title"] or "",
+            ),
         )
         return [group for group in ranked if group["matching_count"] > 0], status_counts
 

@@ -54,7 +54,10 @@ class QueueClassificationUpdateRequest(BaseModel):
 class QueueBulkRequest(BaseModel):
     action: str = Field(..., description="accept | ignore | retry | classify")
     itemIds: Optional[List[str]] = Field(default=None, max_length=500)
-    group: Optional[Dict[str, Any]] = Field(default=None, description="group selector: mediaType/ingressPath/title")
+    group: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description="group selector: media_type/ingress_path/title, plus source_folder for groupBy=source_folder",
+    )
     statuses: Optional[List[str]] = Field(default=None, description="status filter applied to a group selector")
     classification: Optional[str] = Field(default=None)
     excludeItemIds: Optional[List[str]] = Field(default=None, max_length=500)
