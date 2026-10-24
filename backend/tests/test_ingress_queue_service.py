@@ -1,7 +1,18 @@
 import asyncio
 import os
+import time
+from datetime import datetime, timezone
 
-from services.ingress_queue_service import IngressQueueItem, IngressQueueService, QUEUE_COMPLETED, QUEUE_PENDING
+from services.ingress_queue_service import (
+    IngressQueueItem,
+    IngressQueueService,
+    QUEUE_COMPLETED,
+    QUEUE_FAILED,
+    QUEUE_IGNORED,
+    QUEUE_NEEDS_REVIEW,
+    QUEUE_PENDING,
+    queue_item_from_row,
+)
 
 
 class _CapturingAssignmentOrchestrator:
@@ -523,3 +534,112 @@ def test_manual_assignment_history_records_training_fields(tmp_path, monkeypatch
     assert history[0]['event'] == 'manual_assignment'
     assert history[0]['best_match']['title'] == 'Manual History'
     assert history[0]['proposed_path'].endswith('Manual History (2025).mkv')
+
+
+def test_mark_ignored_sets_terminal_status_and_records_history(tmp_path):
+    source_file = tmp_path / 'ingest' / 'ignored-movie.mkv'
+    source_file.parent.mkdir(parents=True)
+    source_file.write_bytes(b'ignore-me')
+
+    service = IngressQueueService()
+    item = service.add_manual_file(os.fspath(source_file))
+
+    ignored = asyncio.run(service.mark_ignored(
+        item.id,
+        history_extra={'batch_id': 'batch-1', 'action': 'ignore', 'source': 'bulk'},
+    ))
+
+    assert ignored is not None
+    assert ignored.status == QUEUE_IGNORED
+    assert service.get_item(item.id)['status'] == QUEUE_IGNORED
+    assert service.get_queue_items(status=QUEUE_PENDING) == []
+    assert service.get_queue_status()['counts'][QUEUE_IGNORED] == 1
+    assert asyncio.run(service.retry_item(item.id)) is None
+
+    history = service.get_processing_history(limit=1)
+    assert len(history) == 1
+    assert history[0]['event'] == 'item_ignored'
+    assert history[0]['batch_id'] == 'batch-1'
+    assert history[0]['action'] == 'ignore'
+    assert history[0]['source'] == 'bulk'
+
+
+def test_get_retry_candidate_ids_only_returns_actionable_failed_items(tmp_path):
+    ingress = tmp_path / 'ingest'
+    ingress.mkdir(parents=True)
+
+    service = IngressQueueService()
+    items = {}
+    for name in ('failed', 'ignored', 'completed', 'exhausted', 'cooling-down'):
+        path = ingress / f'{name}.mkv'
+        path.write_bytes(b'candidate')
+        items[name] = service.add_manual_file(os.fspath(path))
+
+    items['failed'].status = QUEUE_FAILED
+    items['failed'].attempts = 1
+    items['ignored'].status = QUEUE_IGNORED
+    items['ignored'].attempts = 1
+    items['completed'].status = QUEUE_COMPLETED
+    items['completed'].attempts = 1
+    items['exhausted'].status = QUEUE_FAILED
+    items['exhausted'].attempts = 3
+    items['cooling-down'].status = QUEUE_FAILED
+    items['cooling-down'].last_attempt = time.time()
+
+    assert service.get_retry_candidate_ids() == [items['failed'].id]
+
+
+def test_hydrate_items_rebuilds_backlog_from_persisted_rows():
+    queued_at = datetime(2024, 5, 1, 12, 0, tzinfo=timezone.utc)
+    rows = [{
+        'id': 'backlog-1',
+        'file_path': '/inbox/The.Matrix.2000.mkv',
+        'file_name': 'The.Matrix.2000.mkv',
+        'ingress_path': '/inbox',
+        'file_size': 2048,
+        'detected_at': queued_at,
+        'queued_at': queued_at,
+        'status': QUEUE_NEEDS_REVIEW,
+        'priority': 5,
+        'attempts': 1,
+        'parsed_info': {'title': 'The Matrix', 'classification_override': 'special_feature'},
+        'best_match': {'media_type': 'movie', 'title': 'The Matrix'},
+        'match_candidates': [],
+    }]
+
+    service = IngressQueueService()
+
+    assert service.hydrate_items(rows) == 1
+    assert service.hydrate_items(rows) == 0
+
+    item = service.get_item('backlog-1')
+    assert item['status'] == QUEUE_NEEDS_REVIEW
+    assert isinstance(item['queued_at'], float)
+    assert item['classification_override'] == 'special_feature'
+    assert queue_item_from_row(rows[0])['file_name'] == 'The.Matrix.2000.mkv'
+    assert queue_item_from_row({'file_path': '/inbox/orphan.mkv'}) is None
+
+
+def test_hydrate_items_keeps_live_state_for_tracked_items(tmp_path):
+    source_file = tmp_path / 'ingest' / 'live-movie.mkv'
+    source_file.parent.mkdir(parents=True)
+    source_file.write_bytes(b'live')
+
+    service = IngressQueueService()
+    live = service.add_manual_file(os.fspath(source_file))
+
+    stale_row = {
+        'id': live.id,
+        'file_path': live.file_path,
+        'file_name': live.file_name,
+        'ingress_path': live.ingress_path,
+        'file_size': live.file_size,
+        'queued_at': 1.0,
+        'status': QUEUE_COMPLETED,
+        'priority': 5,
+        'attempts': 9,
+    }
+
+    assert service.hydrate_items([stale_row]) == 0
+    assert service.get_item(live.id)['status'] == QUEUE_PENDING
+    assert service.get_item(live.id)['attempts'] == 0

@@ -31,7 +31,7 @@ from `192.168.0.227:8082` as job `media-manager`.
 | `mm_http_requests_total` | counter | `method`, `path` (route template), `status` |
 | `mm_http_request_duration_seconds` | histogram | `method`, `path`, `status` |
 | `mm_catalog_items` | gauge | `type` = movie / series / disc / tape |
-| `mm_ingest_queue_items` | gauge | `status` = pending / processing / auto_assigned / needs_review / failed / completed |
+| `mm_ingest_queue_items` | gauge | `status` = pending / processing / auto_assigned / needs_review / failed / completed / ignored |
 | `mm_compliance_findings_open`, `mm_media_assignments_total`, `mm_poster_cache_files`, `mm_sessions_active` | gauge | — |
 
 `path` is always a route template (`/api/posters/{media_type}/{media_id}`) or
@@ -432,6 +432,91 @@ Returns list of supported video, audio, and subtitle formats.
   }
 }
 ```
+
+---
+
+## Ingress Queue Triage (`/api/ingress/queue`)
+
+### List Queue Groups
+```http
+GET /api/ingress/queue/groups
+```
+Groups the persisted `ingress_queue` rows in Postgres by (media type, ingress path, normalized
+title) and returns one page of groups with per-status counts, confidence range, queued timestamps
+and preview items — so a backlog detected before a restart can be triaged without re-scanning.
+`status`, `mediaType` (`movie` / `series` / `episode` / `unclassified`) and `ingressPath` accept
+comma-separated values; `search` matches file name, path, group title and proposed path; `limit`
+is 1-50 groups and `previewSize` 0-10 items per group.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "groups": [{
+      "group_key": {"media_type": "movie", "ingress_path": "/ark/ingest", "title": "the matrix"},
+      "item_count": 3,
+      "matching_count": 2,
+      "status_counts": {"pending": 2, "failed": 1},
+      "confidence_min": 40,
+      "confidence_max": 91,
+      "first_queued_at": "2026-05-01T12:00:00+00:00",
+      "last_queued_at": "2026-05-01T12:30:00+00:00",
+      "preview_items": [{"id": "…", "file_name": "The.Matrix.2000.mkv", "status": "pending"}]
+    }],
+    "total_groups": 1,
+    "total_items": 2,
+    "status_counts": {"pending": 2, "processing": 0, "auto_assigned": 0, "needs_review": 0, "failed": 1, "completed": 0, "ignored": 0},
+    "limit": 25,
+    "offset": 0,
+    "preview_size": 5
+  }
+}
+```
+
+### Bulk Queue Action
+```http
+POST /api/ingress/queue/bulk
+Content-Type: application/json
+
+{
+  "action": "ignore",
+  "itemIds": ["0f6a…"],
+  "group": {"media_type": "movie", "ingress_path": "/ark/ingest", "title": "the matrix"},
+  "statuses": ["pending", "failed"],
+  "excludeItemIds": ["9c2d…"],
+  "classification": "special_feature"
+}
+```
+Applies one `action` to `itemIds` and/or every item resolved from a `group` selector, item by item,
+so partial success is reported instead of failing the batch: `accept` runs the normal
+assignment/organize path, `ignore` sets the terminal `ignored` status (excluded from pending
+selection and failed-item auto-retry), `retry` re-queues an item and `classify` needs a
+`classification` of `main_feature` / `special_feature` / `alternate_version`. `statuses` and
+`excludeItemIds` narrow a group selection. Each mutated item records exactly one
+`ingress_processing_history` row carrying the batch's `batch_id`, `action` and `source: "bulk"`.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "batch_id": "3b1e…",
+    "action": "ignore",
+    "requested": 2,
+    "succeeded": 1,
+    "failed": 1,
+    "skipped": 0,
+    "results": [
+      {"item_id": "0f6a…", "action": "ignore", "status": "succeeded", "item_status": "ignored", "error": null},
+      {"item_id": "9c2d…", "action": "ignore", "status": "failed", "item_status": null, "error": "Queue item not found"}
+    ]
+  }
+}
+```
+
+Requests without a valid `action`, without `itemIds`/`group`, or with an unknown `classification`
+return 400 with `code: "INVALID_BULK_REQUEST"`.
 
 ---
 

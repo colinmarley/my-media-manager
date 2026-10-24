@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from db.database import get_db
 from db.models import MediaAssignment, MediaFile, Movie, Series
+from services.ingress_triage_service import QUEUE_GROUP_MEDIA_TYPES, IngressTriageService
 from services.metadata_enrichment_service import metadata_enrichment_service
 from utils.exceptions import ScanOperationError
 from utils.logging import logger
@@ -44,6 +45,15 @@ class QueueFailRequest(BaseModel):
 class QueueClassificationUpdateRequest(BaseModel):
     itemId: str
     classification: str = Field(default="auto")
+
+
+class QueueBulkRequest(BaseModel):
+    action: str = Field(..., description="accept | ignore | retry | classify")
+    itemIds: Optional[List[str]] = Field(default=None, max_length=500)
+    group: Optional[Dict[str, Any]] = Field(default=None, description="group selector: mediaType/ingressPath/title")
+    statuses: Optional[List[str]] = Field(default=None, description="status filter applied to a group selector")
+    classification: Optional[str] = Field(default=None)
+    excludeItemIds: Optional[List[str]] = Field(default=None, max_length=500)
 
 
 class ProcessPendingRequest(BaseModel):
@@ -349,6 +359,71 @@ async def get_ingress_queue_items(
             "items": queue_service.get_queue_items(status=status),
             "statusFilter": status,
         },
+        "timestamp": str(int(time.time())),
+    }
+
+
+def _csv_query_param(value: Optional[str]) -> Optional[List[str]]:
+    parts = [part.strip() for part in (value or "").split(",") if part.strip()]
+    return parts or None
+
+
+def _ingress_triage_service(req: Request) -> IngressTriageService:
+    triage_service = getattr(req.app.state, "ingress_triage_service", None)
+    if triage_service is None:
+        triage_service = IngressTriageService(req.app.state.ingress_queue_service)
+        req.app.state.ingress_triage_service = triage_service
+    return triage_service
+
+
+@router.get("/queue/groups")
+async def get_ingress_queue_groups(
+    req: Request,
+    status: Optional[str] = Query(default=None, description="comma-separated queue statuses"),
+    mediaType: Optional[str] = Query(default=None, description="comma-separated " + "/".join(QUEUE_GROUP_MEDIA_TYPES)),
+    ingressPath: Optional[str] = Query(default=None, description="comma-separated ingress paths"),
+    search: Optional[str] = Query(default=None),
+    limit: int = Query(default=25, ge=1, le=50),
+    offset: int = Query(default=0, ge=0),
+    previewSize: int = Query(default=5, ge=0, le=10),
+):
+    triage_service = _ingress_triage_service(req)
+    return {
+        "success": True,
+        "data": await triage_service.get_queue_groups(
+            statuses=_csv_query_param(status),
+            media_types=_csv_query_param(mediaType),
+            ingress_paths=_csv_query_param(ingressPath),
+            search=search,
+            limit=limit,
+            offset=offset,
+            preview_size=previewSize,
+        ),
+        "timestamp": str(int(time.time())),
+    }
+
+
+@router.post("/queue/bulk")
+async def bulk_ingress_queue_action(payload: QueueBulkRequest, req: Request):
+    triage_service = _ingress_triage_service(req)
+    result = await triage_service.bulk_action(
+        action=payload.action,
+        item_ids=payload.itemIds,
+        group=payload.group,
+        statuses=payload.statuses,
+        classification=payload.classification,
+        exclude_item_ids=payload.excludeItemIds,
+    )
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail={
+            "type": "ValidationError",
+            "message": result["error"],
+            "code": "INVALID_BULK_REQUEST",
+        })
+
+    return {
+        "success": True,
+        "data": result,
         "timestamp": str(int(time.time())),
     }
 
