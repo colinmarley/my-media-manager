@@ -106,9 +106,15 @@ describe('IngressManualAssignDialog', () => {
 
     fireEvent.change(screen.getByLabelText('IMDb ID'), { target: { value: 'tt0903747' } });
     expect(props.onAssignImdbQueryChange).toHaveBeenCalledWith('tt0903747');
+  });
+
+  it('looks the IMDb id up on Enter once one has been typed', () => {
+    const props = renderDialog({ assignSearchMode: 'imdb_id', assignImdbQuery: 'tt0903747' });
+
+    expect(screen.getByRole('button', { name: 'Lookup' })).toBeEnabled();
 
     fireEvent.keyDown(screen.getByLabelText('IMDb ID'), { key: 'Enter' });
-    expect(props.onImdbSearch).toHaveBeenCalled();
+    expect(props.onImdbSearch).toHaveBeenCalledTimes(1);
   });
 
   it('searches by title from the selected source', () => {
@@ -119,9 +125,15 @@ describe('IngressManualAssignDialog', () => {
 
     fireEvent.change(screen.getByLabelText(/search movie/i), { target: { value: 'breaking' } });
     expect(props.onAssignSearchQueryChange).toHaveBeenCalledWith('breaking');
+  });
+
+  it('runs the title search on Enter once a query has been typed', () => {
+    const props = renderDialog({ assignSearchQuery: 'breaking' });
+
+    expect(screen.getByRole('button', { name: 'Search' })).toBeEnabled();
 
     fireEvent.keyDown(screen.getByLabelText(/search movie/i), { key: 'Enter' });
-    expect(props.onSearch).toHaveBeenCalled();
+    expect(props.onSearch).toHaveBeenCalledTimes(1);
   });
 
   it('hides the episode mapping rows for a movie assignment', () => {
@@ -175,7 +187,7 @@ describe('IngressManualAssignDialog', () => {
   it('lets the operator defer organizing the files', () => {
     const props = renderDialog();
 
-    const organize = screen.getByRole('checkbox', { name: 'Organize files immediately' });
+    const organize = screen.getByRole('switch', { name: 'Organize files immediately' });
     expect(organize).toBeChecked();
 
     fireEvent.click(organize);

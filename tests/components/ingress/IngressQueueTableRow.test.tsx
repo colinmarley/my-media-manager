@@ -33,7 +33,13 @@ const renderRow = (
     ...overrides,
   };
 
-  render(<IngressQueueTableRow {...(props as never)} />);
+  render(
+    <table>
+      <tbody>
+        <IngressQueueTableRow {...(props as never)} />
+      </tbody>
+    </table>
+  );
 
   return props;
 };

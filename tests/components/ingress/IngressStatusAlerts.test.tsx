@@ -69,11 +69,13 @@ describe('IngressStatusAlerts', () => {
       />
     );
 
-    const backlogAlert = screen.getByRole('alert');
+    const backlogAlerts = screen
+      .getAllByRole('alert')
+      .filter((alert) => /watcher is stopped/i.test(alert.textContent ?? ''));
 
-    expect(backlogAlert).toHaveTextContent('3 files waiting');
-    expect(backlogAlert).toHaveTextContent('(1 need manual review)');
-    expect(backlogAlert).toHaveTextContent('watcher is stopped');
+    expect(backlogAlerts).toHaveLength(1);
+    expect(backlogAlerts[0]).toHaveTextContent('3 files waiting');
+    expect(backlogAlerts[0]).toHaveTextContent('(1 need manual review)');
   });
 
   it('switches to an informational backlog summary while the watcher is running', () => {
