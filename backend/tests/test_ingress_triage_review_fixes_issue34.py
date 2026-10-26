@@ -315,10 +315,8 @@ async def test_every_page_previews_its_own_group_even_when_collation_disagrees_w
 
     from db.models import Base
 
-    try:
-        url = await _scratch_database("triage_icu_previews", icu=True)
-    except Exception as exc:  # e.g. a server built without ICU
-        pytest.skip(f"no ICU collation available: {exc}")
+    # Official postgres images ship ICU; a server without it should fail here, not skip silently.
+    url = await _scratch_database("triage_icu_previews", icu=True)
     engine = create_async_engine(url)
     sessions = async_sessionmaker(engine, expire_on_commit=False)
     try:
