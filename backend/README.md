@@ -150,10 +150,9 @@ All tables live in the `public` schema. The ORM models are defined in `db/models
 | `series` | TV series catalog entries |
 | `seasons` | Season records linked to a series |
 | `episodes` | Episode records linked to a season |
-| `releases` | Physical release records (Blu-ray, DVD sets) |
-| `discs` | Individual disc records linked to a release |
-| `release_movies` | M2M — releases ↔ movies |
-| `release_series` | M2M — releases ↔ series |
+| `discs` | Individual physical disc records |
+| `disc_sets` | Boxed sets grouping discs/tapes |
+| `disc_media_links` | M2M — discs ↔ movies/series |
 
 ### Rating / metadata columns (added in migration `002`)
 
