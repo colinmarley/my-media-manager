@@ -7,7 +7,6 @@ import {
   Checkbox,
   Chip,
   IconButton,
-  Tooltip,
   Typography,
 } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
@@ -16,6 +15,7 @@ import type { IngressQueueGroup, IngressQueueItem, QueueGroupBy } from '@/servic
 import { STATUS_COLORS } from '@/service/ingress/ingressQueueModel';
 import {
   GROUP_ROW_HEIGHT,
+  MORE_ROW_HEIGHT,
   PREVIEW_ROW_HEIGHT,
   formatConfidenceRange,
   formatGroupCount,
@@ -38,6 +38,8 @@ type GroupRowProps = {
   selectionState: GroupSelectionState;
   excludedCount: number;
   working: boolean;
+  /** A batch for this group is in flight: the row already shows its optimistic status. */
+  inFlight: boolean;
   onToggleGroup: (group: IngressQueueGroup) => void;
   onToggleExpand: (group: IngressQueueGroup) => void;
   onGroupAction: (action: 'accept' | 'ignore', group: IngressQueueGroup) => void;
@@ -50,6 +52,7 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
   selectionState,
   excludedCount,
   working,
+  inFlight,
   onToggleGroup,
   onToggleExpand,
   onGroupAction,
@@ -95,6 +98,11 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
             Suggested: {group.suggestion}
           </Typography>
         ) : null}
+        {inFlight ? (
+          <Typography variant="caption" display="block">
+            Applying…
+          </Typography>
+        ) : null}
       </Box>
       <Box sx={{ textAlign: 'right' }}>
         <Typography variant="body2">{formatGroupCount(group.matching_count)}</Typography>
@@ -121,24 +129,40 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
           variant="contained"
           disabled={working || acceptCount === 0}
           onClick={() => onGroupAction('accept', group)}
+          aria-label={`Accept ${acceptCount} in this group`}
+          title="Organize every item in this folder and write the library records — the same path as accepting one item"
         >
           Accept {acceptCount}
         </Button>
-        <Tooltip title="Ignore is only undoable from the history log">
-          <Button
-            size="small"
-            variant="outlined"
-            color="error"
-            disabled={working || ignoreCount === 0}
-            onClick={() => onGroupAction('ignore', group)}
-          >
-            Ignore
-          </Button>
-        </Tooltip>
+        {/* aria-label, not a Tooltip: a Tooltip would replace the button's accessible name with its warning text. */}
+        <Button
+          size="small"
+          variant="outlined"
+          color="error"
+          disabled={working || ignoreCount === 0}
+          onClick={() => onGroupAction('ignore', group)}
+          aria-label={`Ignore ${ignoreCount} in this group. Ignore is only undoable from the history log.`}
+          title="Ignore is only undoable from the history log"
+        >
+          Ignore {ignoreCount}
+        </Button>
       </Box>
     </Box>
   );
 };
+
+// A group is only ever previewed; everything past the preview stays server-side and is counted here.
+export const IngressTriageMoreRow: React.FC<{ label: string }> = ({ label }) => (
+  <Box
+    data-testid="triage-more"
+    role="row"
+    sx={{ alignItems: 'center', display: 'flex', height: `${MORE_ROW_HEIGHT}px`, pl: 6, pr: 1 }}
+  >
+    <Typography variant="caption" color="text.secondary">
+      {label}
+    </Typography>
+  </Box>
+);
 
 type PreviewRowProps = {
   item: IngressQueueItem;

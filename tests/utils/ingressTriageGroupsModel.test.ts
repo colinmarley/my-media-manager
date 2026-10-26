@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import type { IngressBulkResult, IngressQueueGroup, IngressQueueItem } from '@/service/ingress/IngressAutomationService';
 import {
   GROUP_ROW_HEIGHT,
+  MORE_ROW_HEIGHT,
   PREVIEW_ROW_HEIGHT,
+  applyBulkResultToGroup,
   buildGroupBulkRequest,
   buildRowOffsets,
   buildTriageRows,
@@ -13,11 +15,13 @@ import {
   getBulkFailureLines,
   getGroupActionCount,
   getGroupLabel,
+  getGroupMoreLabel,
   getGroupSelectionState,
   getGroupStatusChips,
   getOldestAgeLabel,
   getTriageWindow,
   needsActionConfirmation,
+  optimisticGroupForAction,
   queueGroupSignature,
   toEpochMs,
   toggleGroupSelection,
@@ -137,9 +141,11 @@ describe('ingressTriageGroupsModel', () => {
       })
     );
 
+    // The expanded group also gets one "N more in this folder" row: 1930 matching - 10 previewed.
     const rows = buildTriageRows(groups, new Set(['movie|/m|Movie 0']));
-    expect(rows).toHaveLength(40 + 10);
-    expect(buildRowOffsets(rows)[rows.length]).toBe(40 * GROUP_ROW_HEIGHT + 10 * PREVIEW_ROW_HEIGHT);
+    expect(rows).toHaveLength(40 + 10 + 1);
+    expect(getGroupMoreLabel(groups[0])).toBe('1,920 more in this folder');
+    expect(buildRowOffsets(rows)[rows.length]).toBe(40 * GROUP_ROW_HEIGHT + 10 * PREVIEW_ROW_HEIGHT + MORE_ROW_HEIGHT);
 
     const offsets = buildRowOffsets(rows);
     const atTop = getTriageWindow(rows, offsets, 0);
@@ -154,6 +160,44 @@ describe('ingressTriageGroupsModel', () => {
     expect(offsets[midScroll.start]).toBeLessThanOrEqual(1500);
     expect(midScroll.padTop + (offsets[midScroll.end] - offsets[midScroll.start]) + midScroll.padBottom)
       .toBe(offsets[rows.length]);
+  });
+
+  it('moves the actionable counts to the action target while the batch is open', () => {
+    const group = makeGroup({ status_counts: { needs_review: 3, failed: 1, completed: 1 } });
+    // Accept touches pending/auto_assigned/needs_review/failed: 4 rows, and leaves `completed` alone.
+    expect(optimisticGroupForAction(group, 'accept', 4).status_counts).toEqual({ needs_review: 0, failed: 0, completed: 5 });
+    // Never move more than the group has, so a stale count cannot produce negative chips.
+    expect(optimisticGroupForAction(group, 'accept', 99).status_counts).toEqual({ needs_review: 0, failed: 0, completed: 5 });
+    expect(optimisticGroupForAction(group, 'ignore', 2).status_counts).toEqual({ needs_review: 1, failed: 1, completed: 1, ignored: 2 });
+  });
+
+  it('rekeys a group row from the batch response, including rows the cap left undetailed', () => {
+    const group = makeGroup({ status_counts: { needs_review: 4, failed: 1 } });
+    const result = makeBulkResult({
+      requested: 5,
+      succeeded: 4,
+      failed: 1,
+      results: [
+        { item_id: 'item-1', action: 'accept', status: 'succeeded', item_status: 'auto_assigned' },
+        { item_id: 'item-2', action: 'accept', status: 'succeeded', item_status: 'completed' },
+        { item_id: 'item-9', action: 'accept', status: 'failed', item_status: 'failed', error: 'path missing' },
+      ],
+    });
+    // 5 rows left the actionable set: the 2 detailed successes plus the detailed failure, and the 2
+    // successes the server capped out of `results`, which land on the action's target status.
+    // Counts stay conserved: 4 + 1 before, 1 + 1 + 3 after.
+    expect(applyBulkResultToGroup(group, result).status_counts).toEqual({
+      needs_review: 0,
+      failed: 1,
+      auto_assigned: 1,
+      completed: 3,
+    });
+    // A skipped row was never touched, so its count is left where it was.
+    expect(
+      applyBulkResultToGroup(makeGroup({ status_counts: { completed: 2 } }), {
+        ...makeBulkResult({ succeeded: 0, failed: 0, skipped: 2, results: [{ item_id: 'i', action: 'accept', status: 'skipped', item_status: 'completed', error: null }] }),
+      }).status_counts
+    ).toEqual({ completed: 2 });
   });
 
   it('reads both epoch and ISO queue stamps for the oldest-item age column', () => {

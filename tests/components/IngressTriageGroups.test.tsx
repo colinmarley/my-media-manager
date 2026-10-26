@@ -1,6 +1,6 @@
 /** @vitest-environment jsdom */
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IngressQueueGroup, IngressQueueGroupsResult, IngressQueueItem } from '@/service/ingress/IngressAutomationService';
@@ -114,7 +114,7 @@ describe('IngressTriageGroups', () => {
     fireEvent.click(within(groupRows()[1]).getByRole('button', { name: /^Accept/ }));
     const dialog = await screen.findByText('Accept queue group?');
     expect(dialog).toBeTruthy();
-    expect(within(screen.getByRole('dialog')).getByText('1,940 items in /movies/incoming/Blade Runner 1942?')).toBeTruthy();
+    expect(within(screen.getByRole('dialog')).getByText('Accept 1,940 items in /movies/incoming/Blade Runner 1942?')).toBeTruthy();
     expect(bulkQueueAction).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Accept group' }));
@@ -126,13 +126,26 @@ describe('IngressTriageGroups', () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
 
-    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: 'Ignore' }));
+    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: /^Ignore/ }));
     await screen.findByText('Ignore queue group?');
+    // The dialog has to say what cannot be undone from the queue itself.
+    expect(within(screen.getByRole('dialog')).getByText(/only undoable from the history log/)).toBeTruthy();
     expect(bulkQueueAction).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Ignore group' }));
     await waitFor(() => expect(bulkQueueAction).toHaveBeenCalledTimes(1));
     expect(bulkQueueAction.mock.calls[0][0].action).toBe('ignore');
+  });
+
+  it('keeps the visible button text inside the accessible names, and the undo warning on the control itself', async () => {
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+    const row = groupRows()[0];
+    // A hover tooltip must not become the accessible name: WCAG 2.5.3 wants the visible label in it.
+    const accept = within(row).getByRole('button', { name: 'Accept 4 in this group' });
+    const ignore = within(row).getByRole('button', { name: 'Ignore 4 in this group. Ignore is only undoable from the history log.' });
+    expect(accept.textContent).toBe('Accept 4');
+    expect(ignore.textContent).toBe('Ignore 4');
   });
 
   it('sends search and status filters to the API instead of filtering rows locally', async () => {
@@ -221,5 +234,79 @@ describe('IngressTriageGroups', () => {
     await waitFor(() => expect(screen.getByText('2 accepted in /movies/incoming/Dune (2021) · 2 failed')).toBeTruthy());
     expect(screen.getByText('item-9: path missing')).toBeTruthy();
     expect(screen.getByText('item-8: no match')).toBeTruthy();
+  });
+
+  it('rekeys the group row from the batch response instead of refetching the page', async () => {
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+    expect(within(groupRows()[0]).getByText('3 needs review')).toBeTruthy();
+
+    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: /^Accept/ }));
+    await waitFor(() => expect(bulkQueueAction).toHaveBeenCalledTimes(1));
+
+    // The row moved to the response's item status, and no page request was issued.
+    await waitFor(() => expect(within(groupRows()[0]).getByText('1 auto assigned')).toBeTruthy());
+    expect(within(groupRows()[0]).getByText('2 needs review')).toBeTruthy();
+    expect(getQueueGroups).toHaveBeenCalledTimes(1);
+    expect(within(groupRows()[0]).getByRole('button', { name: /^Accept/ })).toBeTruthy();
+  });
+
+  it('marks the group in flight and puts the counts back when the batch request fails', async () => {
+    let rejectBulk: (error: Error) => void = () => {};
+    bulkQueueAction.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectBulk = reject;
+        })
+    );
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+
+    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: /^Accept/ }));
+    // Optimistic: the actionable rows are already out of `needs review` while the request is open.
+    await waitFor(() => expect(within(groupRows()[0]).getByText('Applying…')).toBeTruthy());
+    expect(within(groupRows()[0]).queryByText('3 needs review')).toBeNull();
+    expect(within(groupRows()[0]).getByText('4 completed')).toBeTruthy();
+
+    act(() => rejectBulk(new Error('queue is busy')));
+    await waitFor(() => expect(within(groupRows()[0]).getByText('3 needs review')).toBeTruthy());
+    expect(within(groupRows()[0]).queryByText('Applying…')).toBeNull();
+    expect(screen.getByText('queue is busy')).toBeTruthy();
+  });
+
+  it('counts the rest of the folder instead of rendering it when a preview is expanded', async () => {
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+
+    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: /^Expand/ }));
+    // matching_count 3 minus the 2 previewed rows.
+    await waitFor(() => expect(screen.getByText('1 more in this folder')).toBeTruthy());
+  });
+
+  it('keeps rendered rows under a fixed bound for a 200-group page with expanded previews', async () => {
+    getQueueGroups.mockResolvedValue(
+      makeResult(
+        Array.from({ length: 200 }, (_, index) =>
+          makeGroup(`Movie ${index}`, { needs_review: 12 }, Array.from({ length: 10 }, (_, item) => makeItem(`g${index}-${item}`)))
+        ),
+        200
+      )
+    );
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows().length).toBeGreaterThan(0));
+
+    const rendered = () => screen.getAllByTestId(/^triage-(group|item)-/).length;
+    expect(rendered()).toBeLessThan(30);
+
+    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: /^Expand/ }));
+    await waitFor(() => expect(screen.getAllByTestId(/^triage-item-/)).toHaveLength(10));
+    expect(rendered()).toBeLessThan(30);
+
+    const list = screen.getByTestId('triage-list');
+    Object.defineProperty(list, 'scrollTop', { value: 6000, configurable: true });
+    fireEvent.scroll(list);
+    // Same bounded size, but a different slice of the 200 groups is mounted.
+    await waitFor(() => expect(groupRows()[0].getAttribute('data-testid')).not.toBe('triage-group-movie|/movies/incoming|Movie 0'));
+    expect(rendered()).toBeLessThan(30);
   });
 });

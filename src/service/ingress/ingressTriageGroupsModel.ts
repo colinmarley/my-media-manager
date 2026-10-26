@@ -37,9 +37,18 @@ export const GROUP_PREVIEW_SIZE = 10;
 /** Ignore is only undoable from the history log, so anything bigger than this asks first. */
 export const CONFIRM_ACTION_THRESHOLD = 25;
 
+/** Status a bulk action leaves its items in, mirroring `IngressQueueService` (`mark_complete` -> completed). */
+export const BULK_ACTION_TARGET_STATUS: Record<IngressBulkAction, string> = {
+  accept: 'completed',
+  ignore: 'ignored',
+  retry: 'pending',
+  classify: 'needs_review',
+};
+
 // Windowed list geometry. Row heights are fixed, so the scroll window is arithmetic rather than measured.
 export const GROUP_ROW_HEIGHT = 76;
 export const PREVIEW_ROW_HEIGHT = 40;
+export const MORE_ROW_HEIGHT = 28;
 export const GROUP_LIST_HEIGHT = 520;
 export const WINDOW_OVERSCAN = 3;
 
@@ -48,7 +57,8 @@ export type GroupSelectionState = 'none' | 'partial' | 'all';
 
 export type TriageRow =
   | { key: string; kind: 'group'; group: IngressQueueGroup; height: number }
-  | { key: string; kind: 'item'; group: IngressQueueGroup; item: IngressQueueItem; height: number };
+  | { key: string; kind: 'item'; group: IngressQueueGroup; item: IngressQueueItem; height: number }
+  | { key: string; kind: 'more'; group: IngressQueueGroup; label: string; height: number };
 
 export function queueGroupSignature(group: IngressQueueGroup): string {
   const { media_type: mediaType, ingress_path: ingressPath } = group.group_key;
@@ -182,9 +192,98 @@ export function buildTriageRows(groups: IngressQueueGroup[], expanded: Set<strin
       (group.preview_items || []).forEach((item) => {
         rows.push({ key: `item:${item.id}`, kind: 'item', group, item, height: PREVIEW_ROW_HEIGHT });
       });
+      const more = getGroupMoreLabel(group);
+      if (more) {
+        rows.push({ key: `more:${queueGroupSignature(group)}`, kind: 'more', group, label: more, height: MORE_ROW_HEIGHT });
+      }
     }
     return rows;
   });
+}
+
+/** A group is only ever previewed: the rest of the folder stays server-side (AC: select-group never id-fetches). */
+export function getGroupMoreLabel(group: IngressQueueGroup): string {
+  const remaining = Math.max(0, (group.matching_count || 0) - (group.preview_items || []).length);
+  return remaining > 0 ? `${formatGroupCount(remaining)} more in this folder` : '';
+}
+
+/** Move up to `count` rows out of `from` into `to`; stops early when the local counts run out. */
+function shiftStatusCounts(
+  counts: Record<string, number>,
+  from: string[],
+  to: string,
+  count: number
+): Record<string, number> {
+  const next = { ...counts };
+  let moved = 0;
+  from.forEach((status) => {
+    if (moved >= count) {
+      return;
+    }
+    const shift = Math.min(next[status] || 0, count - moved);
+    if (shift > 0) {
+      next[status] = (next[status] || 0) - shift;
+      moved += shift;
+    }
+  });
+  if (to && moved > 0) {
+    next[to] = (next[to] || 0) + moved;
+  }
+  return next;
+}
+
+/** Status counts as they should look while the batch is in flight; revert by restoring the fetched group. */
+export function optimisticGroupForAction(
+  group: IngressQueueGroup,
+  action: IngressBulkAction,
+  count: number
+): IngressQueueGroup {
+  return {
+    ...group,
+    status_counts: shiftStatusCounts(group.status_counts, BULK_ACTION_STATUSES[action], BULK_ACTION_TARGET_STATUS[action], count),
+  };
+}
+
+/**
+ * Re-key the row off the batch response instead of refetching the page: per-item statuses when the
+ * server detailed them, the action's target status for the rows a truncated batch left undetailed.
+ */
+export function applyBulkResultToGroup(group: IngressQueueGroup, result: IngressBulkResult): IngressQueueGroup {
+  const action = (Object.keys(BULK_ACTION_STATUSES) as IngressBulkAction[]).includes(result.action as IngressBulkAction)
+    ? (result.action as IngressBulkAction)
+    : 'accept';
+  const detailed = result.results || [];
+  const succeeded = detailed.filter((row) => row.status === 'succeeded');
+  const failed = detailed.filter((row) => row.status === 'failed');
+  // A large batch only details part of its rows, so the totals decide how many leave the actionable
+  // statuses and the details decide where the first ones land.
+  const attemptedSucceeded = Math.max(result.succeeded || 0, succeeded.length);
+  const attemptedFailed = Math.max(result.failed || 0, failed.length);
+  const target = BULK_ACTION_TARGET_STATUS[action];
+
+  const counts = shiftStatusCounts(
+    group.status_counts,
+    BULK_ACTION_STATUSES[action],
+    '',
+    attemptedSucceeded + attemptedFailed
+  );
+  succeeded.forEach((row) => {
+    const status = row.item_status || target;
+    counts[status] = (counts[status] || 0) + 1;
+  });
+  failed.forEach((row) => {
+    const status = row.item_status || 'failed';
+    counts[status] = (counts[status] || 0) + 1;
+  });
+  const undetailedSucceeded = attemptedSucceeded - succeeded.length;
+  const undetailedFailed = attemptedFailed - failed.length;
+  if (undetailedSucceeded > 0) {
+    counts[target] = (counts[target] || 0) + undetailedSucceeded;
+  }
+  if (undetailedFailed > 0) {
+    counts.failed = (counts.failed || 0) + undetailedFailed;
+  }
+  return { ...group, status_counts: counts };
 }
 
 /** Cumulative row offsets, so the visible window is found by lookup instead of by rendering everything. */

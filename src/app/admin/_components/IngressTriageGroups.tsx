@@ -41,6 +41,7 @@ import {
   GROUP_ROWS_PER_PAGE_OPTIONS,
   QUEUE_GROUP_BY_OPTIONS,
   QUEUE_GROUP_STATUS_OPTIONS,
+  applyBulkResultToGroup,
   buildGroupBulkRequest,
   buildRowOffsets,
   buildTriageRows,
@@ -52,12 +53,13 @@ import {
   getGroupSelectionState,
   getTriageWindow,
   needsActionConfirmation,
+  optimisticGroupForAction,
   queueGroupSignature,
   toggleGroupSelection,
   togglePreviewItemSelection,
   type GroupSelectionMap,
 } from '@/service/ingress/ingressTriageGroupsModel';
-import { IngressTriageGroupRow, IngressTriagePreviewRow } from './ingress/IngressTriageRows';
+import { IngressTriageGroupRow, IngressTriageMoreRow, IngressTriagePreviewRow } from './ingress/IngressTriageRows';
 
 type PendingAction = { action: IngressBulkAction; group: IngressQueueGroup; count: number };
 type ActionReport = { text: string; failures: string[]; severity: 'success' | 'warning' };
@@ -84,6 +86,7 @@ export const IngressTriageGroups: React.FC = () => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [scrollTop, setScrollTop] = useState(0);
   const [pending, setPending] = useState<PendingAction | null>(null);
+  const [inFlight, setInFlight] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
   // Search is a server query param; the debounce keeps keystrokes from turning into a scan per key.
@@ -126,9 +129,19 @@ export const IngressTriageGroups: React.FC = () => {
   const window = getTriageWindow(rows, offsets, scrollTop);
   const visibleRows = rows.slice(window.start, window.end);
 
+  // Rewrite one group row in place: that is how a batch updates its row without refetching the page.
+  const patchGroup = useCallback((signature: string, updater: (group: IngressQueueGroup) => IngressQueueGroup) => {
+    setData((prev) =>
+      prev ? { ...prev, groups: prev.groups.map((group) => (queueGroupSignature(group) === signature ? updater(group) : group)) } : prev
+    );
+  }, []);
+
   const runGroupAction = useCallback(
-    async (action: IngressBulkAction, group: IngressQueueGroup, excludedItemIds: string[]) => {
+    async (action: IngressBulkAction, group: IngressQueueGroup, excludedItemIds: string[], count: number) => {
+      const signature = queueGroupSignature(group);
       setWorking(true);
+      setInFlight(signature);
+      patchGroup(signature, (current) => optimisticGroupForAction(current, action, count));
       try {
         const result = await IngressAutomationService.bulkQueueAction(buildGroupBulkRequest(action, group, excludedItemIds));
         setReport({
@@ -136,19 +149,21 @@ export const IngressTriageGroups: React.FC = () => {
           failures: getBulkFailureLines(result),
           severity: result.failed > 0 || result.skipped > 0 ? 'warning' : 'success',
         });
+        patchGroup(signature, () => applyBulkResultToGroup(group, result));
         setSelection((prev) => {
           const next = { ...prev };
-          delete next[queueGroupSignature(group)];
+          delete next[signature];
           return next;
         });
-        await load();
       } catch (err) {
+        patchGroup(signature, () => group); // revert the optimistic status; nothing happened
         setError(err instanceof Error ? err.message : `Failed to ${action} group`);
       } finally {
         setWorking(false);
+        setInFlight(null);
       }
     },
-    [groupBy, load]
+    [groupBy, patchGroup]
   );
 
   const requestGroupAction = (action: IngressBulkAction, group: IngressQueueGroup) => {
@@ -162,13 +177,16 @@ export const IngressTriageGroups: React.FC = () => {
       setPending({ action, group, count });
       return;
     }
-    void runGroupAction(action, group, excludedItemIds);
+    void runGroupAction(action, group, excludedItemIds, count);
   };
 
   // Single rows go through the same bulk endpoint with itemIds, so accept/ignore semantics match the group.
   const runItemAction = useCallback(
-    async (action: IngressBulkAction, item: IngressQueueItem) => {
+    async (action: IngressBulkAction, group: IngressQueueGroup, item: IngressQueueItem) => {
+      const signature = queueGroupSignature(group);
       setWorking(true);
+      setInFlight(signature);
+      patchGroup(signature, (current) => optimisticGroupForAction(current, action, 1));
       try {
         const result = await IngressAutomationService.bulkQueueAction({ action, itemIds: [item.id] });
         setReport({
@@ -176,14 +194,22 @@ export const IngressTriageGroups: React.FC = () => {
           failures: getBulkFailureLines(result),
           severity: result.failed > 0 ? 'warning' : 'success',
         });
-        await load();
+        const itemStatus = result.results?.[0]?.item_status;
+        patchGroup(signature, () => {
+          const next = applyBulkResultToGroup(group, result);
+          return itemStatus
+            ? { ...next, preview_items: (next.preview_items || []).map((row) => (row.id === item.id ? { ...row, status: itemStatus } : row)) }
+            : next;
+        });
       } catch (err) {
+        patchGroup(signature, () => group);
         setError(err instanceof Error ? err.message : `Failed to ${action} item`);
       } finally {
         setWorking(false);
+        setInFlight(null);
       }
     },
-    [load]
+    [patchGroup]
   );
 
   const toggleExpand = (group: IngressQueueGroup) => {
@@ -337,7 +363,7 @@ export const IngressTriageGroups: React.FC = () => {
             <Alert severity="info">No queue groups match the current filter.</Alert>
           ) : null}
 
-          {window.padTop > 0 ? <Box sx={{ height: `${window.padTop}px` }} /> : null}
+          {window.padTop > 0 ? <Box data-testid="triage-pad-top" sx={{ height: `${window.padTop}px` }} /> : null}
           {visibleRows.map((row) =>
             row.kind === 'group' ? (
               <IngressTriageGroupRow
@@ -348,10 +374,13 @@ export const IngressTriageGroups: React.FC = () => {
                 selectionState={getGroupSelectionState(row.group, selection)}
                 excludedCount={(selection[queueGroupSignature(row.group)] ?? []).length}
                 working={working}
+                inFlight={inFlight === queueGroupSignature(row.group)}
                 onToggleGroup={(group) => setSelection((prev) => toggleGroupSelection(prev, group))}
                 onToggleExpand={toggleExpand}
                 onGroupAction={requestGroupAction}
               />
+            ) : row.kind === 'more' ? (
+              <IngressTriageMoreRow key={row.key} label={row.label} />
             ) : (
               <IngressTriagePreviewRow
                 key={row.key}
@@ -362,11 +391,11 @@ export const IngressTriageGroups: React.FC = () => {
                 onToggleExcluded={(item, checked) =>
                   setSelection((prev) => togglePreviewItemSelection(prev, row.group, item.id, checked))
                 }
-                onItemAction={(action, item) => void runItemAction(action, item)}
+                onItemAction={(action, item) => void runItemAction(action, row.group, item)}
               />
             )
           )}
-          {window.padBottom > 0 ? <Box sx={{ height: `${window.padBottom}px` }} /> : null}
+          {window.padBottom > 0 ? <Box data-testid="triage-pad-bottom" sx={{ height: `${window.padBottom}px` }} /> : null}
         </Box>
 
         <TablePagination
@@ -404,7 +433,8 @@ export const IngressTriageGroups: React.FC = () => {
                 if (!pending) {
                   return;
                 }
-                void runGroupAction(pending.action, pending.group, selection[queueGroupSignature(pending.group)] ?? []);
+                const excludedItemIds = selection[queueGroupSignature(pending.group)] ?? [];
+                void runGroupAction(pending.action, pending.group, excludedItemIds, pending.count);
                 setPending(null);
               }}
             >
