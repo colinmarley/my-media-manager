@@ -129,11 +129,12 @@ export const IngressTriageGroups: React.FC = () => {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  // Two reasons to re-read the page: the query changed, or something just happened to a row. Only the
-  // first one starts clean — after a batch that ran out of time the reload has to keep the error which
-  // explains why the numbers on screen are no longer the ones the user acted on.
+  // A successful re-read clears the error banner, with one exception: the reload a timed-out batch
+  // triggers keeps the error which explains why the numbers on screen are no longer the ones the user
+  // acted on. That reason is recorded explicitly, so a manual reload or a per-item refresh still clears.
   const querySignature = JSON.stringify([groupBy, statusFilter, searchQuery, page, rowsPerPage]);
   const lastQuerySignature = useRef<string | null>(null);
+  const keepErrorAfterReload = useRef(false);
 
   // Answers can arrive out of order — a slow page-1 response landing after page-2's would repaint the
   // list with rows the user has already left behind — so only the newest request may paint.
@@ -143,6 +144,8 @@ export const IngressTriageGroups: React.FC = () => {
     const request = ++requestId.current;
     const freshQuery = lastQuerySignature.current !== querySignature;
     lastQuerySignature.current = querySignature;
+    const keepError = keepErrorAfterReload.current && !freshQuery;
+    keepErrorAfterReload.current = false;
     setLoading(true);
     try {
       const result = await IngressAutomationService.getQueueGroups({
@@ -155,7 +158,7 @@ export const IngressTriageGroups: React.FC = () => {
       });
       if (request !== requestId.current) return;
       setData(result);
-      if (freshQuery) setError(null);
+      if (!keepError) setError(null);
     } catch (err) {
       if (request !== requestId.current) return;
       setError(err instanceof Error ? err.message : 'Failed to load queue groups');
@@ -205,6 +208,7 @@ export const IngressTriageGroups: React.FC = () => {
         if (isIngressTimeoutError(err)) {
           // Only the *request* gave up: a group batch can still be applying server-side, so re-read the
           // page and show what actually happened instead of the stale pre-action snapshot.
+          keepErrorAfterReload.current = true;
           setReloadToken((token) => token + 1);
         } else {
           patchGroup(signature, () => group); // refused outright: nothing happened, roll back
@@ -256,6 +260,7 @@ export const IngressTriageGroups: React.FC = () => {
         });
       } catch (err) {
         if (isIngressTimeoutError(err)) {
+          keepErrorAfterReload.current = true;
           setReloadToken((token) => token + 1); // outcome unknown — let the server report this row back
         } else {
           patchGroup(signature, () => group);
@@ -358,7 +363,14 @@ export const IngressTriageGroups: React.FC = () => {
           <Typography variant="caption" color="text.secondary" data-testid="triage-summary">
             {data ? `${formatGroupCount(data.total_groups)} groups · ${formatGroupCount(data.total_items)} items` : '—'}
           </Typography>
-          <IconButton onClick={() => setReloadToken((token) => token + 1)} disabled={loading} aria-label="Reload queue groups">
+          <IconButton
+            onClick={() => {
+              keepErrorAfterReload.current = false;
+              setReloadToken((token) => token + 1);
+            }}
+            disabled={loading}
+            aria-label="Reload queue groups"
+          >
             <RefreshIcon />
           </IconButton>
         </Box>

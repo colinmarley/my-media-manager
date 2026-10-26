@@ -342,6 +342,31 @@ describe('IngressTriageGroups', () => {
     expect(screen.getByText('the request ran out of time, the queue may still be working')).toBeTruthy();
   });
 
+  it('clears a failed load once a manual reload succeeds', async () => {
+    getQueueGroups.mockRejectedValueOnce(new Error('Failed to load queue groups')).mockResolvedValue(makeResult([smallGroup, hugeGroup]));
+
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(screen.getByText('Failed to load queue groups')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload queue groups' }));
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+    expect(screen.queryByText('Failed to load queue groups')).toBeNull();
+  });
+
+  it('clears a refused batch error once a manual reload succeeds', async () => {
+    bulkQueueAction.mockRejectedValue(new Error('queue is busy'));
+
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+
+    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: /^Accept/ }));
+    await waitFor(() => expect(screen.getByText('queue is busy')).toBeTruthy());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reload queue groups' }));
+    await waitFor(() => expect(getQueueGroups).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText('queue is busy')).toBeNull());
+  });
+
   it('AC4: counts the rest of the folder instead of rendering it when a preview is expanded', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
