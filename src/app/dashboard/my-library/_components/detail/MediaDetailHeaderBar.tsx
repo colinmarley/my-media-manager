@@ -1,6 +1,7 @@
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import { Button, Stack } from '@mui/material';
+import React from 'react';
 import Link from 'next/link';
 
 /** Back link plus the "Remove from Library" entry point. */

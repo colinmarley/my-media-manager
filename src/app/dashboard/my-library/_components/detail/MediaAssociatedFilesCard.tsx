@@ -11,6 +11,7 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
+import React from 'react';
 
 import { CatalogDisc } from '@/types/catalog/Disc.type';
 import { CatalogTape } from '@/types/catalog/Tape.type';

@@ -1,4 +1,5 @@
 import { Alert, Box, Chip, Grid, Paper, Stack, Typography } from '@mui/material';
+import React from 'react';
 
 import { LibraryProcessingSummary } from '../libraryHelpers';
 import styles from './mediaDetailStyles';

@@ -1,4 +1,5 @@
 import { Box, Chip, Divider, Grid, Paper, Stack, Typography } from '@mui/material';
+import React from 'react';
 
 import {
   getCastDisplay,

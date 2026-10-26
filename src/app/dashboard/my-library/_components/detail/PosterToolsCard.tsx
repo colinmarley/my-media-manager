@@ -1,4 +1,5 @@
 import { Alert, Button, CircularProgress, Paper, Stack, TextField, Typography } from '@mui/material';
+import React from 'react';
 
 import styles from './mediaDetailStyles';
 

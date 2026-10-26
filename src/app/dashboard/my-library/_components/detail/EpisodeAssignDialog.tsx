@@ -14,6 +14,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
+import React from 'react';
 
 import { SeriesEpisodeOption } from '@/service/library/mediaDetailModel';
 
