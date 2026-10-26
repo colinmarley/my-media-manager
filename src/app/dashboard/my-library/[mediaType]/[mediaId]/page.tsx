@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Box, Alert, Grid, Typography } from '@mui/material';
 import { useParams } from 'next/navigation';
 
@@ -98,16 +98,6 @@ const LibraryMediaDetailPage = () => {
   });
 
   const removal = useMediaRemoval({ mediaTypeFromRoute, mediaIdFromRoute });
-
-  // Clear reassignment feedback after the same fixed delay the folder tools used before.
-  useEffect(() => {
-    if (!folderMessages) {
-      return;
-    }
-
-    const timer = setTimeout(() => setFolderMessages(null), 30000);
-    return () => clearTimeout(timer);
-  }, [folderMessages]);
 
   return (
     <Box sx={styles.page}>

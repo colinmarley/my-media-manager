@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/navigation', async (importOriginal) => {
@@ -21,6 +21,17 @@ vi.mock('next/navigation', async (importOriginal) => {
     useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
   };
 });
+
+// The disk reassign dialog owns a search / move / catalog-sync flow of its own. The behaviour pins
+// below only need the page's half of a finished reassignment: the message the page keeps and how
+// long it stays on screen.
+vi.mock('../../src/app/dashboard/my-library/_components/DiskReassignDialog', () => ({
+  default: ({ onReassigned }: { onReassigned: (newPath: string) => void }) => (
+    <button type="button" onClick={() => onReassigned('/ark/media/library/moved')}>
+      Stub Confirm Reassignment
+    </button>
+  ),
+}));
 
 import LibraryMediaDetailPage from '../../src/app/dashboard/my-library/[mediaType]/[mediaId]/page';
 
@@ -62,10 +73,20 @@ const jsonResponse = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
 
 /** Routes every endpoint the details screen touches to a canned payload. */
-const stubFetch = ({ movies = [MOVIE] as unknown[] }: { movies?: unknown[] } = {}) => {
+const stubFetch = (
+  {
+    movies = [MOVIE] as unknown[],
+    pendingRemove = false,
+  }: { movies?: unknown[]; pendingRemove?: boolean } = {}
+) => {
   const fetchMock = vi.fn(async (input: unknown) => {
     const url = String(input);
 
+    // `pendingRemove` leaves the removal request in flight (never settles) so the dialog can be
+    // poked while `deleting` is true.
+    if (url.includes('/remove-to-review')) {
+      return pendingRemove ? new Promise<Response>(() => {}) : jsonResponse({ success: true });
+    }
     if (url.includes('/api/catalog/media/')) {
       return jsonResponse({ discs: [], tapes: [] });
     }
@@ -103,6 +124,7 @@ describe('LibraryMediaDetailPage', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   it('shows the loading copy while the record is being fetched', () => {
@@ -172,6 +194,52 @@ describe('LibraryMediaDetailPage', () => {
     expect(await screen.findByText('Remove from Library?')).toBeInTheDocument();
     expect(screen.getByText('will be removed from your catalog.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
+  });
+
+  it('keeps a folder reassignment message up until it is dismissed', async () => {
+    render(<LibraryMediaDetailPage />);
+
+    // Load on real timers, then take the clocks over so the dismiss delay can be elapsed at once.
+    const reassignFolder = await screen.findByRole('button', { name: /Reassign Entire Folder/ });
+    fireEvent.click(reassignFolder);
+
+    vi.useFakeTimers();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stub Confirm Reassignment' }));
+    const message = 'Folder reassigned. New path: /ark/media/library/moved';
+    expect(screen.getByText(message)).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(30_000);
+    });
+
+    expect(screen.getByText(message)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
+  });
+
+  it('keeps the remove-from-library dialog open while the removal is still running', async () => {
+    vi.unstubAllGlobals();
+    stubFetch({ pendingRemove: true });
+
+    render(<LibraryMediaDetailPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Remove from Library' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    expect(screen.getByRole('button', { name: 'Removing…' })).toBeDisabled();
+
+    fireEvent.keyDown(screen.getByText('Remove from Library?'), { key: 'Escape' });
+    fireEvent.click(document.querySelector('.MuiBackdrop-root') as Element);
+
+    // A dismissed dialog unmounts once its exit transition ends, so wait past that window first.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    });
+
+    // Closing it mid-removal would leave `deleting` true with both actions dead on the next open.
+    expect(screen.getByText('Remove from Library?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
   });
 
   it('warns when the title is no longer in the catalog', async () => {

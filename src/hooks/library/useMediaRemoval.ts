@@ -10,7 +10,13 @@ const useMediaRemoval = ({ mediaTypeFromRoute, mediaIdFromRoute }: { mediaTypeFr
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  const closeDeleteConfirm = () => setDeleteConfirmOpen(false);
+  // Same guard as `closeEpisodeAssignDialog`: Escape or a backdrop click must not dismiss the
+  // confirmation while the removal is in flight, which would strand `deleting` as true.
+  const closeDeleteConfirm = () => {
+    if (!deleting) {
+      setDeleteConfirmOpen(false);
+    }
+  };
 
   const handleDelete = async () => {
     setDeleting(true);
