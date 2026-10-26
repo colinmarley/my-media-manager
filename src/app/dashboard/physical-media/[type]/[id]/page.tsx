@@ -21,6 +21,7 @@ import DiscEditDialog from '../../_components/DiscEditDialog';
 import TapeEditDialog from '../../_components/TapeEditDialog';
 import ConfirmDeleteDialog from '../../_components/ConfirmDeleteDialog';
 import ConnectFileDialog from '../../_components/ConnectFileDialog';
+import DiscRipStatusPanel from '../../_components/DiscRipStatusPanel';
 
 function formatBytes(bytes: number | null): string {
   if (!bytes) return '—';
@@ -137,6 +138,8 @@ export default function PhysicalMediaDetailPage() {
           </>
         )}
       </Paper>
+
+      {disc && <DiscRipStatusPanel discId={id} />}
 
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
         <Typography variant="subtitle2">
