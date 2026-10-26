@@ -377,4 +377,60 @@ describe('IngressTriageGroups', () => {
     await waitFor(() => expect(groupRows()[0].getAttribute('data-testid')).not.toBe('triage-group-movie|/movies/incoming|Movie 0'));
     expect(rendered()).toBeLessThan(30);
   });
+
+  it('AC1: ignores a page response that arrives after a newer one', async () => {
+    // Every filter or page change re-reads the server, and answers can come back out of order. The old
+    // one must not repaint the list with rows the user has already asked to see less of.
+    let resolveStale: (value: IngressQueueGroupsResult) => void = () => {};
+    const stale = new Promise<IngressQueueGroupsResult>((resolve) => {
+      resolveStale = resolve;
+    });
+    getQueueGroups
+      .mockResolvedValueOnce(makeResult([smallGroup, hugeGroup], 40))
+      .mockReturnValueOnce(stale)
+      .mockResolvedValueOnce(makeResult([makeGroup('Alien (1979)', { needs_review: 2 })], 40));
+
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+
+    fireEvent.click(screen.getByLabelText('Go to next page'));
+    await waitFor(() => expect(getQueueGroups).toHaveBeenCalledTimes(2));
+
+    // A second request goes out while page 2 is still in flight, and answers first.
+    fireEvent.click(screen.getByRole('button', { name: 'Reload queue groups' }));
+    await waitFor(() => expect(screen.getByText('/movies/incoming/Alien (1979)')).toBeTruthy());
+
+    resolveStale(makeResult([smallGroup, hugeGroup], 40));
+    await act(async () => {
+      await stale;
+    });
+
+    expect(screen.getByText('/movies/incoming/Alien (1979)')).toBeTruthy();
+    expect(screen.queryByText('/movies/incoming/Dune (2021)')).toBeNull();
+  });
+
+  it('AC3: keeps a group picked on another page when this page select-all runs', async () => {
+    getQueueGroups
+      .mockResolvedValueOnce(makeResult([smallGroup, hugeGroup], 40))
+      .mockResolvedValueOnce(makeResult([makeGroup('Alien (1979)', { needs_review: 2 })], 40))
+      .mockResolvedValueOnce(makeResult([smallGroup, hugeGroup], 40));
+
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+
+    const duneCheckbox = () => within(groupRows()[0]).getByRole('checkbox', { name: 'Select group /movies/incoming/Dune (2021)' });
+    fireEvent.click(duneCheckbox());
+    await waitFor(() => expect(duneCheckbox()).toBeChecked());
+
+    fireEvent.click(screen.getByLabelText('Go to next page'));
+    await waitFor(() => expect(screen.getByText('/movies/incoming/Alien (1979)')).toBeTruthy());
+
+    // Picking this page must not quietly drop the group the user checked on the previous one: every
+    // batch is scoped to a single group, and that one is still meant to be armed.
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all groups on page' }));
+
+    fireEvent.click(screen.getByLabelText('Go to previous page'));
+    await waitFor(() => expect(getQueueGroups).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(duneCheckbox()).toBeChecked());
+  });
 });

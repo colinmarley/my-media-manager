@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -129,26 +129,40 @@ export const IngressTriageGroups: React.FC = () => {
     return () => clearTimeout(timer);
   }, [searchInput]);
 
+  // Two reasons to re-read the page: the query changed, or something just happened to a row. Only the
+  // first one starts clean — after a batch that ran out of time the reload has to keep the error which
+  // explains why the numbers on screen are no longer the ones the user acted on.
+  const querySignature = JSON.stringify([groupBy, statusFilter, searchQuery, page, rowsPerPage]);
+  const lastQuerySignature = useRef<string | null>(null);
+
+  // Answers can arrive out of order — a slow page-1 response landing after page-2's would repaint the
+  // list with rows the user has already left behind — so only the newest request may paint.
+  const requestId = useRef(0);
+
   const load = useCallback(async () => {
+    const request = ++requestId.current;
+    const freshQuery = lastQuerySignature.current !== querySignature;
+    lastQuerySignature.current = querySignature;
     setLoading(true);
     try {
-      setData(
-        await IngressAutomationService.getQueueGroups({
-          groupBy,
-          statuses: statusFilter === 'all' ? undefined : [statusFilter],
-          q: searchQuery || undefined,
-          limit: rowsPerPage,
-          offset: page * rowsPerPage,
-          previewSize: GROUP_PREVIEW_SIZE,
-        })
-      );
-      setError(null);
+      const result = await IngressAutomationService.getQueueGroups({
+        groupBy,
+        statuses: statusFilter === 'all' ? undefined : [statusFilter],
+        q: searchQuery || undefined,
+        limit: rowsPerPage,
+        offset: page * rowsPerPage,
+        previewSize: GROUP_PREVIEW_SIZE,
+      });
+      if (request !== requestId.current) return;
+      setData(result);
+      if (freshQuery) setError(null);
     } catch (err) {
+      if (request !== requestId.current) return;
       setError(err instanceof Error ? err.message : 'Failed to load queue groups');
     } finally {
-      setLoading(false);
+      if (request === requestId.current) setLoading(false);
     }
-  }, [groupBy, statusFilter, searchQuery, page, rowsPerPage, reloadToken]);
+  }, [querySignature, groupBy, statusFilter, searchQuery, page, rowsPerPage, reloadToken]);
 
   useEffect(() => {
     void load();
@@ -172,6 +186,7 @@ export const IngressTriageGroups: React.FC = () => {
       const signature = queueGroupSignature(group);
       setWorking(true);
       setInFlight(signature);
+      setError(null);
       patchGroup(signature, (current) => optimisticGroupForAction(current, action, count));
       try {
         const result = await IngressAutomationService.bulkQueueAction(buildGroupBulkRequest(action, group, excludedItemIds));
@@ -223,6 +238,7 @@ export const IngressTriageGroups: React.FC = () => {
       const signature = queueGroupSignature(group);
       setWorking(true);
       setInFlight(signature);
+      setError(null);
       patchGroup(signature, (current) => optimisticGroupForAction(current, action, 1));
       try {
         const result = await IngressAutomationService.bulkQueueAction({ action, itemIds: [item.id] });
@@ -269,10 +285,17 @@ export const IngressTriageGroups: React.FC = () => {
   const selectedOnPage = groups.filter((group) => getGroupSelectionState(group, selection) !== 'none').length;
   const togglePageSelection = () => {
     setSelection((prev) => {
+      // Only this page's groups are in play: a group checked on another page stays checked, because a
+      // batch is always one group and repainting this page must not silently drop the others.
+      const onThisPage = new Set(groups.map((group) => queueGroupSignature(group)));
+      const kept = Object.fromEntries(Object.entries(prev).filter(([signature]) => !onThisPage.has(signature)));
       if (groups.length > 0 && groups.every((group) => prev[queueGroupSignature(group)])) {
-        return {};
+        return kept;
       }
-      return groups.reduce((acc, group) => ({ ...acc, [queueGroupSignature(group)]: [] }), {} as GroupSelectionMap);
+      return groups.reduce(
+        (acc, group) => ({ ...acc, [queueGroupSignature(group)]: [] }),
+        kept as GroupSelectionMap
+      );
     });
   };
 
