@@ -235,7 +235,9 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
           value={item.classification_override || 'auto'}
           disabled={!isClassificationEditable(item) || working}
           onChange={(event) => onReclassify(item, event.target.value as QueueClassificationOverride)}
-          aria-label={`Classification override for ${item.file_name}`}
+          // The name has to land on the combobox itself (MUI keeps a FormControl's aria-label on the
+          // wrapper), and it has to name the file: a folder view holds one control per preview row.
+          inputProps={{ 'aria-label': `Classification override for ${item.file_name}` }}
         >
           {CLASSIFICATION_OPTIONS.map((option) => (
             <MenuItem key={option.value} value={option.value}>
