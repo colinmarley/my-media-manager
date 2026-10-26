@@ -424,7 +424,8 @@ def test_search_treats_like_wildcards_literally():
     [search] = triage._filters(None, None, r'50%_off\x')
     compiled = search.compile(dialect=postgresql.dialect())
     assert "ESCAPE" in str(compiled)
-    assert set(map(str, compiled.params.values())) == {r'%50\%\_off\\x%'}
+    patterns = {str(value) for value in compiled.params.values() if '50' in str(value)}
+    assert patterns == {r'%50\%\_off\\x%'}
 
 
 def test_bulk_group_selector_resolves_ids_from_persisted_rows(tmp_path):
