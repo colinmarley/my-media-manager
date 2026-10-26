@@ -13,10 +13,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IngressQueueGroup, IngressQueueGroupsResult, IngressQueueItem } from '@/service/ingress/IngressAutomationService';
 
-const { getQueueGroups, bulkQueueAction } = vi.hoisted(() => ({ getQueueGroups: vi.fn(), bulkQueueAction: vi.fn() }));
+const { getQueueGroups, bulkQueueAction, updateClassification } = vi.hoisted(() => ({
+  getQueueGroups: vi.fn(),
+  bulkQueueAction: vi.fn(),
+  // Preview rows reuse the flat queue list's classification handler, so it needs mocking here too.
+  updateClassification: vi.fn(),
+}));
 
-vi.mock('@/service/ingress/IngressAutomationService', () => ({ default: { getQueueGroups, bulkQueueAction } }));
+vi.mock('@/service/ingress/IngressAutomationService', () => ({ default: { getQueueGroups, bulkQueueAction, updateClassification } }));
 
+import { INGRESS_TIMEOUT_ERROR_NAME } from '@/service/ingress/ingressQueueModel';
 import { IngressTriageGroups } from '@/app/admin/_components/IngressTriageGroups';
 
 function makeGroup(title: string, statusCounts: Record<string, number>, preview: IngressQueueItem[] = []): IngressQueueGroup {
@@ -85,6 +91,7 @@ describe('IngressTriageGroups', () => {
     vi.clearAllMocks();
     getQueueGroups.mockResolvedValue(makeResult([smallGroup, hugeGroup]));
     bulkQueueAction.mockResolvedValue(okBulk);
+    updateClassification.mockResolvedValue({});
   });
 
   it('AC1: renders one row per folder with counts and per-status chips', async () => {
@@ -205,6 +212,30 @@ describe('IngressTriageGroups', () => {
     expect(bulkQueueAction.mock.calls[0][0]).toEqual({ action: 'accept', itemIds: ['item-1'] });
   });
 
+  it('AC3: reclassifies a preview row from the folder view and re-reads the group', async () => {
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+
+    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: /^Expand/ }));
+    fireEvent.mouseDown(await screen.findByRole('combobox', { name: 'Classification override for item-1.mkv' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Special Feature' }));
+
+    await waitFor(() => expect(updateClassification).toHaveBeenCalledWith('item-1', 'special_feature'));
+    // An override changes what the next scan does, so the row is re-read rather than patched by hand.
+    await waitFor(() => expect(getQueueGroups).toHaveBeenCalledTimes(2));
+  });
+
+  it('AC3: opens the manual assignment dialog the flat queue list uses from a preview row', async () => {
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+
+    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: /^Expand/ }));
+    fireEvent.click(within(screen.getByTestId('triage-item-item-1')).getByRole('button', { name: 'Assign item-1.mkv manually' }));
+
+    await screen.findByText('Manual Assignment');
+    expect(screen.getByText('Assigning 1 queue item.')).toBeTruthy();
+  });
+
   it('AC2: excludes preview rows from a selected group before posting the batch', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
@@ -280,6 +311,35 @@ describe('IngressTriageGroups', () => {
     await waitFor(() => expect(within(groupRows()[0]).getByText('3 needs review')).toBeTruthy());
     expect(within(groupRows()[0]).queryByText('Applying…')).toBeNull();
     expect(screen.getByText('queue is busy')).toBeTruthy();
+  });
+
+  it('AC2: re-reads the page when a batch request runs out of time, since the server may still be applying it', async () => {
+    // A group batch can outlive the client's wait. The row must then follow whatever the server says,
+    // so the refetch reports something the optimistic snapshot never showed.
+    getQueueGroups
+      .mockResolvedValueOnce(makeResult([smallGroup, hugeGroup]))
+      .mockResolvedValue(
+        makeResult([
+          makeGroup('Dune (2021)', { completed: 2, failed: 2 }, [makeItem('item-1', 'completed'), makeItem('item-2', 'completed')]),
+          hugeGroup,
+        ])
+      );
+    bulkQueueAction.mockRejectedValue(
+      Object.assign(new Error('the request ran out of time, the queue may still be working'), { name: INGRESS_TIMEOUT_ERROR_NAME })
+    );
+
+    render(<IngressTriageGroups />);
+    await waitFor(() => expect(groupRows()).toHaveLength(2));
+
+    fireEvent.click(within(groupRows()[0]).getByRole('button', { name: /^Accept/ }));
+    await waitFor(() => expect(getQueueGroups).toHaveBeenCalledTimes(2));
+
+    await waitFor(() => expect(within(groupRows()[0]).getByText('2 completed')).toBeTruthy());
+    expect(within(groupRows()[0]).getByText('2 failed')).toBeTruthy();
+    // Neither the guess the aborted request left behind nor the stale pre-action snapshot survives.
+    expect(within(groupRows()[0]).queryByText('4 completed')).toBeNull();
+    expect(within(groupRows()[0]).queryByText('3 needs review')).toBeNull();
+    expect(screen.getByText('the request ran out of time, the queue may still be working')).toBeTruthy();
   });
 
   it('AC4: counts the rest of the folder instead of rendering it when a preview is expanded', async () => {

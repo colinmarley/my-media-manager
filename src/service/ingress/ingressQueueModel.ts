@@ -29,6 +29,17 @@ export const ACTIVE_QUEUE_STATUSES = new Set(['pending', 'processing', 'needs_re
 
 export const ASSIGN_RESULTS_BATCH_SIZE = 10;
 
+/**
+ * Name the ingress service puts on a request it stopped waiting for. A timeout says nothing about the
+ * queue — the batch keeps running server-side — so callers must reload instead of assuming the queue
+ * is unchanged (see `IngressTriageGroups.runGroupAction`).
+ */
+export const INGRESS_TIMEOUT_ERROR_NAME = 'IngressTimeoutError';
+
+export function isIngressTimeoutError(error: unknown): boolean {
+  return error instanceof Error && error.name === INGRESS_TIMEOUT_ERROR_NAME;
+}
+
 export const CLASSIFICATION_OPTIONS: Array<{ value: QueueClassificationOverride; label: string }> = [
   { value: 'auto', label: 'Auto' },
   { value: 'main_feature', label: 'Main Feature' },

@@ -1,3 +1,5 @@
+import { INGRESS_TIMEOUT_ERROR_NAME } from './ingressQueueModel';
+
 export interface IngressWatcherStatus {
   is_running: boolean;
   watched_paths: string[];
@@ -184,9 +186,20 @@ class IngressAutomationService {
     this.baseUrl = '/api/backend/api/ingress';
   }
 
-  private async request(path: string, init?: RequestInit): Promise<any> {
+  /**
+   * A group-scoped batch (#35) walks up to the backend's `MAX_GROUP_ITEMS` rows through the same
+   * organize/record path a single accept takes, so it cannot share the budget a read gets: the client
+   * used to give up at 15s and roll its optimistic row back as if nothing had happened while the
+   * server kept applying the batch. Named `IngressTimeoutError` so the caller can tell "outcome
+   * unknown" from "never applied" and reload instead of reverting.
+   */
+  private static readonly BULK_REQUEST_TIMEOUT_MS = 120000;
+
+  private static readonly REQUEST_TIMEOUT_MS = 15000;
+
+  private async request(path: string, init?: RequestInit, timeoutMs = IngressAutomationService.REQUEST_TIMEOUT_MS): Promise<any> {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(`${this.baseUrl}${path}`, {
@@ -206,7 +219,9 @@ class IngressAutomationService {
       return response.json();
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new Error('Ingress request timed out. The backend may still be working.');
+        const timeoutError = new Error('Ingress request timed out. The backend may still be working.');
+        timeoutError.name = INGRESS_TIMEOUT_ERROR_NAME;
+        throw timeoutError;
       }
       throw error;
     } finally {
@@ -274,10 +289,14 @@ class IngressAutomationService {
   }
 
   async bulkQueueAction(payload: IngressBulkRequest): Promise<IngressBulkResult> {
-    const result = await this.request('/queue/bulk', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    const result = await this.request(
+      '/queue/bulk',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      IngressAutomationService.BULK_REQUEST_TIMEOUT_MS
+    );
     return result.data;
   }
 

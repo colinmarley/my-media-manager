@@ -23,10 +23,15 @@ export const QUEUE_GROUP_STATUS_OPTIONS = [
   'ignored',
 ];
 
-/** Mirrors BULK_ACTION_STATUSES in backend/services/ingress_triage_service.py. */
+/**
+ * Mirrors BULK_ACTION_STATUSES in backend/services/ingress_triage_service.py (pinned by
+ * tests/utils/ingressTriageGroupsModel.test.ts). `processing` is excluded from ignore exactly as the
+ * backend excludes it: the auto-processor holds those rows and would overwrite the outcome when it
+ * persists, so they settle on their own instead of being ignored under a running job.
+ */
 export const BULK_ACTION_STATUSES: Record<IngressBulkAction, string[]> = {
   accept: ['pending', 'auto_assigned', 'needs_review', 'failed'],
-  ignore: ['pending', 'processing', 'auto_assigned', 'needs_review', 'completed', 'failed'],
+  ignore: ['pending', 'auto_assigned', 'needs_review', 'failed', 'completed'],
   retry: ['pending', 'needs_review', 'failed'],
   classify: ['pending', 'auto_assigned', 'needs_review', 'failed'],
 };

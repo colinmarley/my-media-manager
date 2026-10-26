@@ -1,7 +1,11 @@
+import path from 'node:path';
+import { readFileSync } from 'node:fs';
+
 import { describe, expect, it } from 'vitest';
 
 import type { IngressBulkResult, IngressQueueGroup, IngressQueueItem } from '@/service/ingress/IngressAutomationService';
 import {
+  BULK_ACTION_STATUSES,
   GROUP_ROW_HEIGHT,
   MORE_ROW_HEIGHT,
   PREVIEW_ROW_HEIGHT,
@@ -214,5 +218,81 @@ describe('ingressTriageGroupsModel', () => {
     expect(formatConfidenceRange(makeGroup())).toBe('60–98%');
     expect(formatConfidenceRange(makeGroup({ confidence_max: 60 }))).toBe('60%');
     expect(formatConfidenceRange(makeGroup({ confidence_min: null, confidence_max: null }))).toBe('—');
+  });
+});
+
+/**
+ * The folder view sends `statuses` to narrow a group batch, and the backend reports anything outside
+ * its own list as not acted on, so the two lists have to agree. Rather than restate the backend table
+ * here, read its rule out of the file it lives in: a change on one side fails on the other.
+ */
+const BACKEND = {
+  queue: path.join(process.cwd(), 'backend/services/ingress_queue_service.py'),
+  triage: path.join(process.cwd(), 'backend/services/ingress_triage_service.py'),
+};
+
+/** `QUEUE_NEEDS_REVIEW = "needs_review"` and friends: the names the bulk rules are written with. */
+function queueStatusConstants(): Record<string, string> {
+  const source = readFileSync(BACKEND.queue, 'utf8');
+  const constants: Record<string, string> = {};
+  const declaration = /^(QUEUE_[A-Z_]+) = "([a-z_]+)"$/gm;
+  let found = declaration.exec(source);
+  while (found) {
+    constants[found[1]] = found[2];
+    found = declaration.exec(source);
+  }
+  expect(Object.keys(constants).length).toBeGreaterThan(0);
+  return constants;
+}
+
+function asStatusList(names: string, constants: Record<string, string>): string[] {
+  const statuses = names
+    .split(',')
+    .map((entry) => entry.trim().replace(/^["']|["']$/g, ''))
+    .filter(Boolean)
+    .map((name) => constants[name] ?? name);
+  expect(statuses.length).toBeGreaterThan(0);
+  return statuses;
+}
+
+/** A list the backend writes out status by status, e.g. `("pending", "needs_review", "failed")`. */
+function backendLiteralStatuses(action: string): string[] {
+  const rule = new RegExp(`${action}: \\(([^)]*)\\)`).exec(readFileSync(BACKEND.triage, 'utf8'));
+  if (!rule) throw new Error(`${action} is no longer a literal tuple in the backend — re-sync the frontend mirror`);
+  return asStatusList(rule[1], {});
+}
+
+/** A list the backend derives, e.g. `tuple(status for status in QUEUE_ALL_STATUSES if status not in (...))`. */
+function backendDerivedStatuses(action: string): string[] {
+  const constants = queueStatusConstants();
+  const all = /QUEUE_ALL_STATUSES = \(\s*([^)]*)\)/.exec(readFileSync(BACKEND.queue, 'utf8'));
+  if (!all) throw new Error('QUEUE_ALL_STATUSES is no longer a tuple in the backend — re-sync the frontend mirror');
+
+  const rule = new RegExp(
+    `${action}:\\s*tuple\\(\\s*status for status in QUEUE_ALL_STATUSES if status not in \\(([^)]*)\\)`
+  ).exec(readFileSync(BACKEND.triage, 'utf8'));
+  if (!rule) throw new Error(`${action} no longer derives from QUEUE_ALL_STATUSES — re-sync the frontend mirror`);
+
+  const every = asStatusList(all[1], constants);
+  const excluded = asStatusList(rule[1], constants);
+  return every.filter((status) => !excluded.includes(status));
+}
+
+describe('bulk action statuses mirror the backend table', () => {
+  it('never ignores a row the auto-processor is still holding', () => {
+    expect(BULK_ACTION_STATUSES.ignore).toEqual(backendDerivedStatuses('BULK_IGNORE'));
+    expect(BULK_ACTION_STATUSES.ignore).not.toContain('processing');
+  });
+
+  it('accepts, retries and classifies the statuses the backend will act on', () => {
+    expect(BULK_ACTION_STATUSES.accept).toEqual(backendDerivedStatuses('BULK_ACCEPT'));
+    expect(BULK_ACTION_STATUSES.retry).toEqual(backendLiteralStatuses('BULK_RETRY'));
+    expect(BULK_ACTION_STATUSES.classify).toEqual(backendLiteralStatuses('BULK_CLASSIFY'));
+  });
+
+  it('keeps a processing row out of the batch request a folder-wide ignore posts', () => {
+    const group = makeGroup({ status_counts: { processing: 4, needs_review: 2, ignored: 3 } });
+    expect(buildGroupBulkRequest('ignore', group, []).statuses).toEqual(['needs_review']);
+    expect(buildGroupBulkRequest('accept', group, []).statuses).toEqual(['needs_review']);
   });
 });

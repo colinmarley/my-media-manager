@@ -59,7 +59,11 @@ import {
   togglePreviewItemSelection,
   type GroupSelectionMap,
 } from '@/service/ingress/ingressTriageGroupsModel';
-import { IngressTriageGroupRow, IngressTriageMoreRow, IngressTriagePreviewRow } from './ingress/IngressTriageRows';
+import { isIngressTimeoutError } from '@/service/ingress/ingressQueueModel';
+import useIngressAssignDialog from '@/hooks/ingress/useIngressAssignDialog';
+import useIngressQueueActions from '@/hooks/ingress/useIngressQueueActions';
+import IngressManualAssignDialog from './ingress/IngressManualAssignDialog';
+import { IngressTriageGroupRow, IngressTriageMoreRow, IngressTriagePreviewRow, ROW_COLUMNS } from './ingress/IngressTriageRows';
 
 type PendingAction = { action: IngressBulkAction; group: IngressQueueGroup; count: number };
 type ActionReport = { text: string; failures: string[]; severity: 'success' | 'warning' };
@@ -88,6 +92,33 @@ export const IngressTriageGroups: React.FC = () => {
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [inFlight, setInFlight] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  // Per-item work started from a preview row (classification override, manual assign) belongs to the
+  // reused queue hooks, not to a group batch: keep its in-flight flag separate.
+  const [perItemWorking, setPerItemWorking] = useState(false);
+
+  const previewQueueItems = useMemo(
+    () => (data?.groups ?? []).flatMap((group) => group.preview_items ?? []),
+    [data]
+  );
+  const refreshPreviewItems = useCallback(async () => {
+    setReloadToken((token) => token + 1);
+  }, []);
+
+  // The folder view reuses the flat queue list's own handlers for the per-item affordances it also
+  // owes its rows (classification override, manual assign) instead of growing a second implementation.
+  const queueActions = useIngressQueueActions({
+    queueItems: previewQueueItems,
+    selectedQueueItems: [],
+    refreshAll: refreshPreviewItems,
+    setError,
+    setWorking: setPerItemWorking,
+  });
+  const assignDialog = useIngressAssignDialog({
+    queueItems: previewQueueItems,
+    refreshAll: refreshPreviewItems,
+    setError,
+    setSelectedQueueItemIds: () => undefined,
+  });
 
   // Search is a server query param; the debounce keeps keystrokes from turning into a scan per key.
   useEffect(() => {
@@ -156,7 +187,13 @@ export const IngressTriageGroups: React.FC = () => {
           return next;
         });
       } catch (err) {
-        patchGroup(signature, () => group); // revert the optimistic status; nothing happened
+        if (isIngressTimeoutError(err)) {
+          // Only the *request* gave up: a group batch can still be applying server-side, so re-read the
+          // page and show what actually happened instead of the stale pre-action snapshot.
+          setReloadToken((token) => token + 1);
+        } else {
+          patchGroup(signature, () => group); // refused outright: nothing happened, roll back
+        }
         setError(err instanceof Error ? err.message : `Failed to ${action} group`);
       } finally {
         setWorking(false);
@@ -202,7 +239,11 @@ export const IngressTriageGroups: React.FC = () => {
             : next;
         });
       } catch (err) {
-        patchGroup(signature, () => group);
+        if (isIngressTimeoutError(err)) {
+          setReloadToken((token) => token + 1); // outcome unknown — let the server report this row back
+        } else {
+          patchGroup(signature, () => group);
+        }
         setError(err instanceof Error ? err.message : `Failed to ${action} item`);
       } finally {
         setWorking(false);
@@ -326,7 +367,7 @@ export const IngressTriageGroups: React.FC = () => {
               background: 'background.paper',
               display: 'grid',
               gap: 1,
-              gridTemplateColumns: '44px 36px minmax(160px, 2fr) 90px minmax(140px, 2fr) 72px 84px 176px',
+              gridTemplateColumns: ROW_COLUMNS,
               position: 'sticky',
               top: 0,
               zIndex: 1,
@@ -387,11 +428,15 @@ export const IngressTriageGroups: React.FC = () => {
                 item={row.item}
                 groupSelected={getGroupSelectionState(row.group, selection) !== 'none'}
                 excluded={(selection[queueGroupSignature(row.group)] ?? []).includes(row.item.id)}
-                working={working}
+                working={working || perItemWorking}
                 onToggleExcluded={(item, checked) =>
                   setSelection((prev) => togglePreviewItemSelection(prev, row.group, item.id, checked))
                 }
                 onItemAction={(action, item) => void runItemAction(action, row.group, item)}
+                onReclassify={(item, classification) =>
+                  void queueActions.handleUpdateClassification([item.id], classification)
+                }
+                onAssign={(item) => assignDialog.openAssignDialog([item.id])}
               />
             )
           )}
@@ -442,6 +487,37 @@ export const IngressTriageGroups: React.FC = () => {
             </Button>
           </DialogActions>
         </Dialog>
+
+        <IngressManualAssignDialog
+          open={assignDialog.assignDialogOpen}
+          assigning={assignDialog.assigning}
+          assignSearching={assignDialog.assignSearching}
+          assignTargetCount={assignDialog.assignTargetItemIds.length}
+          assignMediaType={assignDialog.assignMediaType}
+          onAssignMediaTypeChange={assignDialog.setAssignMediaType}
+          assignSearchMode={assignDialog.assignSearchMode}
+          onAssignSearchModeChange={assignDialog.handleAssignSearchModeChange}
+          assignSearchSource={assignDialog.assignSearchSource}
+          onAssignSearchSourceChange={assignDialog.handleAssignSearchSourceChange}
+          assignSearchQuery={assignDialog.assignSearchQuery}
+          onAssignSearchQueryChange={assignDialog.setAssignSearchQuery}
+          assignImdbQuery={assignDialog.assignImdbQuery}
+          onAssignImdbQueryChange={assignDialog.setAssignImdbQuery}
+          assignSearchResults={assignDialog.assignSearchResults}
+          visibleAssignSearchResults={assignDialog.visibleAssignSearchResults}
+          selectedAssignResult={assignDialog.selectedAssignResult}
+          onSelectAssignResult={assignDialog.setSelectedAssignResult}
+          assignTargets={assignDialog.assignTargets}
+          episodeMapByItemId={assignDialog.episodeMapByItemId}
+          onEpisodeMappingChange={assignDialog.updateEpisodeMapping}
+          organizeAfterAssign={assignDialog.organizeAfterAssign}
+          onOrganizeAfterAssignChange={assignDialog.setOrganizeAfterAssign}
+          onSearch={assignDialog.handleAssignSearch}
+          onImdbSearch={assignDialog.handleAssignImdbSearch}
+          onResultsScroll={assignDialog.handleAssignResultsScroll}
+          onClose={assignDialog.closeAssignDialog}
+          onAssign={assignDialog.handleManualAssign}
+        />
       </CardContent>
     </Card>
   );

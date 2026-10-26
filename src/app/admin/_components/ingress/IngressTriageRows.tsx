@@ -6,13 +6,22 @@ import {
   Button,
   Checkbox,
   Chip,
+  FormControl,
   IconButton,
+  MenuItem,
+  Select,
   Typography,
 } from '@mui/material';
 import ChevronRightIcon from '@mui/icons-material/ChevronRight';
+import EditIcon from '@mui/icons-material/Edit';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import type { IngressQueueGroup, IngressQueueItem, QueueGroupBy } from '@/service/ingress/IngressAutomationService';
-import { STATUS_COLORS } from '@/service/ingress/ingressQueueModel';
+import type {
+  IngressQueueGroup,
+  IngressQueueItem,
+  QueueClassificationOverride,
+  QueueGroupBy,
+} from '@/service/ingress/IngressAutomationService';
+import { CLASSIFICATION_OPTIONS, STATUS_COLORS, isClassificationEditable, isQueueItemAssignable } from '@/service/ingress/ingressQueueModel';
 import {
   GROUP_ROW_HEIGHT,
   MORE_ROW_HEIGHT,
@@ -29,7 +38,8 @@ import {
   type GroupSelectionState,
 } from '@/service/ingress/ingressTriageGroupsModel';
 
-const ROW_COLUMNS = '44px 36px minmax(160px, 2fr) 90px minmax(140px, 2fr) 72px 84px 176px';
+/** Shared by the sticky header, group rows and preview rows so the three grids stay aligned. */
+export const ROW_COLUMNS = '44px 36px minmax(160px, 2fr) 90px minmax(150px, 2fr) 72px 84px 212px';
 
 type GroupRowProps = {
   group: IngressQueueGroup;
@@ -171,6 +181,9 @@ type PreviewRowProps = {
   working: boolean;
   onToggleExcluded: (item: IngressQueueItem, checked: boolean) => void;
   onItemAction: (action: 'accept' | 'ignore' | 'retry', item: IngressQueueItem) => void;
+  /** The flat queue table's own per-item affordances, reused here rather than re-invented (#35 review). */
+  onReclassify: (item: IngressQueueItem, classification: QueueClassificationOverride) => void;
+  onAssign: (item: IngressQueueItem) => void;
 };
 
 export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
@@ -180,6 +193,8 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
   working,
   onToggleExcluded,
   onItemAction,
+  onReclassify,
+  onAssign,
 }) => (
   <Box
     data-testid={`triage-item-${item.id}`}
@@ -206,13 +221,29 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
       {item.file_name}
     </Typography>
     <Box />
-    <Box sx={{ display: 'flex', gap: 0.5 }}>
+    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
       <Chip
         size="small"
         variant="outlined"
         color={getChipColor(item.status)}
         label={getQueueStatusLabel(item.status)}
       />
+      {/* Same classification override the flat queue table row exposes: triage from the folder view without
+          losing the row to a re-scan, and the parent posts the identical request. */}
+      <FormControl size="small" sx={{ flexShrink: 0, width: 104 }}>
+        <Select
+          value={item.classification_override || 'auto'}
+          disabled={!isClassificationEditable(item) || working}
+          onChange={(event) => onReclassify(item, event.target.value as QueueClassificationOverride)}
+          aria-label={`Classification override for ${item.file_name}`}
+        >
+          {CLASSIFICATION_OPTIONS.map((option) => (
+            <MenuItem key={option.value} value={option.value}>
+              {option.label}
+            </MenuItem>
+          ))}
+        </Select>
+      </FormControl>
       {item.best_match?.title ? (
         <Typography noWrap variant="caption" color="text.secondary">
           {item.best_match.title}
@@ -224,6 +255,17 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
       {item.confidence_score === undefined ? '—' : `${item.confidence_score}%`}
     </Typography>
     <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+      {isQueueItemAssignable(item) ? (
+        <IconButton
+          size="small"
+          disabled={working}
+          onClick={() => onAssign(item)}
+          aria-label={`Assign ${item.file_name} manually`}
+          title="Pick the title by hand — the same dialog the flat queue list uses"
+        >
+          <EditIcon fontSize="small" />
+        </IconButton>
+      ) : null}
       <Button size="small" color="inherit" disabled={working} onClick={() => onItemAction('retry', item)}>
         Retry
       </Button>
