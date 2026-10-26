@@ -417,6 +417,16 @@ def test_bulk_classify_and_retry_of_a_failed_item_report_success(tmp_path):
     assert retried['results'][0]['item_status'] == QUEUE_PENDING
 
 
+def test_search_treats_like_wildcards_literally():
+    from sqlalchemy.dialects import postgresql
+
+    triage = IngressTriageService(IngressQueueService(), db_session_factory=None)
+    [search] = triage._filters(None, None, r'50%_off\x')
+    compiled = search.compile(dialect=postgresql.dialect())
+    assert "ESCAPE" in str(compiled)
+    assert set(map(str, compiled.params.values())) == {r'%50\%\_off\\x%'}
+
+
 def test_bulk_group_selector_resolves_ids_from_persisted_rows(tmp_path):
     service = IngressQueueService()
     rows = [SimpleNamespace(**_matrix_row('backlog-1')), SimpleNamespace(**_matrix_row('backlog-2'))]

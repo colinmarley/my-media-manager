@@ -416,12 +416,14 @@ class IngressTriageService:
         if ingress_paths:
             filters.append(GROUP_PATH.in_([str(path) for path in ingress_paths]))
         if search and str(search).strip():
-            pattern = f"%{str(search).strip()}%"
+            # Match what was typed literally: `%` and `_` in a file name are not wildcards.
+            literal = str(search).strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            pattern = f"%{literal}%"
             filters.append(or_(
-                DBQueueItem.file_name.ilike(pattern),
-                cast(DBQueueItem.file_path, String).ilike(pattern),
-                GROUP_TITLE.ilike(pattern),
-                cast(DBQueueItem.proposed_path, String).ilike(pattern),
+                DBQueueItem.file_name.ilike(pattern, escape="\\"),
+                cast(DBQueueItem.file_path, String).ilike(pattern, escape="\\"),
+                GROUP_TITLE.ilike(pattern, escape="\\"),
+                cast(DBQueueItem.proposed_path, String).ilike(pattern, escape="\\"),
             ))
         return filters
 
