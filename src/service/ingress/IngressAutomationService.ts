@@ -69,6 +69,77 @@ export interface IngressQueueItem {
   };
 }
 
+export type QueueGroupBy = 'parsed_title' | 'source_folder';
+
+/** Keys a group row back to the rows it groups (matches `group_key` in GET /queue/groups). */
+export interface IngressQueueGroupKey {
+  media_type: string;
+  ingress_path: string;
+  title?: string | null;
+  source_folder?: string | null;
+}
+
+export interface IngressQueueGroup {
+  group_key: IngressQueueGroupKey;
+  media_type: string;
+  ingress_path: string;
+  title: string | null;
+  source_folder: string | null;
+  item_count: number;
+  matching_count: number;
+  status_counts: Record<string, number>;
+  confidence_min: number | null;
+  confidence_max: number | null;
+  first_queued_at: number | string | null;
+  last_queued_at: number | string | null;
+  preview_items: IngressQueueItem[];
+  /** Filled by the per-group Suggestion API (issue #36); null until that lands. */
+  suggestion?: string | null;
+}
+
+export interface IngressQueueGroupsResult {
+  groups: IngressQueueGroup[];
+  total_groups: number;
+  total_items: number;
+  status_counts: Record<string, number>;
+  group_by: QueueGroupBy;
+  limit: number;
+  offset: number;
+  preview_size: number;
+}
+
+export type IngressBulkAction = 'accept' | 'ignore' | 'retry' | 'classify';
+
+export interface IngressBulkResultRow {
+  item_id: string;
+  action: string;
+  status: 'succeeded' | 'failed' | 'skipped';
+  item_status?: string | null;
+  error?: string | null;
+}
+
+export interface IngressBulkResult {
+  batch_id: string;
+  action: string;
+  requested: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  group_truncated?: boolean;
+  group_limit?: number;
+  results: IngressBulkResultRow[];
+}
+
+/** Either `itemIds` (explicit rows) or `group` (the whole group, server-side) drives the batch. */
+export interface IngressBulkRequest {
+  action: IngressBulkAction;
+  itemIds?: string[];
+  excludeItemIds?: string[];
+  group?: IngressQueueGroupKey;
+  statuses?: string[];
+  classification?: QueueClassificationOverride;
+}
+
 export interface QueueManualAssignPayload {
   itemId: string;
   mediaType: 'movie' | 'episode';
@@ -180,6 +251,34 @@ class IngressAutomationService {
     const query = status ? `?status=${encodeURIComponent(status)}` : '';
     const result = await this.request(`/queue/items${query}`);
     return result.data.items;
+  }
+
+  async getQueueGroups(options: {
+    groupBy?: QueueGroupBy;
+    statuses?: string[];
+    q?: string;
+    limit?: number;
+    offset?: number;
+    previewSize?: number;
+  } = {}): Promise<IngressQueueGroupsResult> {
+    const params = new URLSearchParams();
+    if (options.statuses?.length) params.set('status', options.statuses.join(','));
+    if (options.q) params.set('q', options.q);
+    if (options.groupBy) params.set('groupBy', options.groupBy);
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    if (options.offset) params.set('offset', String(options.offset));
+    if (options.previewSize !== undefined) params.set('previewSize', String(options.previewSize));
+    const query = params.toString();
+    const result = await this.request(`/queue/groups${query ? `?${query}` : ''}`);
+    return result.data;
+  }
+
+  async bulkQueueAction(payload: IngressBulkRequest): Promise<IngressBulkResult> {
+    const result = await this.request('/queue/bulk', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    return result.data;
   }
 
   async processPending(maxItems: number = 25): Promise<number> {
