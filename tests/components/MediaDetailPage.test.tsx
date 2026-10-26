@@ -146,9 +146,12 @@ describe('LibraryMediaDetailPage', () => {
       '/dashboard/my-library'
     );
 
-    // Poster tools (pre-filled from the record's poster source).
+    // Poster tools (pre-filled from the record's poster source). useMediaPoster fills the input in an
+    // effect one render after the record lands, so wait for it rather than racing it under load.
     expect(screen.getByText('Poster Tools')).toBeInTheDocument();
-    expect(screen.getByLabelText('Poster image URL')).toHaveValue('https://example.com/poster.jpg');
+    await waitFor(() =>
+      expect(screen.getByLabelText('Poster image URL')).toHaveValue('https://example.com/poster.jpg')
+    );
 
     // Poster gallery (poster count comes from the /list endpoint).
     expect(container.querySelector('img')).toHaveAttribute(
