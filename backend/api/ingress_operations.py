@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from db.database import get_db
 from db.models import MediaAssignment, MediaFile, Movie, Series
+from services.ingress_queue_service import QueueItemBusy
 from services.ingress_triage_service import (
     QUEUE_GROUP_BY,
     QUEUE_GROUP_MEDIA_TYPES,
@@ -516,7 +517,14 @@ async def retry_ingress_item(payload: QueueRetryRequest, req: Request):
 async def mark_ingress_item_complete(payload: QueueRetryRequest, req: Request):
     queue_service = req.app.state.ingress_queue_service
 
-    queue_item = await queue_service.mark_complete(payload.itemId)
+    try:
+        queue_item = await queue_service.mark_complete(payload.itemId)
+    except QueueItemBusy as exc:
+        raise HTTPException(status_code=409, detail={
+            "type": "ConflictError",
+            "message": str(exc),
+            "code": "QUEUE_ITEM_BUSY",
+        })
     if queue_item is None:
         raise HTTPException(status_code=404, detail={
             "type": "NotFoundError",

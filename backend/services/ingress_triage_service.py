@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import String, and_, case, cast, func, or_, select
+from sqlalchemy import String, and_, case, cast, func, or_, select, tuple_
 from sqlalchemy.engine import Row
 
 from db.database import AsyncSessionLocal
@@ -17,7 +17,9 @@ from services.ingress_queue_service import (
     QUEUE_ALL_STATUSES,
     QUEUE_COMPLETED,
     QUEUE_IGNORED,
+    QUEUE_PROCESSING,
     VALID_CLASSIFICATION_OVERRIDES,
+    QueueItemBusy,
     queue_item_from_row,
 )
 from utils.logging import logger
@@ -33,18 +35,20 @@ BULK_IGNORE = "ignore"
 BULK_RETRY = "retry"
 BULK_CLASSIFY = "classify"
 BULK_ACTIONS = (BULK_ACCEPT, BULK_IGNORE, BULK_RETRY, BULK_CLASSIFY)
+# `processing` is never actionable in bulk: the auto-processor holds the item and would overwrite the outcome
+# when it persists (an ignored file could still be organized). The queue service refuses it too.
 BULK_ACTION_STATUSES: Dict[str, Tuple[str, ...]] = {
     BULK_ACCEPT: tuple(
-        status for status in QUEUE_ALL_STATUSES if status not in (QUEUE_COMPLETED, QUEUE_IGNORED)
+        status for status in QUEUE_ALL_STATUSES if status not in (QUEUE_COMPLETED, QUEUE_IGNORED, QUEUE_PROCESSING)
     ),
-    BULK_IGNORE: tuple(status for status in QUEUE_ALL_STATUSES if status != QUEUE_IGNORED),
+    BULK_IGNORE: tuple(status for status in QUEUE_ALL_STATUSES if status not in (QUEUE_IGNORED, QUEUE_PROCESSING)),
     BULK_RETRY: ("pending", "needs_review", "failed"),
     BULK_CLASSIFY: ("pending", "auto_assigned", "needs_review", "failed"),
 }
 
 MAX_GROUP_PAGE_SIZE = 50
 MAX_PREVIEW_ITEMS = 10
-MAX_PREVIEW_ROWS = 200
+MAX_PREVIEW_ROWS = MAX_GROUP_PAGE_SIZE * MAX_PREVIEW_ITEMS  # a full page of full previews; a hard cap all the same
 MAX_GROUP_ITEMS = 1000
 
 # Issue #34 grouping knobs: one group per parsed title inside a folder, or one per source folder.
@@ -138,6 +142,12 @@ def _later(current: Optional[str], candidate: Optional[str]) -> Optional[str]:
     return candidate if current is None or (candidate is not None and candidate > current) else current
 
 
+def _page_key(group: Dict[str, Any], by_folder: bool) -> Tuple[str, str, str]:
+    """A listed group's key in GROUP_EXPRS / FOLDER_EXPRS order (what _load_previews selects by)."""
+    third = group["source_folder"] if by_folder else group["title"]
+    return (group["media_type"], group["ingress_path"], str(third or ""))
+
+
 def item_group_key(item: Dict[str, Any]) -> Tuple[str, str, str, str]:
     """Mirror GROUP_EXPRS/FOLDER_EXPRS in python (media type, path, title, source folder)."""
     best_match = item.get("best_match") or {}
@@ -200,21 +210,12 @@ class IngressTriageService:
         )
 
         page = groups[page_offset:page_offset + page_size]
-        row_offset = sum(group["matching_count"] for group in groups[:page_offset])
-        row_limit = min(sum(group["matching_count"] for group in page), MAX_PREVIEW_ROWS)
-        previews = (
-            await self._load_items(filters, requested_statuses, row_offset, row_limit, group_by) if row_limit else []
+        keys = [_page_key(group, by_folder) for group in page]
+        bucketed = (
+            await self._load_previews(filters, requested_statuses, keys, group_by, preview_size)
+            if keys and preview_size else {}
         )
-
-        bucketed: Dict[Tuple[str, ...], List[Dict[str, Any]]] = {}
-        for item in previews:
-            media_type, ingress_path, title, source_folder = item_group_key(item)
-            key = (media_type, ingress_path, source_folder) if by_folder else (media_type, ingress_path, title)
-            bucketed.setdefault(key, []).append(item)
-        for group in page:
-            key = (group["media_type"], group["ingress_path"], group["source_folder"]) if by_folder else (
-                group["media_type"], group["ingress_path"], group["title"],
-            )
+        for group, key in zip(page, keys):
             group["preview_items"] = bucketed.get(key, [])[:preview_size]
 
         return {
@@ -373,6 +374,8 @@ class IngressTriageService:
                     override,
                     history_extra=history_extra,
                 )
+        except QueueItemBusy as exc:  # it went `processing` after the status check above
+            return self._result(item_id, action, "skipped", error=str(exc), item_status=QUEUE_PROCESSING)
         except ValueError as exc:
             return self._result(item_id, action, "failed", error=str(exc))
 
@@ -508,31 +511,66 @@ class IngressTriageService:
         )
         return [group for group in ranked if group["matching_count"] > 0], status_counts
 
-    async def _load_items(
+    async def _load_previews(
         self,
         filters: Sequence[Any],
         requested_statuses: Sequence[str],
-        row_offset: int,
-        row_limit: int,
-        group_by: str = QUEUE_GROUP_BY_TITLE,
-    ) -> List[Dict[str, Any]]:
+        keys: Sequence[Tuple[str, str, str]],
+        group_by: str,
+        preview_size: int,
+    ) -> Dict[Tuple[str, str, str], List[Dict[str, Any]]]:
+        """Up to `preview_size` newest items for exactly the page's groups, bucketed by group key.
+
+        Selected by key (row-value IN) with row_number() per group, never by an offset into a sorted
+        listing: the page is ordered in Python and Postgres collates differently, so an offset window
+        landed on the wrong rows. Each row carries its SQL group key, so bucketing can't disagree either.
+        """
+        exprs = group_exprs_for(group_by)
         item_filters = list(filters)
         if requested_statuses:
             item_filters.append(DBQueueItem.status.in_(list(requested_statuses)))
-        statement = select(DBQueueItem).order_by(
-            *group_exprs_for(group_by),
-            DBQueueItem.queued_at.desc(),
-            DBQueueItem.file_name,
-        ).offset(row_offset).limit(row_limit)
-        rows = await self._fetch(statement.where(*item_filters) if item_filters else statement)
+        item_filters.append(tuple_(*exprs).in_([tuple(key) for key in keys]))
+        rank = func.row_number().over(
+            partition_by=list(exprs),
+            order_by=(DBQueueItem.queued_at.desc(), DBQueueItem.file_name, DBQueueItem.id),
+        )
+        ranked = (
+            select(DBQueueItem.id.label("id"), rank.label("rn"),
+                   *(expr.label(f"k{index}") for index, expr in enumerate(exprs)))
+            .where(*item_filters)
+            .subquery()
+        )
+        statement = (
+            select(DBQueueItem, ranked.c.k0, ranked.c.k1, ranked.c.k2)
+            .join(ranked, DBQueueItem.id == ranked.c.id)
+            .where(ranked.c.rn <= preview_size)
+            .order_by(ranked.c.k0, ranked.c.k1, ranked.c.k2, ranked.c.rn)
+            .limit(MAX_PREVIEW_ROWS)
+        )
+        rows = await self._fetch(statement)
 
-        self.queue_service.hydrate_items(rows)
-        payloads = []
+        by_folder = group_by == QUEUE_GROUP_BY_FOLDER
+        entities, row_keys = [], []
         for row in rows:
-            payload = queue_item_from_row(row)
-            if payload is not None:
-                payloads.append(self.queue_service.get_item(payload["id"]) or payload)
-        return payloads
+            if isinstance(row, Row) and len(row) == 4:  # (item, k0, k1, k2) from Postgres
+                entities.append(row[0])
+                row_keys.append(tuple(str(part or "") for part in row[1:]))
+            else:  # unit-test fakes hand back bare items: fall back to the python mirror of the key
+                entities.append(row)
+                row_keys.append(None)
+
+        self.queue_service.hydrate_items(entities)
+        bucketed: Dict[Tuple[str, str, str], List[Dict[str, Any]]] = {}
+        for entity, key in zip(entities, row_keys):
+            payload = queue_item_from_row(entity)
+            if payload is None:
+                continue
+            item = self.queue_service.get_item(payload["id"]) or payload
+            if key is None:
+                media_type, ingress_path, title, source_folder = item_group_key(item)
+                key = (media_type, ingress_path, source_folder if by_folder else title)
+            bucketed.setdefault(key, []).append(item)
+        return bucketed
 
     async def _hydrate_item(self, item_id: str) -> Optional[Dict[str, Any]]:
         """Pull a DB-only queue row into the queue service so backlog items stay actionable."""

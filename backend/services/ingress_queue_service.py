@@ -66,6 +66,10 @@ QUEUE_ALL_STATUSES = (
 VALID_CLASSIFICATION_OVERRIDES = {"main_feature", "special_feature", "alternate_version"}
 
 
+class QueueItemBusy(ValueError):
+    """The auto-processor holds this item (status `processing`); acting on it now would be overwritten."""
+
+
 def _to_epoch_seconds(value: Any) -> Optional[float]:
     """Normalize persisted timestamp values (datetime/epoch/ISO) to epoch seconds."""
     if value is None or isinstance(value, bool):
@@ -176,6 +180,10 @@ class IngressQueueService:
         self.items_by_id: Dict[str, IngressQueueItem] = {}
         self.item_order: List[str] = []
         self.path_to_item_id: Dict[str, str] = {}
+        # file_path -> (row id, status) for every persisted row, loaded at startup and kept current by
+        # _persist_queue_item, so a re-detected file after a restart updates its row (and an ignored file
+        # stays ignored) instead of getting a fresh pending row.
+        self.persisted_paths: Dict[str, Tuple[str, str]] = {}
         self.processing_history: List[Dict[str, Any]] = []
 
     @staticmethod
@@ -281,6 +289,11 @@ class IngressQueueService:
             existing_id = self.path_to_item_id.get(queued_file.file_path)
             if existing_id is not None:
                 existing_item = self.items_by_id[existing_id]
+                if existing_item.status == QUEUE_IGNORED:
+                    # A reviewer decided to ignore this file; seeing it again doesn't undo that.
+                    logger.info("Ignored ingress file re-detected; leaving it ignored", item_id=existing_id,
+                                file_path=queued_file.file_path)
+                    return existing_item
                 if existing_item.status not in {QUEUE_PENDING, QUEUE_PROCESSING}:
                     existing_item.status = QUEUE_PENDING
                     existing_item.last_error = None
@@ -289,7 +302,15 @@ class IngressQueueService:
                     existing_item.priority = max(1, min(priority, 10))
                 return existing_item
 
-            item_id = str(uuid.uuid4())
+            persisted = self.persisted_paths.get(queued_file.file_path)
+            if persisted is not None and persisted[1] == QUEUE_IGNORED:
+                # Not in memory (e.g. after a restart) but ignored in Postgres: don't resurrect it.
+                logger.info("Ignored ingress file re-detected after restart; skipping", item_id=persisted[0],
+                            file_path=queued_file.file_path)
+                return None
+
+            # Re-use the persisted row's id so the re-detected file updates that row, not a duplicate.
+            item_id = persisted[0] if persisted is not None else str(uuid.uuid4())
             queue_item = IngressQueueItem(
                 id=item_id,
                 file_path=queued_file.file_path,
@@ -344,7 +365,9 @@ class IngressQueueService:
                 return existing_item
 
             now = time.time()
-            item_id = str(uuid.uuid4())
+            # An explicit manual add may re-queue an ignored file, but it updates the persisted row.
+            persisted = self.persisted_paths.get(file_path)
+            item_id = persisted[0] if persisted is not None else str(uuid.uuid4())
             file_name = os.path.basename(file_path)
             file_size = os.path.getsize(file_path) if os.path.isfile(file_path) else 0
             queue_item = IngressQueueItem(
@@ -543,6 +566,10 @@ class IngressQueueService:
             item = self.items_by_id.get(item_id)
             if item is None:
                 return None
+            if item.status == QUEUE_PROCESSING:
+                # process_next_item still holds this object and would overwrite `ignored` (and may organize
+                # the file) when it persists; refuse rather than lose the reviewer's decision.
+                raise QueueItemBusy(f"Queue item '{item_id}' is being processed; try again once it finishes")
 
             item.status = QUEUE_IGNORED
             item.processed_at = time.time()
@@ -597,6 +624,28 @@ class IngressQueueService:
 
         self.hydrate_items([row])
         return self.get_item(item_id)
+
+    async def load_persisted_paths(self) -> int:
+        """Index every persisted row's file_path → (id, status), newest row per path winning.
+
+        Run once at startup, before the watcher starts: the in-memory queue starts empty, so without
+        this a re-detected file would get a new row, and an ignored file would come back as pending.
+        """
+        if self.db_session_factory is None:
+            return 0
+        async with self.db_session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(DBIngressQueueItem.file_path, DBIngressQueueItem.id, DBIngressQueueItem.status)
+                    .order_by(DBIngressQueueItem.queued_at, DBIngressQueueItem.id)
+                )
+            ).all()
+        index = {str(path): (str(row_id), str(status)) for path, row_id, status in rows}  # later rows win
+        with self.lock:
+            for path, entry in index.items():
+                self.persisted_paths.setdefault(path, entry)  # a live save since startup is newer
+        logger.info("Ingress queue path index loaded", paths=len(index))
+        return len(index)
 
     def hydrate_items(self, rows: Iterable[Any]) -> int:
         """Rebuild in-memory queue items from persisted rows; live state is never overwritten."""
@@ -666,10 +715,16 @@ class IngressQueueService:
             item = self.items_by_id.get(item_id)
             if item is None:
                 return None
+            if item.status == QUEUE_PROCESSING:
+                raise QueueItemBusy(f"Queue item '{item_id}' is being processed; try again once it finishes")
+            # Claim it for the organize below, so the auto-processor can't pick it up meanwhile. Every path
+            # out of this method sets the final status (completed or failed).
+            item.status = QUEUE_PROCESSING
 
         organization_error: Optional[str] = None
         organized = False
         assignment_id: Optional[str] = None
+        assignment_result: Optional[Dict[str, Any]] = None  # stays None if the assignment attempt raises
 
         if self.assignment_orchestrator is not None:
             try:
@@ -698,6 +753,9 @@ class IngressQueueService:
             if assignment_result:
                 item.proposed_path = self._extract_organized_path(assignment_result)
 
+        # Always settle the final status (this used to sit inside the orchestrator branch, so without an
+        # orchestrator the item kept whatever status it had; now it would stay claimed as `processing`).
+        with self.lock:
             if self.assignment_orchestrator is None:
                 # Backward-compatible behavior when no orchestrator is configured.
                 item.status = QUEUE_COMPLETED
@@ -1617,6 +1675,7 @@ class IngressQueueService:
                         for key, value in payload.items():
                             setattr(existing, key, value)
                     await session.commit()
+                self.persisted_paths[item.file_path] = (item.id, item.status)
             except Exception as exc:
                 logger.warning(
                     "Failed to persist ingress queue item to database",

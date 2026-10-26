@@ -550,6 +550,15 @@ Bulk actions and the single-item queue endpoints (`/retry`, `/assign`, `/classif
 `/mark-complete`) first load a row that only exists in Postgres into the queue, so items detected
 before a restart stay actionable without re-scanning the ingress folder.
 
+An item in `processing` belongs to the auto-processor, which would overwrite any outcome when it
+saves. Bulk actions report such items as `skipped`, and `POST /api/ingress/queue/mark-complete`
+returns 409 with `code: "QUEUE_ITEM_BUSY"`; retry once processing finishes.
+
+An `ignored` file stays ignored when the watcher sees it again, including after a backend restart
+(the backend indexes persisted rows by `file_path` at startup). A re-detected file updates its
+existing row instead of adding a new one. An explicit `POST /api/ingress/queue/add-files` may still
+re-queue an ignored file.
+
 ---
 
 ## Response Format

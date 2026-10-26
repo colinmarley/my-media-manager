@@ -224,6 +224,11 @@ async def lifespan(app: FastAPI):
         auto_assign_threshold=settings.ingress_auto_assign_threshold,
         db_session_factory=AsyncSessionLocal,
     )
+    try:
+        # Before the watcher starts: re-detected files must find their rows (and stay ignored if ignored).
+        await ingress_queue_service.load_persisted_paths()
+    except Exception as exc:
+        logger.warning("Could not load the ingress queue path index", error=str(exc))
 
     ingress_runtime_config: dict = {
         "defaultIngressPaths": settings.ingress_default_paths,
