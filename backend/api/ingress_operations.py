@@ -22,6 +22,7 @@ from services.ingress_triage_service import (
     QUEUE_GROUP_BY,
     QUEUE_GROUP_MEDIA_TYPES,
     IngressTriageService,
+    TriageQueryError,
 )
 from services.metadata_enrichment_service import metadata_enrichment_service
 from utils.exceptions import ScanOperationError
@@ -415,6 +416,8 @@ async def get_ingress_queue_groups(
             "message": str(exc),
             "code": "INVALID_GROUP_BY",
         })
+    except TriageQueryError:
+        raise _triage_unavailable()
 
     return {
         "success": True,
@@ -423,17 +426,29 @@ async def get_ingress_queue_groups(
     }
 
 
+def _triage_unavailable() -> HTTPException:
+    """The queue table couldn't be read: say so rather than answer with an empty listing."""
+    return HTTPException(status_code=503, detail={
+        "type": "ServiceUnavailable",
+        "message": "The ingress queue database could not be queried",
+        "code": "TRIAGE_QUERY_FAILED",
+    })
+
+
 @router.post("/queue/bulk")
 async def bulk_ingress_queue_action(payload: QueueBulkRequest, req: Request):
     triage_service = _ingress_triage_service(req)
-    result = await triage_service.bulk_action(
-        action=payload.action,
-        item_ids=payload.itemIds,
-        group=payload.group,
-        statuses=payload.statuses,
-        classification=payload.classification,
-        exclude_item_ids=payload.excludeItemIds,
-    )
+    try:
+        result = await triage_service.bulk_action(
+            action=payload.action,
+            item_ids=payload.itemIds,
+            group=payload.group,
+            statuses=payload.statuses,
+            classification=payload.classification,
+            exclude_item_ids=payload.excludeItemIds,
+        )
+    except TriageQueryError:
+        raise _triage_unavailable()
     if result.get("error"):
         raise HTTPException(status_code=400, detail={
             "type": "ValidationError",

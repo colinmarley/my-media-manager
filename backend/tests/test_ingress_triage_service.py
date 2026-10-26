@@ -23,8 +23,10 @@ from services.ingress_queue_service import (
     QUEUE_PENDING,
 )
 from services.ingress_triage_service import (
+    MAX_GROUP_ITEMS,
     UNPARSED_TITLE_BUCKET,
     IngressTriageService,
+    TriageQueryError,
     item_group_key,
     source_folder_for,
 )
@@ -520,6 +522,45 @@ def test_group_statement_buckets_titles_the_parser_did_not_provide():
     assert UNPARSED_TITLE_BUCKET in query.params.values(), query.params
     assert 'ingress_queue.file_name' not in str(query).split('WHERE')[0]
 
+
+
+class _BrokenSession(_FakeSession):
+    async def execute(self, statement):
+        raise ConnectionRefusedError("connection refused")
+
+
+def test_triage_query_failure_raises_instead_of_returning_an_empty_listing():
+    triage = IngressTriageService(IngressQueueService(), db_session_factory=_BrokenSession())
+
+    with pytest.raises(TriageQueryError):
+        asyncio.run(triage.get_queue_groups())
+    with pytest.raises(TriageQueryError):
+        asyncio.run(triage.bulk_action(action='ignore', group={'media_type': 'movie'}))
+
+
+def test_group_selector_over_the_cap_is_ordered_capped_and_reported():
+    rows = [SimpleNamespace(**_matrix_row(f'backlog-{n:04d}')) for n in range(MAX_GROUP_ITEMS + 1)]
+    session = _FakeSession(rows)
+    triage = IngressTriageService(IngressQueueService(), db_session_factory=session)
+
+    ids, truncated = asyncio.run(triage.resolve_group({'media_type': 'movie', 'ingress_path': '/inbox'}))
+
+    assert truncated is True
+    assert ids == [f'backlog-{n:04d}' for n in range(MAX_GROUP_ITEMS)]
+    from sqlalchemy.dialects import postgresql
+
+    sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
+    assert 'ORDER BY ingress_queue.queued_at, ingress_queue.id' in sql
+    assert session.statements[0]._limit_clause.value == MAX_GROUP_ITEMS + 1
+
+
+def test_bulk_summary_reports_an_untruncated_group():
+    session = _FakeSession([SimpleNamespace(**_matrix_row('backlog-1'))])
+    triage = IngressTriageService(IngressQueueService(), db_session_factory=session)
+
+    summary = asyncio.run(triage.bulk_action(action='ignore', group={'media_type': 'movie'}))
+
+    assert (summary['group_truncated'], summary['group_limit']) == (False, MAX_GROUP_ITEMS)
 
 @integration
 @pytest.mark.integration

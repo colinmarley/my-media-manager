@@ -526,6 +526,8 @@ the `group_key` returned by the listing feeds straight back in. Each mutated ite
     "succeeded": 1,
     "failed": 1,
     "skipped": 0,
+    "group_truncated": false,
+    "group_limit": 1000,
     "results": [
       {"item_id": "0f6a…", "action": "ignore", "status": "succeeded", "item_status": "ignored", "error": null},
       {"item_id": "9c2d…", "action": "ignore", "status": "failed", "item_status": null, "error": "Queue item not found"}
@@ -536,6 +538,13 @@ the `group_key` returned by the listing feeds straight back in. Each mutated ite
 
 Requests without a valid `action`, without `itemIds`/`group`, or with an unknown `classification`
 return 400 with `code: "INVALID_BULK_REQUEST"`.
+
+A `group` selector acts on at most `group_limit` (1000) items, oldest `queued_at` first. When more
+matched, `group_truncated` is `true`; repeat the request (a status filter that excludes the new
+outcome moves on to the next items) or narrow the selector.
+
+If the queue table can't be queried, `GET /api/ingress/queue/groups` and this endpoint return 503
+with `code: "TRIAGE_QUERY_FAILED"` instead of an empty result.
 
 Bulk actions and the single-item queue endpoints (`/retry`, `/assign`, `/classification`,
 `/mark-complete`) first load a row that only exists in Postgres into the queue, so items detected

@@ -334,7 +334,8 @@ def test_qa_group_paging_honours_limit_offset_and_caps_them_server_side():
 def test_qa_api_rejects_page_sizes_beyond_the_server_side_cap():
     """AC3: the HTTP layer refuses out-of-range paging instead of silently serving it."""
     saved = _app_state_snapshot()
-    _wire_app(IngressQueueService(db_session_factory=None))
+    queue_service = IngressQueueService(db_session_factory=None)
+    _wire_app(queue_service, _FixtureTriage(queue_service, {}))  # an empty queue, no Postgres
 
     async def run():
         from main import app as fastapi_app

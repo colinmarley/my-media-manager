@@ -122,8 +122,9 @@ class TestQueueGroupsEndpoint:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             resp = await ac.get("/api/ingress/queue/groups")
 
-        assert resp.status_code == 200
-        assert resp.json()["data"]["total_items"] == 0
+        # Unit runs point DATABASE_URL at a dead port: the failed query is a 503, not an empty 200.
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["code"] == "TRIAGE_QUERY_FAILED"
         assert app.state.ingress_triage_service is not None
 
 
@@ -176,3 +177,26 @@ class TestQueueBulkEndpoint:
         assert resp.status_code == 400
         assert resp.json()["detail"]["code"] == "INVALID_BULK_REQUEST"
         assert "Unsupported bulk action" in resp.json()["detail"]["message"]
+
+
+class _FailingTriageService:
+    async def get_queue_groups(self, **kwargs):
+        from services.ingress_triage_service import TriageQueryError
+        raise TriageQueryError("db down")
+
+    async def bulk_action(self, **kwargs):
+        from services.ingress_triage_service import TriageQueryError
+        raise TriageQueryError("db down")
+
+
+@pytest.mark.asyncio
+async def test_db_failure_is_a_503_not_an_empty_listing(app):
+    _wire(app, _FailingTriageService())
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        groups = await ac.get("/api/ingress/queue/groups")
+        bulk = await ac.post("/api/ingress/queue/bulk", json={"action": "ignore", "itemIds": ["item-1"]})
+
+    for resp in (groups, bulk):
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["code"] == "TRIAGE_QUERY_FAILED"

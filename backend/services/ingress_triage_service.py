@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy import String, and_, case, cast, func, or_, select
+from sqlalchemy.engine import Row
 
 from db.database import AsyncSessionLocal
 from db.models import IngressQueueItem as DBQueueItem
@@ -53,6 +54,10 @@ QUEUE_GROUP_BY: Tuple[str, ...] = (QUEUE_GROUP_BY_TITLE, QUEUE_GROUP_BY_FOLDER)
 
 # Rows whose parsed_info/best_match carry no title land in this bucket instead of the file name.
 UNPARSED_TITLE_BUCKET = "(unparsed)"
+
+
+class TriageQueryError(RuntimeError):
+    """A triage query failed in Postgres; callers surface it instead of an empty result."""
 
 
 def _matched(field: str) -> Any:
@@ -245,8 +250,10 @@ class IngressTriageService:
                 return {"error": f"Unsupported classification override: {classification}"}
 
         targets = [str(item_id) for item_id in (item_ids or [])]
+        group_truncated = False
         if group:
-            targets.extend(await self.resolve_group_item_ids(group, statuses=statuses))
+            group_ids, group_truncated = await self.resolve_group(group, statuses=statuses)
+            targets.extend(group_ids)
         if not targets:
             return {"error": "Bulk actions require item_ids or a group selector"}
 
@@ -268,6 +275,10 @@ class IngressTriageService:
             "succeeded": sum(1 for result in results if result["status"] == "succeeded"),
             "failed": sum(1 for result in results if result["status"] == "failed"),
             "skipped": sum(1 for result in results if result["status"] == "skipped"),
+            # A group selector acts on at most MAX_GROUP_ITEMS items, oldest first; when it matched
+            # more, the caller repeats the request (or narrows it) to work through the rest.
+            "group_truncated": group_truncated,
+            "group_limit": MAX_GROUP_ITEMS,
             "results": results,
         }
         logger.info(
@@ -287,6 +298,15 @@ class IngressTriageService:
         statuses: Optional[Sequence[str]] = None,
     ) -> List[str]:
         """Resolve a group selector (media_type/ingress_path/title, any subset) to queue item ids."""
+        ids, _ = await self.resolve_group(group, statuses=statuses)
+        return ids
+
+    async def resolve_group(
+        self,
+        group: Optional[Dict[str, Any]],
+        statuses: Optional[Sequence[str]] = None,
+    ) -> Tuple[List[str], bool]:
+        """Group selector -> (the first MAX_GROUP_ITEMS item ids, oldest first; whether more matched)."""
         filters = []
         selector = group or {}
         expressions = (
@@ -300,13 +320,23 @@ class IngressTriageService:
             if value is not None:
                 filters.append(expression == str(value))
         if not filters:
-            return []
+            return [], False
         if statuses:
             filters.append(DBQueueItem.status.in_([str(status) for status in statuses]))
 
-        rows = await self._fetch(select(DBQueueItem).where(*filters).limit(MAX_GROUP_ITEMS))
+        statement = (
+            select(DBQueueItem)
+            .where(*filters)
+            .order_by(DBQueueItem.queued_at, DBQueueItem.id)
+            .limit(MAX_GROUP_ITEMS + 1)
+        )
+        rows = await self._fetch(statement)
+        truncated = len(rows) > MAX_GROUP_ITEMS
+        rows = rows[:MAX_GROUP_ITEMS]
+        if truncated:
+            logger.warning("Ingress bulk group selector over the item cap", limit=MAX_GROUP_ITEMS, group=group)
         self.queue_service.hydrate_items(rows)
-        return [str(row.id) for row in rows if getattr(row, "id", None)]
+        return [str(row.id) for row in rows if getattr(row, "id", None)], truncated
 
     async def _apply_bulk_item(
         self,
@@ -514,7 +544,12 @@ class IngressTriageService:
             return []
         try:
             async with self.db_session_factory() as session:
-                return list((await session.execute(statement)).all())
+                rows = (await session.execute(statement)).all()
         except Exception as exc:
-            logger.warning("Ingress queue triage query failed", error=str(exc))
-            return []
+            logger.error("Ingress queue triage query failed", error=str(exc))
+            raise TriageQueryError("Ingress queue triage query failed") from exc
+        # select(DBQueueItem) yields one-element Rows; unwrap them so callers read row.id, not row[0].id.
+        return [
+            row[0] if isinstance(row, Row) and len(row) == 1 and isinstance(row[0], DBQueueItem) else row
+            for row in rows
+        ]
