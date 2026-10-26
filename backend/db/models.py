@@ -95,41 +95,9 @@ class Movie(Base):
     updated_at         = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
-class Release(Base):
-    __tablename__ = "releases"
-
-    id               = Column(Text, primary_key=True)
-    title            = Column(Text, nullable=False)
-    year             = Column(Integer)
-    media_type       = Column(Text)
-    edition          = Column(Text)
-    publisher        = Column(Text)
-    territory        = Column(Text)
-    release_date     = Column(Text)
-    spine_number     = Column(Text)
-    out_of_print     = Column(Boolean, default=False)
-    upc              = Column(Text)
-    contains_extras  = Column(Boolean, default=False)
-    extras           = Column(JSONB, default=[])
-    contains_inserts = Column(Boolean, default=False)
-    inserts          = Column(JSONB, default=[])
-    image_files      = Column(JSONB, default=[])
-    created_at       = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at       = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-
-class ReleaseMovie(Base):
-    __tablename__ = "release_movies"
-
-    release_id = Column(Text, ForeignKey("releases.id", ondelete="CASCADE"), primary_key=True)
-    movie_id   = Column(Text, ForeignKey("movies.id",   ondelete="CASCADE"), primary_key=True)
-
-
 class DiscSet(Base):
     """A boxed set grouping multiple physical discs (main feature + special
-    features, theatrical vs. director's cut, a multi-disc season, etc.).
-    Deliberately separate from the pre-existing `releases` table, which is
-    unused by any live code path — this is the real, wired-up mechanism."""
+    features, theatrical vs. director's cut, a multi-disc season, etc.)."""
     __tablename__ = "disc_sets"
 
     id         = Column(Text, primary_key=True)
@@ -143,7 +111,7 @@ class Disc(Base):
 
     id                        = Column(Text, primary_key=True)
     title                     = Column(Text, nullable=False)
-    release_id                = Column(Text, ForeignKey("releases.id", ondelete="SET NULL"))
+    release_id                = Column(Text)  # legacy; its `releases` table was dropped
     set_id                    = Column(Text, ForeignKey("disc_sets.id", ondelete="SET NULL"))
     edition                   = Column(Text)  # e.g. "Special Edition", "Director's Cut" — free text
     storage_type              = Column(Text)  # "Box" | "Binder" — physical storage location, not content grouping
@@ -264,13 +232,6 @@ class Series(Base):
     updated_at         = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
-class ReleaseSeries(Base):
-    __tablename__ = "release_series"
-
-    release_id = Column(Text, ForeignKey("releases.id", ondelete="CASCADE"), primary_key=True)
-    series_id  = Column(Text, ForeignKey("series.id",   ondelete="CASCADE"), primary_key=True)
-
-
 class Season(Base):
     __tablename__ = "seasons"
 
@@ -335,17 +296,6 @@ class Episode(Base):
     updated_at        = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
-class Actor(Base):
-    __tablename__ = "actors"
-
-    id         = Column(Text, primary_key=True)
-    full_name  = Column(Text, nullable=False)
-    birthplace = Column(Text)
-    birthday   = Column(Text)
-    notes      = Column(Text)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
 class Director(Base):
     __tablename__ = "directors"
 
@@ -355,39 +305,6 @@ class Director(Base):
     birthday   = Column(Text)
     notes      = Column(Text)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-class MovieActor(Base):
-    __tablename__ = "movie_actors"
-
-    movie_id   = Column(Text, ForeignKey("movies.id",  ondelete="CASCADE"), primary_key=True)
-    actor_id   = Column(Text, ForeignKey("actors.id",  ondelete="CASCADE"), primary_key=True)
-    characters = Column(ARRAY(Text), default=[])
-
-
-class MovieDirector(Base):
-    __tablename__ = "movie_directors"
-
-    movie_id    = Column(Text, ForeignKey("movies.id",    ondelete="CASCADE"), primary_key=True)
-    director_id = Column(Text, ForeignKey("directors.id", ondelete="CASCADE"), primary_key=True)
-    title       = Column(Text)
-
-
-class SeriesActor(Base):
-    __tablename__ = "series_actors"
-
-    series_id  = Column(Text, ForeignKey("series.id", ondelete="CASCADE"), primary_key=True)
-    actor_id   = Column(Text, ForeignKey("actors.id", ondelete="CASCADE"), primary_key=True)
-    characters = Column(ARRAY(Text), default=[])
-
-
-class SeriesDirector(Base):
-    __tablename__ = "series_directors"
-
-    series_id   = Column(Text, ForeignKey("series.id",    ondelete="CASCADE"), primary_key=True)
-    director_id = Column(Text, ForeignKey("directors.id", ondelete="CASCADE"), primary_key=True)
-    seasons     = Column(ARRAY(Text), default=[])
-    title       = Column(Text)
 
 
 # ---------------------------------------------------------------------------
@@ -409,60 +326,11 @@ class LibraryPath(Base):
     created_at       = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
-class ScanResult(Base):
-    __tablename__ = "scan_results"
-
-    id                = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
-    library_path_id   = Column(Text, ForeignKey("library_paths.id", ondelete="SET NULL"))
-    library_path      = Column(Text, nullable=False)
-    status            = Column(Text, nullable=False, default="running")
-    total_items       = Column(Integer, default=0)
-    files_found       = Column(Integer, default=0)
-    directories_found = Column(Integer, default=0)
-    start_time        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    end_time          = Column(DateTime(timezone=True))
-    error_message     = Column(Text)
-    created_at        = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-class ScannedFile(Base):
-    __tablename__ = "scanned_files"
-
-    id               = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
-    scan_id          = Column(Text, ForeignKey("scan_results.id", ondelete="CASCADE"))
-    library_path_id  = Column(Text, ForeignKey("library_paths.id", ondelete="SET NULL"))
-    file_path        = Column(Text, nullable=False)
-    file_name        = Column(Text, nullable=False)
-    folder_path      = Column(Text)
-    extension        = Column(Text)
-    media_type       = Column(Text)
-    status           = Column(Text, default="found")
-    file_size        = Column(BigInteger)
-    modified_time    = Column(DateTime(timezone=True))
-    media_metadata   = Column(JSONB, default={})
-    parsed_info      = Column(JSONB, default={})
-    discovered_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-class ScannedDirectory(Base):
-    __tablename__ = "scanned_directories"
-
-    id              = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
-    scan_id         = Column(Text, ForeignKey("scan_results.id", ondelete="CASCADE"))
-    library_path_id = Column(Text, ForeignKey("library_paths.id", ondelete="SET NULL"))
-    dir_path        = Column(Text, nullable=False)
-    dir_name        = Column(Text, nullable=False)
-    media_type      = Column(Text)
-    status          = Column(Text, default="found")
-    dir_metadata    = Column("metadata", JSONB, default={})
-    discovered_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
 class MediaFile(Base):
     __tablename__ = "media_files"
 
     id                  = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
-    scan_id             = Column(Text, ForeignKey("scan_results.id", ondelete="SET NULL"))
+    scan_id             = Column(Text)  # legacy; its `scan_results` table was dropped
     library_path_id     = Column(Text, ForeignKey("library_paths.id", ondelete="SET NULL"))
     file_path           = Column(Text, nullable=False, unique=True)
     file_name           = Column(Text, nullable=False)
@@ -544,33 +412,6 @@ class AssignmentExtraFile(Base):
     updated_at    = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
-class JellyfinFolder(Base):
-    __tablename__ = "jellyfin_folders"
-
-    id               = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
-    folder_path      = Column(Text, nullable=False, unique=True)
-    folder_name      = Column(Text, nullable=False)
-    folder_type      = Column(Text)
-    media_type       = Column(Text)
-    media_id         = Column(Text)
-    season_number    = Column(Integer)
-    media_title      = Column(Text)
-    year             = Column(Integer)
-    imdb_id          = Column(Text)
-    jellyfin_name    = Column(Text)
-    video_files      = Column(JSONB, default=[])
-    subtitle_files   = Column(JSONB, default=[])
-    audio_files      = Column(JSONB, default=[])
-    image_files      = Column(JSONB, default=[])
-    extra_folders    = Column(JSONB, default=[])
-    created_date     = Column(DateTime(timezone=True))
-    last_verified    = Column(DateTime(timezone=True))
-    is_valid         = Column(Boolean, default=True)
-    validation_errors = Column(JSONB, default=[])
-    created_at       = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at       = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-
 class ComplianceScan(Base):
     __tablename__ = "compliance_scans"
 
@@ -630,20 +471,6 @@ class ComplianceReviewEvent(Base):
     created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
-class MediaMatch(Base):
-    __tablename__ = "media_matches"
-
-    id         = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
-    file_info  = Column(JSONB, nullable=False)
-    confidence = Column(Integer, default=0)
-    media_id   = Column(Text)
-    media_type = Column(Text)
-    suggestions = Column(JSONB, default=[])
-    status     = Column(Text, default="unmatched")
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-
-
 # ---------------------------------------------------------------------------
 # Ingress Automation
 # ---------------------------------------------------------------------------
@@ -682,14 +509,6 @@ class IngressProcessingHistory(Base):
     queue_item_id = Column(Text)
     snapshot      = Column(JSONB, nullable=False)
     created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-class IngressConfig(Base):
-    __tablename__ = "ingress_config"
-
-    id         = Column(Text, primary_key=True, default="current")
-    config     = Column(JSONB, nullable=False, default={})
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
 # ---------------------------------------------------------------------------
