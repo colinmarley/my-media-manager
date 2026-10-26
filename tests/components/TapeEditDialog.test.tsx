@@ -128,4 +128,53 @@ describe('TapeEditDialog', () => {
     });
     expect(updateTapeMock).not.toHaveBeenCalled();
   });
+  describe('storage location', () => {
+    const pickStorage = async (name: string) => {
+      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Storage' }));
+      fireEvent.click(await screen.findByRole('option', { name }));
+    };
+
+    it('saves a Binder location with a MED#### code', async () => {
+      render(<TapeEditDialog open tape={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Birthday 1998' } });
+      await pickStorage('Binder');
+      fireEvent.change(screen.getByLabelText('Storage ID'), { target: { value: 'MED0100' } });
+      fireEvent.click(screen.getByRole('button', { name: /create tape/i }));
+
+      await waitFor(() => expect(createTapeMock).toHaveBeenCalledTimes(1));
+      expect(createTapeMock.mock.calls[0][0]).toMatchObject({ storageType: 'Binder', storageId: 'MED0100' });
+    });
+
+    it('blocks saving a malformed code', async () => {
+      render(<TapeEditDialog open tape={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Birthday 1998' } });
+      await pickStorage('Box');
+      fireEvent.change(screen.getByLabelText('Storage ID'), { target: { value: 'BOX-7' } });
+      fireEvent.click(screen.getByRole('button', { name: /create tape/i }));
+
+      expect(await screen.findByText(/must look like MED0001/)).toBeInTheDocument();
+      expect(createTapeMock).not.toHaveBeenCalled();
+    });
+
+    it('clears an existing location', async () => {
+      const tape: CatalogTape = { ...EXISTING_TAPE, storageType: 'Box', storageId: 'MED0007' };
+      render(<TapeEditDialog open tape={tape} onClose={vi.fn()} onSaved={vi.fn()} />);
+      expect(screen.getByLabelText('Storage ID')).toHaveValue('MED0007');
+
+      await pickStorage('None');
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(updateTapeMock).toHaveBeenCalledTimes(1));
+      expect(updateTapeMock.mock.calls[0][1]).toMatchObject({ storageType: null, storageId: null });
+    });
+
+    it('keeps an older non-MED#### ID unchanged on save', async () => {
+      const tape: CatalogTape = { ...EXISTING_TAPE, storageType: 'Box', storageId: 'box-b' };
+      render(<TapeEditDialog open tape={tape} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(updateTapeMock).toHaveBeenCalledTimes(1));
+      expect(updateTapeMock.mock.calls[0][1]).toMatchObject({ storageType: 'Box', storageId: 'box-b' });
+    });
+  });
 });

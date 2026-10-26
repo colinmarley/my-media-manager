@@ -8,9 +8,11 @@ import {
 import { createDisc, updateDisc } from '@/service/catalog/DiscCatalogService';
 import { lookupUpc, scanCover } from '@/service/catalog/DiscLookupService';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
-import { DiscFormat, DiscCondition } from '@/types/catalog/Common.type';
+import { DiscFormat, DiscCondition, StorageType } from '@/types/catalog/Common.type';
 import { LoanFields, loanFields, loanPayload, validateLoan } from '@/utils/loanUtils';
 import LoanInputs from './LoanInputs';
+import { storageLocationPayload, validateStorageLocation } from '@/utils/storageLocation';
+import StorageLocationFields from './StorageLocationFields';
 
 const FORMATS: DiscFormat[] = ['DVD', 'BLURAY', 'HD_DVD', 'UHD_BLURAY', 'LASERDISC'];
 const CONDITIONS: DiscCondition[] = ['Mint', 'Good', 'Fair', 'Poor'];
@@ -52,6 +54,9 @@ export default function DiscEditDialog({
   const [isRentalDisc, setIsRentalDisc] = useState(false);
   const [containsSpecialFeatures, setContainsSpecialFeatures] = useState(false);
   const [loan, setLoan] = useState<LoanFields>(loanFields(null));
+  const [storageType, setStorageType] = useState<StorageType | ''>('');
+  const [storageId, setStorageId] = useState('');
+  const [storageError, setStorageError] = useState('');
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -97,6 +102,9 @@ export default function DiscEditDialog({
     resetPerDiscFields(disc);
     setFormat(disc?.format ?? '');
     setCondition(disc?.condition ?? '');
+    setStorageType(disc?.storageType ?? '');
+    setStorageId(disc?.storageId ?? '');
+    setStorageError('');
     setError('');
     setInfo('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -198,6 +206,9 @@ export default function DiscEditDialog({
     if (!title.trim()) { setError('Title is required'); return; }
     const loanError = validateLoan(loan);
     if (loanError) { setError(loanError); return; }
+    const locationError = validateStorageLocation(storageType, storageId, disc?.storageId);
+    setStorageError(locationError);
+    if (locationError) return;
     setSaving(true);
     setError('');
     setInfo('');
@@ -215,6 +226,7 @@ export default function DiscEditDialog({
       isRentalDisc,
       containsSpecialFeatures,
       ...loanPayload(loan, disc),
+      ...storageLocationPayload(storageType, storageId, disc?.storageId),
     };
     try {
       const saved = isEdit
@@ -313,6 +325,10 @@ export default function DiscEditDialog({
               slotProps={{ inputLabel: { shrink: true } }}
             />
           </Stack>
+          <StorageLocationFields
+            storageType={storageType} storageId={storageId} error={storageError}
+            onTypeChange={setStorageType} onIdChange={setStorageId}
+          />
           <Stack direction="row" spacing={1} flexWrap="wrap">
             <FormControlLabel
               control={<Checkbox checked={isPartOfSet} onChange={(e) => setIsPartOfSet(e.target.checked)} />}

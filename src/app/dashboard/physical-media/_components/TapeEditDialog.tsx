@@ -10,6 +10,9 @@ import { CatalogTape } from '@/types/catalog/Tape.type';
 import { TapeType, TapeBrand, TapeCondition, RecordingSpeed } from '@/types/tape-ingest/TapeIngest.type';
 import { LoanFields, loanFields, loanPayload, validateLoan } from '@/utils/loanUtils';
 import LoanInputs from './LoanInputs';
+import { StorageType } from '@/types/catalog/Common.type';
+import { storageLocationPayload, validateStorageLocation } from '@/utils/storageLocation';
+import StorageLocationFields from './StorageLocationFields';
 
 const TAPE_TYPES: TapeType[] = ['vhs', 'vhs_c', 'mini_dv'];
 const BRANDS: TapeBrand[] = ['TDK', 'Maxell', 'Sony', 'BASF', 'Fuji', 'Scotch', 'Memorex', 'Ampex', 'Generic', 'Unknown'];
@@ -38,6 +41,9 @@ export default function TapeEditDialog({
   const [labelNotes, setLabelNotes] = useState('');
   const [purchaseDate, setPurchaseDate] = useState('');
   const [loan, setLoan] = useState<LoanFields>(loanFields(null));
+  const [storageType, setStorageType] = useState<StorageType | ''>('');
+  const [storageId, setStorageId] = useState('');
+  const [storageError, setStorageError] = useState('');
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -53,6 +59,9 @@ export default function TapeEditDialog({
     setLabelNotes(tape?.labelNotes ?? '');
     setPurchaseDate(tape?.purchaseDate ?? '');
     setLoan(loanFields(tape));
+    setStorageType(tape?.storageType ?? '');
+    setStorageId(tape?.storageId ?? '');
+    setStorageError('');
     setError('');
   }, [open, tape]);
 
@@ -60,6 +69,9 @@ export default function TapeEditDialog({
     if (!title.trim()) { setError('Title is required'); return; }
     const loanError = validateLoan(loan);
     if (loanError) { setError(loanError); return; }
+    const locationError = validateStorageLocation(storageType, storageId, tape?.storageId);
+    setStorageError(locationError);
+    if (locationError) return;
     setSaving(true);
     setError('');
     const payload: Partial<CatalogTape> = {
@@ -72,6 +84,7 @@ export default function TapeEditDialog({
       labelNotes: labelNotes || undefined,
       purchaseDate: purchaseDate || undefined,
       ...loanPayload(loan, tape),
+      ...storageLocationPayload(storageType, storageId, tape?.storageId),
     };
     try {
       const saved = isEdit
@@ -140,6 +153,10 @@ export default function TapeEditDialog({
             label="Purchase Date" type="date" value={purchaseDate}
             onChange={(e) => setPurchaseDate(e.target.value)} fullWidth size="small"
             slotProps={{ inputLabel: { shrink: true } }}
+          />
+          <StorageLocationFields
+            storageType={storageType} storageId={storageId} error={storageError}
+            onTypeChange={setStorageType} onIdChange={setStorageId}
           />
           <TextField
             label="Label Notes" value={labelNotes} onChange={(e) => setLabelNotes(e.target.value)}
