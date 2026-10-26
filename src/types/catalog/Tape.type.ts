@@ -24,4 +24,8 @@ export interface CatalogTape extends AuditFields {
   // sets/multi-title-linking is a mobile-only feature for both discs and
   // tapes today.
   setId?: string | null;
+  // Loan, kept in raw_data (no column) — see src/utils/loanUtils.ts.
+  loanedTo?: string | null;
+  loanedAt?: string | null;
+  returnedAt?: string | null;
 }

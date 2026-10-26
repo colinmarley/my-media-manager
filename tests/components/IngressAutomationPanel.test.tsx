@@ -6,7 +6,7 @@ import {
   getQueueClassificationBadges,
   isEpisodeMappingValid,
   runQueueActionsSequentially,
-} from '@/app/admin/_components/IngressAutomationPanel';
+} from '@/service/ingress/ingressQueueModel';
 
 describe('filterSelectableQueueItemIds', () => {
   it('removes completed stale selections and keeps only currently selectable rows', () => {

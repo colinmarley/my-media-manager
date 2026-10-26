@@ -40,6 +40,8 @@ export default function RootLayout({
   const navLinks = useMemo(() => [
     { label: BUTTON_LABELS.dashboard, href: '/dashboard' },
     { label: BUTTON_LABELS.myLibrary, href: '/dashboard/my-library' },
+    { label: 'Stats', href: '/dashboard/stats' },
+    { label: 'Wishlist', href: '/dashboard/wishlist' },
     { label: 'Movie Organizer', href: '/dashboard/movie-organization' },
     { label: 'TV Organizer', href: '/dashboard/show-organization' },
     { label: BUTTON_LABELS.ingressAutomation, href: '/ingress-automation' },

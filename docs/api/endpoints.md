@@ -19,6 +19,33 @@ GET /health
 ```
 Returns service health status and availability of all components.
 
+### Prometheus Metrics
+```http
+GET /metrics
+```
+Unauthenticated Prometheus text exposition (`text/plain; version=0.0.4`), scraped
+from `192.168.0.227:8082` as job `media-manager`.
+
+| Metric | Type | Labels |
+| --- | --- | --- |
+| `mm_http_requests_total` | counter | `method`, `path` (route template), `status` |
+| `mm_http_request_duration_seconds` | histogram | `method`, `path`, `status` |
+| `mm_catalog_items` | gauge | `type` = movie / series / disc / tape |
+| `mm_ingest_queue_items` | gauge | `status` = pending / processing / auto_assigned / needs_review / failed / completed |
+| `mm_compliance_findings_open`, `mm_media_assignments_total`, `mm_poster_cache_files`, `mm_sessions_active` | gauge | — |
+
+`path` is always a route template (`/api/posters/{media_type}/{media_id}`) or
+`unmatched`, never a raw URL, so the series count stays bounded. Gauges are
+recounted at most once per 60s and keep their previous value if a count query fails
+(`mm_metrics_domain_gauge_errors_total`); scrapes of `/metrics` are not instrumented.
+
+Add the scrape job to `homelab-logging/prometheus/prometheus.yml`:
+```yaml
+- job_name: media-manager
+  static_configs:
+    - targets: ['192.168.0.227:8082']
+```
+
 ---
 
 ## File Operations (`/api/files`)

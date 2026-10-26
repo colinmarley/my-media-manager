@@ -3,7 +3,8 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import {
-  Box, Button, Chip, CircularProgress, FormControlLabel, IconButton, Paper, Stack, Switch, Tab, Tabs,
+  Box, Button, Chip, CircularProgress, FormControl, FormControlLabel, IconButton, InputLabel, MenuItem,
+  Paper, Select, Stack, Switch, Tab, Tabs,
   Table, TableBody, TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -18,6 +19,17 @@ import { CatalogTape } from '@/types/catalog/Tape.type';
 import DiscEditDialog from './_components/DiscEditDialog';
 import TapeEditDialog from './_components/TapeEditDialog';
 import ConfirmDeleteDialog from './_components/ConfirmDeleteDialog';
+import { currentLoan, filterCurrentlyLent } from '@/utils/loanUtils';
+
+function LoanChip({ item }: { item: CatalogDisc | CatalogTape }) {
+  const loan = currentLoan(item);
+  if (!loan) return null;
+  const label = `Lent to ${loan.lentTo}${loan.since ? ` since ${loan.since}` : ''}`;
+  return <Chip label={label} size="small" color="secondary" variant="outlined" />;
+}
+import {
+  filterByStorageLocation, formatStorageLocation, listStorageLocations, NO_LOCATION,
+} from '@/utils/storageLocation';
 
 export default function PhysicalMediaPage() {
   const [tab, setTab] = useState<'discs' | 'tapes'>('discs');
@@ -25,8 +37,23 @@ export default function PhysicalMediaPage() {
   const { discs: allDiscs, loading: discsLoading, error: discsError, refetch: refetchDiscs } = useDiscs();
   const { tapes: allTapes, loading: tapesLoading, error: tapesError, refetch: refetchTapes } = useTapes();
 
-  const discs = needsRippingOnly ? allDiscs.filter((d) => !d.linkedFileCount) : allDiscs;
-  const tapes = needsRippingOnly ? allTapes.filter((t) => !t.linkedFileCount) : allTapes;
+  const [lentOnly, setLentOnly] = useState(false);
+  const [locationFilter, setLocationFilter] = useState('');
+  const locations = listStorageLocations([...allDiscs, ...allTapes]);
+
+  const rippingDiscs = needsRippingOnly ? allDiscs.filter((d) => !d.linkedFileCount) : allDiscs;
+  const rippingTapes = needsRippingOnly ? allTapes.filter((t) => !t.linkedFileCount) : allTapes;
+  const locatedDiscs = filterByStorageLocation(rippingDiscs, locationFilter);
+  const locatedTapes = filterByStorageLocation(rippingTapes, locationFilter);
+  const discs = lentOnly ? filterCurrentlyLent(locatedDiscs) : locatedDiscs;
+  const tapes = lentOnly ? filterCurrentlyLent(locatedTapes) : locatedTapes;
+  const emptyNote = (kind: string, total: number, otherwise: string) => {
+    if (lentOnly) return `No ${kind} are lent out right now${needsRippingOnly ? ' that need ripping' : ''}.`;
+    if (locationFilter && total > 0) return `No ${kind} match these filters.`;
+    return needsRippingOnly
+      ? `Every catalogued ${kind.slice(0, -1)} has at least one linked file — nothing needs ripping.`
+      : otherwise;
+  };
 
   const [discDialogOpen, setDiscDialogOpen] = useState(false);
   const [editingDisc, setEditingDisc] = useState<CatalogDisc | null>(null);
@@ -49,9 +76,24 @@ export default function PhysicalMediaPage() {
           <Tab label={`Tapes (${allTapes.length})`} value="tapes" />
         </Tabs>
         <Stack direction="row" spacing={2} alignItems="center">
+          <FormControl size="small" sx={{ minWidth: 180 }}>
+            <InputLabel id="location-filter-label">Location</InputLabel>
+            <Select
+              labelId="location-filter-label" label="Location" value={locationFilter}
+              onChange={(e) => setLocationFilter(e.target.value)}
+            >
+              <MenuItem value="">All locations</MenuItem>
+              <MenuItem value={NO_LOCATION}>No location</MenuItem>
+              {locations.map((l) => <MenuItem key={l.key} value={l.key}>{l.label}</MenuItem>)}
+            </Select>
+          </FormControl>
           <FormControlLabel
             control={<Switch size="small" checked={needsRippingOnly} onChange={(e) => setNeedsRippingOnly(e.target.checked)} />}
             label="Needs ripping only"
+          />
+          <FormControlLabel
+            control={<Switch size="small" checked={lentOnly} onChange={(e) => setLentOnly(e.target.checked)} />}
+            label="Currently lent"
           />
           {tab === 'discs' ? (
             <Button startIcon={<AddIcon />} onClick={() => { setEditingDisc(null); setDiscDialogOpen(true); }}>
@@ -71,9 +113,7 @@ export default function PhysicalMediaPage() {
           {discsError && <Typography color="error">{discsError}</Typography>}
           {!discsLoading && discs.length === 0 && (
             <Typography color="text.secondary">
-              {needsRippingOnly
-                ? 'Every catalogued disc has at least one linked file — nothing needs ripping.'
-                : 'No discs catalogued yet. Click “New Disc” above, or link one while starting a rip.'}
+              {emptyNote('discs', allDiscs.length, 'No discs catalogued yet. Click “New Disc” above, or link one while starting a rip.')}
             </Typography>
           )}
           {discs.length > 0 && (
@@ -85,6 +125,7 @@ export default function PhysicalMediaPage() {
                     <TableCell>Format</TableCell>
                     <TableCell>Condition</TableCell>
                     <TableCell>Region</TableCell>
+                    <TableCell>Location</TableCell>
                     <TableCell />
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
@@ -102,6 +143,7 @@ export default function PhysicalMediaPage() {
                           : '—'}
                       </TableCell>
                       <TableCell>{disc.regionCode ?? '—'}</TableCell>
+                      <TableCell>{formatStorageLocation(disc) || '—'}</TableCell>
                       <TableCell>
                         <Stack direction="row" spacing={0.5}>
                           {!disc.linkedFileCount && (
@@ -110,6 +152,7 @@ export default function PhysicalMediaPage() {
                           {disc.containsSpecialFeatures && (
                             <Chip label="has extras" size="small" color="info" variant="outlined" />
                           )}
+                          <LoanChip item={disc} />
                         </Stack>
                       </TableCell>
                       <TableCell align="right">
@@ -139,9 +182,7 @@ export default function PhysicalMediaPage() {
           {tapesError && <Typography color="error">{tapesError}</Typography>}
           {!tapesLoading && tapes.length === 0 && (
             <Typography color="text.secondary">
-              {needsRippingOnly
-                ? 'Every catalogued tape has at least one linked file — nothing needs ripping.'
-                : 'No tapes catalogued yet. Click “New Tape” above.'}
+              {emptyNote('tapes', allTapes.length, 'No tapes catalogued yet. Click “New Tape” above.')}
             </Typography>
           )}
           {tapes.length > 0 && (
@@ -154,6 +195,7 @@ export default function PhysicalMediaPage() {
                     <TableCell>Label</TableCell>
                     <TableCell>Brand</TableCell>
                     <TableCell>Condition</TableCell>
+                    <TableCell>Location</TableCell>
                     <TableCell />
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
@@ -176,10 +218,14 @@ export default function PhysicalMediaPage() {
                           ? <Chip label={tape.condition} size="small" variant="outlined" />
                           : '—'}
                       </TableCell>
+                      <TableCell>{formatStorageLocation(tape) || '—'}</TableCell>
                       <TableCell>
-                        {!tape.linkedFileCount && (
-                          <Chip label="Unripped" size="small" color="warning" variant="outlined" />
-                        )}
+                        <Stack direction="row" spacing={0.5}>
+                          {!tape.linkedFileCount && (
+                            <Chip label="Unripped" size="small" color="warning" variant="outlined" />
+                          )}
+                          <LoanChip item={tape} />
+                        </Stack>
                       </TableCell>
                       <TableCell align="right">
                         <Tooltip title="Edit">

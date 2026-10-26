@@ -51,9 +51,11 @@ from api.cover_scan import router as cover_scan_router
 from api.ripper_proxy import router as ripper_proxy_router
 from api.wishlist import router as wishlist_router
 from api.storage_locations import router as storage_locations_router
+from api.metrics import MetricsMiddleware, router as metrics_router
 from api.errors import install_error_handling
 from db.database import engine, Base, AsyncSessionLocal
 from db.models import AppConfig
+from services.metrics import DomainMetricsCollector
 from services.filesystem_manager import FileSystemManager
 from services.file_watcher_service import FileWatcherService
 from services.ingress_queue_service import IngressQueueService
@@ -64,6 +66,7 @@ from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
 from services.library_compliance_service import LibraryComplianceService
 from services.task_manager import AsyncTaskManager
+from services.retention_service import run_retention_loop
 from utils.logging import logger
 
 # Global service instances - initialized during application startup
@@ -330,7 +333,11 @@ async def lifespan(app: FastAPI):
             run_ingress_auto_processor(app)
         )
         app.state.ingress_auto_processor_task = ingress_auto_processor_task
-    
+
+    retention_task = None
+    if settings.retention_enabled:
+        retention_task = asyncio.create_task(run_retention_loop(AsyncSessionLocal))
+
     logger.info("Services initialized successfully")
     
     yield
@@ -353,6 +360,13 @@ async def lifespan(app: FastAPI):
         ingress_auto_processor_task.cancel()
         try:
             await ingress_auto_processor_task
+        except asyncio.CancelledError:
+            pass
+
+    if retention_task:
+        retention_task.cancel()
+        try:
+            await retention_task
         except asyncio.CancelledError:
             pass
 
@@ -389,6 +403,10 @@ app.add_middleware(
 # log line emitted while handling this request carries the same searchable ID.
 app.add_middleware(CorrelationMiddleware)
 
+# Request count + latency for the Prometheus RED dashboards, added last so it is
+# the outermost middleware and sees the final response status. /metrics is skipped.
+app.add_middleware(MetricsMiddleware)
+
 # Include API routers with prefixes and tags for OpenAPI documentation
 app.include_router(file_router, prefix="/api/files", tags=["File Operations"])
 app.include_router(file_browser_router, tags=["File Browser"])
@@ -411,6 +429,12 @@ app.include_router(ripper_proxy_router)
 app.include_router(wishlist_router)
 app.include_router(storage_locations_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
+# Unauthenticated like /health — Prometheus pulls metrics and has no session cookie.
+app.include_router(metrics_router)
+
+# Gauges (catalog counts, ingest queue, compliance, assignments, poster cache,
+# sessions). Built at import so tests can override app.state.domain_metrics.
+app.state.domain_metrics = DomainMetricsCollector(AsyncSessionLocal)
 
 @app.get("/")
 async def root():

@@ -94,6 +94,33 @@ describe('DiscEditDialog', () => {
     expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ title: 'The Matrix Reloaded' });
   });
 
+  it('does not save a loan returned before it started', async () => {
+    render(<DiscEditDialog open disc={EXISTING_DISC} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Lent to'), { target: { value: 'Ana' } });
+    fireEvent.change(screen.getByLabelText('Since'), { target: { value: '2026-01-10' } });
+    fireEvent.change(screen.getByLabelText('Returned on'), { target: { value: '2026-01-09' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/can't be before/)).toBeInTheDocument();
+    });
+    expect(updateDiscMock).not.toHaveBeenCalled();
+  });
+
+  it('saves who the disc is lent to and since when', async () => {
+    render(<DiscEditDialog open disc={EXISTING_DISC} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Lent to'), { target: { value: 'Ana' } });
+    fireEvent.change(screen.getByLabelText('Since'), { target: { value: '2026-01-10' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(updateDiscMock).toHaveBeenCalledTimes(1);
+    });
+    expect(updateDiscMock.mock.calls[0][1]).toMatchObject({
+      loanedTo: 'Ana', loanedAt: '2026-01-10', returnedAt: null,
+    });
+  });
+
   it('shows an error message when the save request fails', async () => {
     createDiscMock.mockRejectedValueOnce(new Error('network down'));
     render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
@@ -318,6 +345,58 @@ describe('DiscEditDialog', () => {
     it('is not offered when editing an existing disc', () => {
       render(<DiscEditDialog open disc={EXISTING_DISC} onClose={vi.fn()} onSaved={vi.fn()} />);
       expect(screen.queryByRole('button', { name: /save & add another/i })).not.toBeInTheDocument();
+    });
+  });
+
+  describe('storage location', () => {
+    const pickStorage = async (name: string) => {
+      fireEvent.mouseDown(screen.getByRole('combobox', { name: 'Storage' }));
+      fireEvent.click(await screen.findByRole('option', { name }));
+    };
+
+    it('saves a Box location with a normalized MED#### code', async () => {
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Alien' } });
+      await pickStorage('Box');
+      fireEvent.change(screen.getByLabelText('Storage ID'), { target: { value: ' med0012 ' } });
+      fireEvent.click(screen.getByRole('button', { name: /create disc/i }));
+
+      await waitFor(() => expect(createDiscMock).toHaveBeenCalledTimes(1));
+      expect(createDiscMock.mock.calls[0][0]).toMatchObject({ storageType: 'Box', storageId: 'MED0012' });
+    });
+
+    it('blocks saving a malformed code', async () => {
+      render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Alien' } });
+      await pickStorage('Binder');
+      fireEvent.change(screen.getByLabelText('Storage ID'), { target: { value: 'MED12' } });
+      fireEvent.click(screen.getByRole('button', { name: /create disc/i }));
+
+      expect(await screen.findByText(/must look like MED0001/)).toBeInTheDocument();
+      expect(createDiscMock).not.toHaveBeenCalled();
+    });
+
+    it('pre-fills and clears an existing location', async () => {
+      const disc: CatalogDisc = { ...EXISTING_DISC, storageType: 'Binder', storageId: 'MED0003' };
+      render(<DiscEditDialog open disc={disc} onClose={vi.fn()} onSaved={vi.fn()} />);
+      expect(screen.getByLabelText('Storage ID')).toHaveValue('MED0003');
+
+      await pickStorage('None');
+      expect(screen.getByLabelText('Storage ID')).toHaveValue('');
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(updateDiscMock).toHaveBeenCalledTimes(1));
+      expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ storageType: null, storageId: null });
+    });
+
+    it('keeps an older non-MED#### ID unchanged when only the title is edited', async () => {
+      const disc: CatalogDisc = { ...EXISTING_DISC, storageType: 'Box', storageId: 'Shelf A' };
+      render(<DiscEditDialog open disc={disc} onClose={vi.fn()} onSaved={vi.fn()} />);
+      fireEvent.change(screen.getByLabelText('Title', { exact: false }), { target: { value: 'Aliens' } });
+      fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+      await waitFor(() => expect(updateDiscMock).toHaveBeenCalledTimes(1));
+      expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ title: 'Aliens', storageType: 'Box', storageId: 'Shelf A' });
     });
   });
 });

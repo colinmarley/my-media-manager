@@ -16,10 +16,13 @@ import { CatalogTape } from '@/types/catalog/Tape.type';
 import { deleteDisc } from '@/service/catalog/DiscCatalogService';
 import { deleteTape } from '@/service/catalog/TapeCatalogService';
 import { disconnectFile, LinkedMediaFile } from '@/service/catalog/MediaFileLinkService';
+import { currentLoan } from '@/utils/loanUtils';
+import { formatStorageLocation } from '@/utils/storageLocation';
 import DiscEditDialog from '../../_components/DiscEditDialog';
 import TapeEditDialog from '../../_components/TapeEditDialog';
 import ConfirmDeleteDialog from '../../_components/ConfirmDeleteDialog';
 import ConnectFileDialog from '../../_components/ConnectFileDialog';
+import DiscRipStatusPanel from '../../_components/DiscRipStatusPanel';
 
 function formatBytes(bytes: number | null): string {
   if (!bytes) return '—';
@@ -91,6 +94,7 @@ export default function PhysicalMediaDetailPage() {
 
   const tape = isTape ? (item as CatalogTape) : null;
   const disc = !isTape ? (item as CatalogDisc) : null;
+  const loan = currentLoan(item);
 
   return (
     <Box sx={{ p: 3, maxWidth: 900 }}>
@@ -106,6 +110,12 @@ export default function PhysicalMediaDetailPage() {
           <Button startIcon={<DeleteIcon />} color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
         </Stack>
       </Stack>
+
+      {loan && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          Lent to {loan.lentTo}{loan.since ? ` since ${loan.since}` : ''}
+        </Alert>
+      )}
 
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Typography variant="subtitle2" sx={{ mb: 1.5 }}>Details</Typography>
@@ -124,6 +134,10 @@ export default function PhysicalMediaDetailPage() {
           {tape && tape.brand && <Chip label={`Brand: ${tape.brand}`} size="small" variant="outlined" />}
           {tape && tape.condition && <Chip label={`Condition: ${tape.condition}`} size="small" variant="outlined" />}
           {tape && tape.recordingSpeed && <Chip label={`Speed: ${tape.recordingSpeed.toUpperCase()}`} size="small" variant="outlined" />}
+
+          {formatStorageLocation(item) && (
+            <Chip label={`Location: ${formatStorageLocation(item)}`} size="small" color="primary" variant="outlined" />
+          )}
         </Stack>
         {tape?.labelNotes && (
           <>
@@ -132,6 +146,8 @@ export default function PhysicalMediaDetailPage() {
           </>
         )}
       </Paper>
+
+      {disc && <DiscRipStatusPanel discId={id} />}
 
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
         <Typography variant="subtitle2">
