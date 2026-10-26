@@ -94,6 +94,33 @@ describe('DiscEditDialog', () => {
     expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ title: 'The Matrix Reloaded' });
   });
 
+  it('does not save a loan returned before it started', async () => {
+    render(<DiscEditDialog open disc={EXISTING_DISC} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Lent to'), { target: { value: 'Ana' } });
+    fireEvent.change(screen.getByLabelText('Since'), { target: { value: '2026-01-10' } });
+    fireEvent.change(screen.getByLabelText('Returned on'), { target: { value: '2026-01-09' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/can't be before/)).toBeInTheDocument();
+    });
+    expect(updateDiscMock).not.toHaveBeenCalled();
+  });
+
+  it('saves who the disc is lent to and since when', async () => {
+    render(<DiscEditDialog open disc={EXISTING_DISC} onClose={vi.fn()} onSaved={vi.fn()} />);
+    fireEvent.change(screen.getByLabelText('Lent to'), { target: { value: 'Ana' } });
+    fireEvent.change(screen.getByLabelText('Since'), { target: { value: '2026-01-10' } });
+    fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => {
+      expect(updateDiscMock).toHaveBeenCalledTimes(1);
+    });
+    expect(updateDiscMock.mock.calls[0][1]).toMatchObject({
+      loanedTo: 'Ana', loanedAt: '2026-01-10', returnedAt: null,
+    });
+  });
+
   it('shows an error message when the save request fails', async () => {
     createDiscMock.mockRejectedValueOnce(new Error('network down'));
     render(<DiscEditDialog open disc={null} onClose={vi.fn()} onSaved={vi.fn()} />);

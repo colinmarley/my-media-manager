@@ -16,6 +16,7 @@ import { CatalogTape } from '@/types/catalog/Tape.type';
 import { deleteDisc } from '@/service/catalog/DiscCatalogService';
 import { deleteTape } from '@/service/catalog/TapeCatalogService';
 import { disconnectFile, LinkedMediaFile } from '@/service/catalog/MediaFileLinkService';
+import { currentLoan } from '@/utils/loanUtils';
 import { formatStorageLocation } from '@/utils/storageLocation';
 import DiscEditDialog from '../../_components/DiscEditDialog';
 import TapeEditDialog from '../../_components/TapeEditDialog';
@@ -93,6 +94,7 @@ export default function PhysicalMediaDetailPage() {
 
   const tape = isTape ? (item as CatalogTape) : null;
   const disc = !isTape ? (item as CatalogDisc) : null;
+  const loan = currentLoan(item);
 
   return (
     <Box sx={{ p: 3, maxWidth: 900 }}>
@@ -108,6 +110,12 @@ export default function PhysicalMediaDetailPage() {
           <Button startIcon={<DeleteIcon />} color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
         </Stack>
       </Stack>
+
+      {loan && (
+        <Alert severity="info" sx={{ mb: 3 }}>
+          Lent to {loan.lentTo}{loan.since ? ` since ${loan.since}` : ''}
+        </Alert>
+      )}
 
       <Paper variant="outlined" sx={{ p: 2, mb: 3 }}>
         <Typography variant="subtitle2" sx={{ mb: 1.5 }}>Details</Typography>

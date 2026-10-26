@@ -8,6 +8,8 @@ import {
 import { createTape, updateTape } from '@/service/catalog/TapeCatalogService';
 import { CatalogTape } from '@/types/catalog/Tape.type';
 import { TapeType, TapeBrand, TapeCondition, RecordingSpeed } from '@/types/tape-ingest/TapeIngest.type';
+import { LoanFields, loanFields, loanPayload, validateLoan } from '@/utils/loanUtils';
+import LoanInputs from './LoanInputs';
 import { StorageType } from '@/types/catalog/Common.type';
 import { storageLocationPayload, validateStorageLocation } from '@/utils/storageLocation';
 import StorageLocationFields from './StorageLocationFields';
@@ -38,6 +40,7 @@ export default function TapeEditDialog({
   const [recordingSpeed, setRecordingSpeed] = useState<RecordingSpeed | ''>('');
   const [labelNotes, setLabelNotes] = useState('');
   const [purchaseDate, setPurchaseDate] = useState('');
+  const [loan, setLoan] = useState<LoanFields>(loanFields(null));
   const [storageType, setStorageType] = useState<StorageType | ''>('');
   const [storageId, setStorageId] = useState('');
   const [storageError, setStorageError] = useState('');
@@ -55,6 +58,7 @@ export default function TapeEditDialog({
     setRecordingSpeed(tape?.recordingSpeed ?? '');
     setLabelNotes(tape?.labelNotes ?? '');
     setPurchaseDate(tape?.purchaseDate ?? '');
+    setLoan(loanFields(tape));
     setStorageType(tape?.storageType ?? '');
     setStorageId(tape?.storageId ?? '');
     setStorageError('');
@@ -63,6 +67,8 @@ export default function TapeEditDialog({
 
   const handleSave = async () => {
     if (!title.trim()) { setError('Title is required'); return; }
+    const loanError = validateLoan(loan);
+    if (loanError) { setError(loanError); return; }
     const locationError = validateStorageLocation(storageType, storageId, tape?.storageId);
     setStorageError(locationError);
     if (locationError) return;
@@ -77,6 +83,7 @@ export default function TapeEditDialog({
       recordingSpeed: recordingSpeed || undefined,
       labelNotes: labelNotes || undefined,
       purchaseDate: purchaseDate || undefined,
+      ...loanPayload(loan, tape),
       ...storageLocationPayload(storageType, storageId, tape?.storageId),
     };
     try {
@@ -155,6 +162,7 @@ export default function TapeEditDialog({
             label="Label Notes" value={labelNotes} onChange={(e) => setLabelNotes(e.target.value)}
             fullWidth multiline minRows={2} size="small"
           />
+          <LoanInputs value={loan} onChange={setLoan} />
         </Stack>
       </DialogContent>
       <DialogActions>

@@ -34,4 +34,8 @@ export interface CatalogDisc extends AuditFields {
   linkedFileCount?: number;
   storageType?: StorageType | null;
   storageId?: string | null;
+  // Loan, kept in raw_data (no column) — see src/utils/loanUtils.ts.
+  loanedTo?: string | null;
+  loanedAt?: string | null;
+  returnedAt?: string | null;
 }
