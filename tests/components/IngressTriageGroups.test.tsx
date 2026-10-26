@@ -1,3 +1,11 @@
+/**
+ * Grouped triage view (#35). Every test title carries the acceptance criterion it pins, so the
+ * factory's AC trace resolves a criterion to a named test instead of to the file as a whole:
+ * AC1 server-paged groups from GET /queue/groups, AC2 one bulk request per group + row updated from
+ * the response, AC3 single rows travel the same endpoint, AC4 bounded (windowed) rendering,
+ * AC5 per-item failures with the successful rows kept marked, AC6 status/`q` sent to the server.
+ * AC7 (the suite itself) is pinned by tests/structure/ingressTriageGroupsSuite.test.ts.
+ */
 /** @vitest-environment jsdom */
 import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
@@ -79,7 +87,7 @@ describe('IngressTriageGroups', () => {
     bulkQueueAction.mockResolvedValue(okBulk);
   });
 
-  it('renders one row per folder with counts and per-status chips', async () => {
+  it('AC1: renders one row per folder with counts and per-status chips', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
 
@@ -90,7 +98,7 @@ describe('IngressTriageGroups', () => {
     expect(screen.getByTestId('triage-summary').textContent).toBe('2 groups · 1,944 items');
   });
 
-  it('accepts a small group with a single group-scoped bulk request', async () => {
+  it('AC2: accepts a small group with a single group-scoped bulk request', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
 
@@ -107,7 +115,7 @@ describe('IngressTriageGroups', () => {
     await waitFor(() => expect(screen.getByText('1 accepted in /movies/incoming/Dune (2021)')).toBeTruthy());
   });
 
-  it('confirms before accepting a group that spans more than the threshold', async () => {
+  it('AC2: confirms before accepting a group that spans more than the threshold', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
 
@@ -122,7 +130,7 @@ describe('IngressTriageGroups', () => {
     expect(bulkQueueAction.mock.calls[0][0].group).toEqual(hugeGroup.group_key);
   });
 
-  it('requires an explicit confirmation for ignore, which only the history log can undo', async () => {
+  it('AC2: requires an explicit confirmation for ignore, which only the history log can undo', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
 
@@ -148,7 +156,7 @@ describe('IngressTriageGroups', () => {
     expect(ignore.textContent).toBe('Ignore 4');
   });
 
-  it('sends search and status filters to the API instead of filtering rows locally', async () => {
+  it('AC6: sends search and status filters to the API instead of filtering rows locally', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(getQueueGroups).toHaveBeenCalledTimes(1));
     expect(getQueueGroups.mock.calls[0][0].q).toBeUndefined();
@@ -164,7 +172,7 @@ describe('IngressTriageGroups', () => {
     expect(groupRows()).toHaveLength(2);
   });
 
-  it('pages groups server-side through the table pagination control', async () => {
+  it('AC1: pages groups server-side through the table pagination control', async () => {
     getQueueGroups.mockResolvedValue(
       makeResult(Array.from({ length: 25 }, (_, index) => makeGroup(`Movie ${index}`, { needs_review: 1 })), 40)
     );
@@ -176,7 +184,7 @@ describe('IngressTriageGroups', () => {
     await waitFor(() => expect(getQueueGroups.mock.calls.some((call: any[]) => call[0].offset === 25)).toBe(true));
   });
 
-  it('keeps rendered rows bounded when a page holds many groups', async () => {
+  it('AC4: keeps rendered rows bounded when a page holds many groups', async () => {
     getQueueGroups.mockResolvedValue(makeResult(Array.from({ length: 40 }, (_, index) => makeGroup(`Movie ${index}`, { needs_review: 1 }))));
     render(<IngressTriageGroups />);
     await waitFor(() => expect(getQueueGroups).toHaveBeenCalled());
@@ -185,7 +193,7 @@ describe('IngressTriageGroups', () => {
     expect(screen.getByText(/of 40$/)).toBeTruthy();
   });
 
-  it('acts on a single preview row through the same bulk endpoint', async () => {
+  it('AC3: acts on a single preview row through the same bulk endpoint as the group', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
 
@@ -197,7 +205,7 @@ describe('IngressTriageGroups', () => {
     expect(bulkQueueAction.mock.calls[0][0]).toEqual({ action: 'accept', itemIds: ['item-1'] });
   });
 
-  it('excludes preview rows from a selected group before posting the batch', async () => {
+  it('AC2: excludes preview rows from a selected group before posting the batch', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
 
@@ -217,7 +225,7 @@ describe('IngressTriageGroups', () => {
     });
   });
 
-  it('reports failed rows returned by the batch', async () => {
+  it('AC5: reports failed rows returned by the batch', async () => {
     bulkQueueAction.mockResolvedValue({
       ...okBulk,
       succeeded: 2,
@@ -236,7 +244,7 @@ describe('IngressTriageGroups', () => {
     expect(screen.getByText('item-8: no match')).toBeTruthy();
   });
 
-  it('rekeys the group row from the batch response instead of refetching the page', async () => {
+  it('AC2: rekeys the group row from the batch response instead of refetching the page', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
     expect(within(groupRows()[0]).getByText('3 needs review')).toBeTruthy();
@@ -251,7 +259,7 @@ describe('IngressTriageGroups', () => {
     expect(within(groupRows()[0]).getByRole('button', { name: /^Accept/ })).toBeTruthy();
   });
 
-  it('marks the group in flight and puts the counts back when the batch request fails', async () => {
+  it('AC2: marks the group in flight and puts the counts back when the batch request fails', async () => {
     let rejectBulk: (error: Error) => void = () => {};
     bulkQueueAction.mockImplementation(
       () =>
@@ -274,7 +282,7 @@ describe('IngressTriageGroups', () => {
     expect(screen.getByText('queue is busy')).toBeTruthy();
   });
 
-  it('counts the rest of the folder instead of rendering it when a preview is expanded', async () => {
+  it('AC4: counts the rest of the folder instead of rendering it when a preview is expanded', async () => {
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(2));
 
@@ -283,7 +291,7 @@ describe('IngressTriageGroups', () => {
     await waitFor(() => expect(screen.getByText('1 more in this folder')).toBeTruthy());
   });
 
-  it('keeps rendered rows under a fixed bound for a 200-group page with expanded previews', async () => {
+  it('AC4: keeps rendered rows under a fixed bound for a 200-group page with expanded previews', async () => {
     getQueueGroups.mockResolvedValue(
       makeResult(
         Array.from({ length: 200 }, (_, index) =>

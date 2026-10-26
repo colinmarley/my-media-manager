@@ -68,7 +68,7 @@ describe('IngressTriageGroups QA probes', () => {
   });
 
   // AC4: expanding a group whose server-side count is in the thousands must not mount the folder.
-  it('keeps rendered rows bounded when a 1,930-item group is expanded with an oversized preview', async () => {
+  it('AC4: keeps rendered rows bounded when a 1,930-item group is expanded with an oversized preview', async () => {
     const previews = Array.from({ length: 1000 }, (_, index) => makeItem(`item-${index}`));
     getQueueGroups.mockResolvedValue(makeResult([makeGroup('Backlog', { needs_review: 1930 }, previews)]));
 
@@ -86,7 +86,7 @@ describe('IngressTriageGroups QA probes', () => {
   });
 
   // AC5: failures name the item, and the rows the batch did accept stay accepted afterwards.
-  it('keeps accepted rows marked when the batch also reports per-item failures', async () => {
+  it('AC5: keeps accepted rows marked when the batch also reports per-item failures', async () => {
     const items = ['item-1', 'item-2', 'item-3', 'item-4', 'item-5'].map((id) => makeItem(id));
     getQueueGroups.mockResolvedValue(makeResult([makeGroup('Dune', { needs_review: 5 }, items)]));
     bulkQueueAction.mockResolvedValue({
@@ -126,7 +126,7 @@ describe('IngressTriageGroups QA probes', () => {
   });
 
   // AC6: the status filter is a server query too, and combines with the search box.
-  it('sends the status filter to the API instead of filtering group rows locally', async () => {
+  it('AC6: sends the status filter to the API instead of filtering group rows locally', async () => {
     getQueueGroups.mockResolvedValue(makeResult([makeGroup('Alpha', { needs_review: 1 }, [makeItem('item-1')])]));
 
     render(<IngressTriageGroups />);
