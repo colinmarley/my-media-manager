@@ -114,19 +114,10 @@ async def run_ingress_auto_processor(app: FastAPI):
             if _retry_check_counter >= 30 and queue_service:
                 _retry_check_counter = 0
                 now = __import__('time').time()
-                retry_candidates = [
-                    item for item in queue_service.items_by_id.values()
-                    if item.status == "failed"
-                    and (item.attempts or 0) < 3
-                    and (item.last_attempt is None or now - item.last_attempt > 300)
-                ]
-                for item in retry_candidates:
-                    await queue_service.retry_item(item.id)
-                    logger.info(
-                        "Auto-retrying failed ingress item",
-                        item_id=item.id,
-                        attempts=item.attempts,
-                    )
+                # Terminal statuses (completed, ignored) are never auto-retried.
+                for item_id in queue_service.get_retry_candidate_ids(now=now):
+                    await queue_service.retry_item(item_id)
+                    logger.info("Auto-retrying failed ingress item", item_id=item_id)
 
             if (
                 watcher_service
@@ -234,6 +225,11 @@ async def lifespan(app: FastAPI):
         auto_assign_threshold=settings.ingress_auto_assign_threshold,
         db_session_factory=AsyncSessionLocal,
     )
+    try:
+        # Before the watcher starts: re-detected files must find their rows (and stay ignored if ignored).
+        await ingress_queue_service.load_persisted_paths()
+    except Exception as exc:
+        logger.warning("Could not load the ingress queue path index", error=str(exc))
 
     ingress_runtime_config: dict = {
         "defaultIngressPaths": settings.ingress_default_paths,

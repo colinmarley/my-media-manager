@@ -23,10 +23,7 @@ from config.settings import settings
 from db.models import (
     ComplianceFinding, Disc, IngressQueueItem, MediaAssignment, Movie, Series, Session, Tape,
 )
-from services.ingress_queue_service import (
-    QUEUE_AUTO_ASSIGNED, QUEUE_COMPLETED, QUEUE_FAILED, QUEUE_NEEDS_REVIEW, QUEUE_PENDING,
-    QUEUE_PROCESSING,
-)
+from services.ingress_queue_service import QUEUE_ALL_STATUSES
 from utils.logging import logger
 
 # Starlette appends `; charset=utf-8` to any text/* media type, so the exposition
@@ -44,8 +41,7 @@ CATALOG_ITEM_MODELS: Dict[str, Any] = {"movie": Movie, "series": Series, "disc":
 
 # services/ingress_queue_service.py owns the vocabulary; the known statuses are
 # always emitted, 0 included, so a PromQL query never loses a series.
-INGEST_QUEUE_STATUSES: Tuple[str, ...] = (QUEUE_PENDING, QUEUE_PROCESSING, QUEUE_AUTO_ASSIGNED,
-                                          QUEUE_NEEDS_REVIEW, QUEUE_FAILED, QUEUE_COMPLETED)
+INGEST_QUEUE_STATUSES: Tuple[str, ...] = QUEUE_ALL_STATUSES
 
 COMPLIANCE_STATUS_OPEN = "open"
 
