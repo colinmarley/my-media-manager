@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Alert, Grid, Typography } from '@mui/material';
 import { useParams } from 'next/navigation';
 
