@@ -390,6 +390,33 @@ def test_bulk_retry_and_classify_report_partial_success(tmp_path):
     assert 'error' in asyncio.run(triage.bulk_action(action='ignore'))
 
 
+def test_bulk_classify_and_retry_of_a_failed_item_report_success(tmp_path):
+    """Classify leaves a failed item failed; that is not a failed action, and its stale last_error isn't the result."""
+    ingress = tmp_path / 'ingest'
+    ingress.mkdir(parents=True)
+    service = IngressQueueService()
+    failed = service.add_manual_file(os.fspath(ingress / 'failed.mkv'))
+    failed.status = QUEUE_FAILED
+    failed.last_error = 'organize blew up earlier'
+    triage = IngressTriageService(service, db_session_factory=_FakeSession())
+
+    classified = asyncio.run(triage.bulk_action(
+        action='classify',
+        item_ids=[failed.id],
+        classification='special_feature',
+    ))
+    assert (classified['succeeded'], classified['failed']) == (1, 0)
+    [result] = classified['results']
+    assert result['status'] == 'succeeded'
+    assert result['item_status'] == QUEUE_FAILED
+    assert result['error'] is None
+    assert service.get_item(failed.id)['classification_override'] == 'special_feature'
+
+    retried = asyncio.run(triage.bulk_action(action='retry', item_ids=[failed.id]))
+    assert (retried['succeeded'], retried['failed']) == (1, 0)
+    assert retried['results'][0]['item_status'] == QUEUE_PENDING
+
+
 def test_bulk_group_selector_resolves_ids_from_persisted_rows(tmp_path):
     service = IngressQueueService()
     rows = [SimpleNamespace(**_matrix_row('backlog-1')), SimpleNamespace(**_matrix_row('backlog-2'))]

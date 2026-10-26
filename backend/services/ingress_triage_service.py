@@ -383,7 +383,8 @@ class IngressTriageService:
             return self._result(item_id, action, "failed", error=f"Queue item '{item_id}' is no longer actionable")
 
         final_status = str(updated.status)
-        if final_status == "failed":
+        # Only accept can end in `failed` (organizing raised); classify leaves a failed item failed by design.
+        if action == BULK_ACCEPT and final_status == "failed":
             return self._result(item_id, action, "failed", error=updated.last_error, item_status=final_status)
         return self._result(item_id, action, "succeeded", item_status=final_status)
 
