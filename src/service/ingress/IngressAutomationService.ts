@@ -1,3 +1,5 @@
+import { INGRESS_TIMEOUT_ERROR_NAME } from './ingressQueueModel';
+
 export interface IngressWatcherStatus {
   is_running: boolean;
   watched_paths: string[];
@@ -69,6 +71,77 @@ export interface IngressQueueItem {
   };
 }
 
+export type QueueGroupBy = 'parsed_title' | 'source_folder';
+
+/** Keys a group row back to the rows it groups (matches `group_key` in GET /queue/groups). */
+export interface IngressQueueGroupKey {
+  media_type: string;
+  ingress_path: string;
+  title?: string | null;
+  source_folder?: string | null;
+}
+
+export interface IngressQueueGroup {
+  group_key: IngressQueueGroupKey;
+  media_type: string;
+  ingress_path: string;
+  title: string | null;
+  source_folder: string | null;
+  item_count: number;
+  matching_count: number;
+  status_counts: Record<string, number>;
+  confidence_min: number | null;
+  confidence_max: number | null;
+  first_queued_at: number | string | null;
+  last_queued_at: number | string | null;
+  preview_items: IngressQueueItem[];
+  /** Filled by the per-group Suggestion API (issue #36); null until that lands. */
+  suggestion?: string | null;
+}
+
+export interface IngressQueueGroupsResult {
+  groups: IngressQueueGroup[];
+  total_groups: number;
+  total_items: number;
+  status_counts: Record<string, number>;
+  group_by: QueueGroupBy;
+  limit: number;
+  offset: number;
+  preview_size: number;
+}
+
+export type IngressBulkAction = 'accept' | 'ignore' | 'retry' | 'classify';
+
+export interface IngressBulkResultRow {
+  item_id: string;
+  action: string;
+  status: 'succeeded' | 'failed' | 'skipped';
+  item_status?: string | null;
+  error?: string | null;
+}
+
+export interface IngressBulkResult {
+  batch_id: string;
+  action: string;
+  requested: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  group_truncated?: boolean;
+  group_limit?: number;
+  results: IngressBulkResultRow[];
+}
+
+/** Either `itemIds` (explicit rows) or `group` (the whole group, server-side) drives the batch. */
+export interface IngressBulkRequest {
+  action: IngressBulkAction;
+  itemIds?: string[];
+  excludeItemIds?: string[];
+  group?: IngressQueueGroupKey;
+  statuses?: string[];
+  classification?: QueueClassificationOverride;
+}
+
 export interface QueueManualAssignPayload {
   itemId: string;
   mediaType: 'movie' | 'episode';
@@ -113,9 +186,20 @@ class IngressAutomationService {
     this.baseUrl = '/api/backend/api/ingress';
   }
 
-  private async request(path: string, init?: RequestInit): Promise<any> {
+  /**
+   * A group-scoped batch (#35) walks up to the backend's `MAX_GROUP_ITEMS` rows through the same
+   * organize/record path a single accept takes, so it cannot share the budget a read gets: the client
+   * used to give up at 15s and roll its optimistic row back as if nothing had happened while the
+   * server kept applying the batch. Named `IngressTimeoutError` so the caller can tell "outcome
+   * unknown" from "never applied" and reload instead of reverting.
+   */
+  private static readonly BULK_REQUEST_TIMEOUT_MS = 120000;
+
+  private static readonly REQUEST_TIMEOUT_MS = 15000;
+
+  private async request(path: string, init?: RequestInit, timeoutMs = IngressAutomationService.REQUEST_TIMEOUT_MS): Promise<any> {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), 15000);
+    const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(`${this.baseUrl}${path}`, {
@@ -135,7 +219,9 @@ class IngressAutomationService {
       return response.json();
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
-        throw new Error('Ingress request timed out. The backend may still be working.');
+        const timeoutError = new Error('Ingress request timed out. The backend may still be working.');
+        timeoutError.name = INGRESS_TIMEOUT_ERROR_NAME;
+        throw timeoutError;
       }
       throw error;
     } finally {
@@ -180,6 +266,38 @@ class IngressAutomationService {
     const query = status ? `?status=${encodeURIComponent(status)}` : '';
     const result = await this.request(`/queue/items${query}`);
     return result.data.items;
+  }
+
+  async getQueueGroups(options: {
+    groupBy?: QueueGroupBy;
+    statuses?: string[];
+    q?: string;
+    limit?: number;
+    offset?: number;
+    previewSize?: number;
+  } = {}): Promise<IngressQueueGroupsResult> {
+    const params = new URLSearchParams();
+    if (options.statuses?.length) params.set('status', options.statuses.join(','));
+    if (options.q) params.set('q', options.q);
+    if (options.groupBy) params.set('groupBy', options.groupBy);
+    if (options.limit !== undefined) params.set('limit', String(options.limit));
+    if (options.offset) params.set('offset', String(options.offset));
+    if (options.previewSize !== undefined) params.set('previewSize', String(options.previewSize));
+    const query = params.toString();
+    const result = await this.request(`/queue/groups${query ? `?${query}` : ''}`);
+    return result.data;
+  }
+
+  async bulkQueueAction(payload: IngressBulkRequest): Promise<IngressBulkResult> {
+    const result = await this.request(
+      '/queue/bulk',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      IngressAutomationService.BULK_REQUEST_TIMEOUT_MS
+    );
+    return result.data;
   }
 
   async processPending(maxItems: number = 25): Promise<number> {
