@@ -93,12 +93,17 @@ function stubFetch() {
       body: init?.body ? JSON.parse(String(init.body)) : undefined,
     });
     const path = parsed.pathname;
-    const data = path.endsWith('/queue/groups')
+    // The backend answers every ingress route with the `{ success, data, timestamp }` envelope that
+    // `backend/api/ingress_operations.py` returns (and that IngressAutomationService unwraps), so the
+    // stub has to carry the same envelope the real server does — payload alone would read as an
+    // empty listing rather than the groups under test.
+    const payload = path.endsWith('/queue/groups')
       ? groupsPayload(parsed)
       : path.endsWith('/queue/bulk')
         ? bulkPayload
         : {};
-    return { ok: true, status: 200, json: async () => data, text: async () => JSON.stringify(data) };
+    const body = { success: true, data: payload, timestamp: '1777000000' };
+    return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) };
   });
   vi.stubGlobal('fetch', fetchMock);
   return calls;
