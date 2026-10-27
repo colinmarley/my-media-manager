@@ -199,6 +199,8 @@ See `.env.example` for the full list. Key variables:
 | `NAS_HOST` | NAS hostname or IP (optional) |
 | `MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH` | NAS mount health-check path (e.g. `/ark/media`) |
 | `MEDIA_LIBRARY_POSTER_CACHE_DIR` | Override poster cache directory |
+| `MEDIA_LIBRARY_INGEST_AI_MODE` | Ingest decision model: `off` (default) / `shadow` (answers stored, never act on the queue) / `assist` (a confident answer acts like a classification override) |
+| `MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE` | 0-1 confidence the classifier applies, and the hard floor a triage bulk accept cannot go under (default `0.7`) |
 
 ## Tests
 
