@@ -3,25 +3,32 @@ import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import type { IngressBulkResult, IngressQueueGroup, IngressQueueItem } from '@/service/ingress/IngressAutomationService';
+import type { IngressAiSettings, IngressBulkResult, IngressQueueGroup, IngressQueueItem } from '@/service/ingress/IngressAutomationService';
 import {
   BULK_ACTION_STATUSES,
+  DEFAULT_AI_MIN_CONFIDENCE,
   GROUP_ROW_HEIGHT,
   MORE_ROW_HEIGHT,
   PREVIEW_ROW_HEIGHT,
+  aiFloorChoices,
   applyBulkResultToGroup,
   buildGroupBulkRequest,
   buildRowOffsets,
   buildTriageRows,
+  describeAcceptAction,
+  describeAiClassifyError,
   describeBulkResult,
   formatAgeMs,
   formatConfidenceRange,
+  getAiSettings,
   getBulkFailureLines,
   getGroupActionCount,
+  getGroupAiSummaryLabel,
   getGroupLabel,
   getGroupMoreLabel,
   getGroupSelectionState,
   getGroupStatusChips,
+  getItemAiLabel,
   getOldestAgeLabel,
   getTriageWindow,
   needsActionConfirmation,
@@ -218,6 +225,95 @@ describe('ingressTriageGroupsModel', () => {
     expect(formatConfidenceRange(makeGroup())).toBe('60–98%');
     expect(formatConfidenceRange(makeGroup({ confidence_max: 60 }))).toBe('60%');
     expect(formatConfidenceRange(makeGroup({ confidence_min: null, confidence_max: null }))).toBe('—');
+  });
+});
+
+/**
+ * Issue #36: triage reads the classifier's answer at `parsed_info["ai_classification"]` plus the per-group
+ * roll-up the server computes, and turns both into text. These are the strings a reviewer decides on, so
+ * they are pinned here as well as through a render.
+ */
+describe('the Jev answer and its confidence floor (#36)', () => {
+  const shadow: IngressAiSettings = { mode: 'shadow', min_confidence: 0.7 };
+  const off: IngressAiSettings = { mode: 'off', min_confidence: 0.7 };
+
+  it('reads an absent setting as mode off, and clamps a mode the backend does not speak', () => {
+    expect(getAiSettings()).toEqual({ mode: 'off', min_confidence: DEFAULT_AI_MIN_CONFIDENCE });
+    expect(getAiSettings({ mode: 'aggressive' as unknown as 'off', min_confidence: 3 })).toEqual({ mode: 'off', min_confidence: 1 });
+    // A reviewer cannot pick a threshold under the configured floor, so it is not offered to them.
+    expect(aiFloorChoices(0.7)).toEqual([0.7, 0.8, 0.9]);
+  });
+
+  it('states the answer with its confidence and what the mode makes of it', () => {
+    const answered = makeItem('item-1');
+    answered.parsed_info = { ai_classification: { label: 'alternate_version', confidence: 0.825, model: 'jev-decisions' } };
+    const label = getItemAiLabel(answered, shadow);
+    expect(label.answered).toBe(true);
+    expect(label.text).toBe('alt 83%');
+    expect(label.detail).toContain('Jev says alternate version at 83% by jev-decisions');
+    expect(label.detail).toContain('shadow mode: advisory only');
+  });
+
+  it('says so out loud when a file has no answer, and why when the model failed', () => {
+    expect(getItemAiLabel(makeItem('item-2'), off)).toEqual({
+      text: 'no AI',
+      detail: 'No Jev answer — AI is off, so there is no answer to show',
+      answered: false,
+    });
+
+    const failed = makeItem('item-3');
+    failed.parsed_info = { ai_classification_failed: 'model unreachable' };
+    expect(getItemAiLabel(failed, shadow).text).toBe('AI failed');
+    expect(getItemAiLabel(failed, shadow).detail).toBe('Jev could not classify this file: model unreachable');
+
+    // An answer outside the classifier's own label set reads as no answer, never as a guess.
+    const unknown = makeItem('item-4');
+    unknown.parsed_info = { ai_classification: { label: 'bonus_features' as unknown as 'main_feature', confidence: 0.9 } };
+    expect(getItemAiLabel(unknown, shadow).answered).toBe(false);
+  });
+
+  it('rolls a folder up into answered, agreeing, conflicting and weakest answer', () => {
+    const group = makeGroup({
+      matching_count: 6,
+      ai_summary: { answered: 4, missing: 2, agree: 3, conflict: 1, min_confidence: 0.612 },
+    });
+    expect(getGroupAiSummaryLabel(group, shadow)).toBe('Jev 4/6 answered · 3 agree · 1 conflict · min 61%');
+    expect(getGroupAiSummaryLabel(makeGroup({ matching_count: 4 }), shadow))
+      .toBe('Jev: no answers in 4 files — shadow mode: advisory only, it never changes the queue status');
+    expect(getGroupAiSummaryLabel(makeGroup({ matching_count: 1, ai_summary: { answered: 0, missing: 1, agree: 0, conflict: 0, min_confidence: null } }), off))
+      .toBe('Jev: no answers in 1 file — AI is off, so there is no answer to show');
+  });
+
+  it('sends the reviewer-picked floor only for accept, and names it on the button', () => {
+    const group = makeGroup();
+    expect(buildGroupBulkRequest('accept', group, [], 0.8).min_confidence).toBe(0.8);
+    expect(buildGroupBulkRequest('accept', group, [], 0)).toHaveProperty('min_confidence', 0);
+    expect(buildGroupBulkRequest('accept', group, [])).not.toHaveProperty('min_confidence');
+    expect(buildGroupBulkRequest('ignore', group, [], null)).not.toHaveProperty('min_confidence');
+
+    // "Accept 12" and "Accept 12 at 80 percent" are different requests, so the name has to say which.
+    expect(describeAcceptAction(12, null)).toEqual({ text: 'Accept 12', ariaLabel: 'Accept 12 in this group' });
+    expect(describeAcceptAction(1, 0.8)).toEqual({ text: 'Accept 1 ≥ 80%', ariaLabel: 'Accept 1 items ≥ 80% confidence in this group' });
+  });
+
+  it('reports the rows the floor left out, with the floor the server actually applied', () => {
+    const result = makeBulkResult({
+      succeeded: 2,
+      failed: 0,
+      skipped: 3,
+      confidence_floor: 0.8,
+      results: [{ item_id: 'low-confidence', action: 'accept', status: 'skipped', item_status: 'needs_review', error: 'Jev confidence 0.55 is under the 0.8 floor' }],
+    });
+    expect(describeBulkResult(result, 'Dune (2021)')).toBe('2 accepted in Dune (2021) · 3 skipped · Jev confidence floor 80%');
+    // A row the floor declined was not acted on, so it is not a failure and never lands in the list.
+    expect(getBulkFailureLines(result)).toEqual([]);
+  });
+
+  it('translates "this backend has no classifier" instead of showing the raw 503 body', () => {
+    expect(describeAiClassifyError(new Error('502 {"detail":{"code":"INGEST_AI_NOT_CONFIGURED"}}')))
+      .toBe('No Jev classifier on this backend — set MEDIA_LIBRARY_INGEST_AI_MODE to shadow or assist to get answers');
+    expect(describeAiClassifyError(new Error('boom'))).toBe('boom');
+    expect(describeAiClassifyError(null)).toBe('Jev classification failed');
   });
 });
 
