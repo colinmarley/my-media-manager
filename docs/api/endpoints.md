@@ -467,6 +467,11 @@ path; `limit` is 1-50 groups and `previewSize` 0-10 items per group. An unknown 
   not, and `min_confidence` is the weakest answer in the group (`null` when nothing answered). A manual
   `classification_override` outranks the answer and is deliberately left out of the comparison, so a
   human correction never reads as a second machine opinion.
+- That makes `ai_summary` the *AI vs parser* axis the triage rows show. The classifier branch
+  (`feat/jev-ingest-decisions`) also exposes `GET /api/ingress/queue/ai-report`, which counts a
+  different axis — *AI vs what the human finally chose*, read out of the `classification_updated` /
+  `classification_override` history events — so the two sets of numbers answer different questions and
+  are not expected to match file for file.
 
 **Response:**
 ```json
@@ -606,11 +611,16 @@ per-group "Re-classify with Jev" action posts.
   "success": true,
   "data": {
     "mode": "shadow",
-    "classifications": [{"item_id": "0f6a…", "label": "alternate_version", "confidence": 0.83, "model": "jev-decisions"}]
+    "classifications": {
+      "0f6a…": {"label": "alternate_version", "confidence": 0.83, "model": "jev-decisions"}
+    }
   }
 }
 ```
-`success` is `false` when the model ran but answered nothing for this folder. A backend built without
+`classifications` is one entry per file the model labelled, keyed by queue item id (a client should
+also accept the array form, which is what a listing of stored answers sends); files the model could not
+read are left out and get `parsed_info.ai_classification_failed` instead. `success` is `false` when the
+model ran but answered nothing for this folder. A backend built without
 the classifier (`MEDIA_LIBRARY_INGEST_AI_MODE` unset/`off`) returns 503 with
 `code: "INGEST_AI_NOT_CONFIGURED"` rather than guessing at a label, and an id that is not in the queue
 returns 404 with `code: "QUEUE_ITEM_NOT_FOUND"`.

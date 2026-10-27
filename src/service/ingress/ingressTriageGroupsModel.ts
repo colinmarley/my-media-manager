@@ -1,6 +1,8 @@
 import type {
   IngressAiSettings,
   IngressAIClassification,
+  IngressAIClassifyAnswer,
+  IngressAIClassifyResult,
   IngressBulkAction,
   IngressBulkRequest,
   IngressBulkResult,
@@ -493,6 +495,18 @@ export function describeAcceptAction(count: number, minConfidence: number | null
     text: `Accept ${count}${floor ? ` ≥ ${floor}` : ''}`,
     ariaLabel: `Accept ${count} ${floor ? `items ≥ ${floor} confidence ` : ''}in this group`,
   };
+}
+
+/**
+ * Answers in a /queue/ai-classify response, in whichever shape it sent them: the queue service keys a
+ * folder's answers by queue item id, a plain listing sends an array. One entry per file it labelled.
+ */
+export function getAiClassifyAnswers(result?: IngressAIClassifyResult): IngressAIClassifyAnswer[] {
+  const classifications = result?.classifications;
+  if (Array.isArray(classifications)) {
+    return classifications;
+  }
+  return classifications && typeof classifications === 'object' ? Object.values(classifications) : [];
 }
 
 /**

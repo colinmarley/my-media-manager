@@ -114,7 +114,7 @@ describe('triage shows the Jev answer per file (#36)', () => {
     vi.clearAllMocks();
     getQueueGroups.mockResolvedValue(makeResult([makeGroup()]));
     bulkQueueAction.mockResolvedValue(makeBulkResult({ succeeded: 3, skipped: 0, results: [] }));
-    classifyQueueItemWithAI.mockResolvedValue({ mode: 'shadow', classifications: [{ item_id: 'item-1' }, { item_id: 'item-2' }] });
+    classifyQueueItemWithAI.mockResolvedValue({ mode: 'shadow', classifications: [{ item_id: 'item-1', label: 'alternate_version', confidence: 0.83 }, { item_id: 'item-2', label: 'main_feature', confidence: 0.95 }] });
   });
 
   it('AC: shows the label, the confidence and the mode on each file', async () => {
@@ -174,7 +174,7 @@ describe('triage accepts a folder at a Jev confidence floor (#36)', () => {
     vi.clearAllMocks();
     getQueueGroups.mockResolvedValue(makeResult([makeGroup()]));
     bulkQueueAction.mockResolvedValue(makeBulkResult());
-    classifyQueueItemWithAI.mockResolvedValue({ mode: 'shadow', classifications: [{ item_id: 'item-1' }, { item_id: 'item-2' }] });
+    classifyQueueItemWithAI.mockResolvedValue({ mode: 'shadow', classifications: [{ item_id: 'item-1', label: 'alternate_version', confidence: 0.83 }, { item_id: 'item-2', label: 'main_feature', confidence: 0.95 }] });
   });
 
   it('AC: accepting at a chosen floor sends min_confidence in one group request', async () => {
@@ -248,7 +248,15 @@ describe('triage re-classifies a folder with Jev on demand (#36)', () => {
   });
 
   it('AC: asks for the folder once and re-reads the queue to get the answers', async () => {
-    classifyQueueItemWithAI.mockResolvedValue({ mode: 'assist', classifications: [{ item_id: 'item-1' }, { item_id: 'item-2' }, { item_id: 'item-3' }] });
+    // The queue service keys a folder's answers by item id; the count on screen follows that shape.
+    classifyQueueItemWithAI.mockResolvedValue({
+      mode: 'assist',
+      classifications: {
+        'item-1': { label: 'main_feature', confidence: 0.95 },
+        'item-2': { label: 'main_feature', confidence: 0.9 },
+        'item-3': { label: 'alternate_version', confidence: 0.55 },
+      },
+    });
 
     render(<IngressTriageGroups />);
     await waitFor(() => expect(groupRows()).toHaveLength(1));

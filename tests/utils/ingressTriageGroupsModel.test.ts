@@ -20,6 +20,7 @@ import {
   describeBulkResult,
   formatAgeMs,
   formatConfidenceRange,
+  getAiClassifyAnswers,
   getAiSettings,
   getBulkFailureLines,
   getGroupActionCount,
@@ -307,6 +308,18 @@ describe('the Jev answer and its confidence floor (#36)', () => {
     expect(describeBulkResult(result, 'Dune (2021)')).toBe('2 accepted in Dune (2021) · 3 skipped · Jev confidence floor 80%');
     // A row the floor declined was not acted on, so it is not a failure and never lands in the list.
     expect(getBulkFailureLines(result)).toEqual([]);
+  });
+
+  it('counts a re-classify answer whichever shape the route sent it', () => {
+    // GET-style listings answer by array; the queue service keys a folder's answers by item id.
+    const asArray = { mode: 'shadow', classifications: [{ item_id: 'a', label: 'main_feature', confidence: 0.9 }] };
+    const asMap = { mode: 'shadow', classifications: { a: { label: 'main_feature', confidence: 0.9 }, b: { error: 'unreadable' } } };
+    expect(getAiClassifyAnswers(asArray).length).toBe(1);
+    expect(getAiClassifyAnswers(asMap).length).toBe(2);
+    // Only a labelled entry counts as answered, and a backend that answered nothing says so as 0.
+    expect(getAiClassifyAnswers(asMap).filter((answer) => answer?.label).length).toBe(1);
+    expect(getAiClassifyAnswers({ mode: 'assist' } as never)).toEqual([]);
+    expect(getAiClassifyAnswers()).toEqual([]);
   });
 
   it('translates "this backend has no classifier" instead of showing the raw 503 body', () => {

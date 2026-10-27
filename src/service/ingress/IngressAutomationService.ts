@@ -185,16 +185,21 @@ export interface IngressBulkRequest {
   min_confidence?: number | null;
 }
 
-/** What one on-demand folder classification stored; `classifications` is one entry per file answered. */
+/**
+ * What one on-demand folder classification stored. `refresh_ai_classification` answers a whole folder
+ * group keyed by queue item id, while a plain listing answers by array — one entry per file answered.
+ */
+export interface IngressAIClassifyAnswer {
+  item_id?: string;
+  file_name?: string;
+  label?: string;
+  confidence?: number;
+  error?: string | null;
+}
+
 export interface IngressAIClassifyResult {
   mode: 'off' | 'shadow' | 'assist' | string;
-  classifications: Array<{
-    item_id?: string;
-    file_name?: string;
-    label?: string;
-    confidence?: number;
-    error?: string | null;
-  }>;
+  classifications: IngressAIClassifyAnswer[] | Record<string, IngressAIClassifyAnswer>;
 }
 
 export interface QueueManualAssignPayload {

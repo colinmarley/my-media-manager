@@ -50,6 +50,7 @@ import {
   describeBulkResult,
   formatAiConfidence,
   formatGroupCount,
+  getAiClassifyAnswers,
   getAiSettings,
   getBulkFailureLines,
   getGroupActionCount,
@@ -273,10 +274,11 @@ export const IngressTriageGroups: React.FC = () => {
       setReclassifying(signature);
       try {
         const result = await IngressAutomationService.classifyQueueItemWithAI(itemId);
+        // The classifier answers the folder in one call, keyed by item id, and skips the files it could
+        // not label — count what it actually answered, in either shape it may send.
+        const answered = getAiClassifyAnswers(result).filter((answer) => answer?.label).length;
         setReport({
-          text: `Jev answered ${result?.classifications?.length || 0} file${
-            result?.classifications?.length === 1 ? '' : 's'
-          } in ${getGroupLabel(group, groupBy)} (mode: ${result?.mode || ai.mode})`,
+          text: `Jev answered ${answered} file${answered === 1 ? '' : 's'} in ${getGroupLabel(group, groupBy)} (mode: ${result?.mode || ai.mode})`,
           failures: [],
           severity: 'success',
         });
