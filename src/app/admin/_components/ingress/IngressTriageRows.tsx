@@ -29,6 +29,7 @@ import {
   GROUP_ROW_HEIGHT,
   MORE_ROW_HEIGHT,
   PREVIEW_ROW_HEIGHT,
+  describeAcceptAction,
   formatAiConfidence,
   formatConfidenceRange,
   formatGroupCount,
@@ -38,6 +39,7 @@ import {
   getGroupStatusChips,
   getGroupSubLabel,
   getItemAiLabel,
+  getAiSettings,
   getOldestAgeLabel,
   getQueueStatusLabel,
   queueGroupSignature,
@@ -57,7 +59,7 @@ type GroupRowProps = {
   /** A batch for this group is in flight: the row already shows its optimistic status. */
   inFlight: boolean;
   /** Live Jev mode and confidence floor, from GET /queue/groups — decides how answers read. */
-  ai: IngressAiSettings;
+  ai?: IngressAiSettings;
   /** A folder classification for this group is running; only this button waits for it. */
   reclassifying: boolean;
   /** Reviewer-picked Jev confidence floor for this group's Accept, or null for a plain accept. */
@@ -85,7 +87,9 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
   onReclassifyGroup,
 }) => {
   const label = getGroupLabel(group, groupBy);
+  const settings = getAiSettings(ai);
   const acceptCount = getGroupActionCount(group, 'accept', excludedCount);
+  const acceptAction = describeAcceptAction(acceptCount, acceptMinConfidence);
   const ignoreCount = getGroupActionCount(group, 'ignore', excludedCount);
   // The classifier answers a whole folder from one of its files, and triage only holds the preview.
   const canReclassify = (group.preview_items || []).length > 0;
@@ -137,10 +141,10 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
           display="flex"
           alignItems="center"
           gap={0.5}
-          title={getGroupAiSummaryLabel(group, ai)}
+          title={getGroupAiSummaryLabel(group, settings)}
         >
           <Box component="span" sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {getGroupAiSummaryLabel(group, ai)}
+            {getGroupAiSummaryLabel(group, settings)}
           </Box>
           <IconButton
             size="small"
@@ -149,7 +153,7 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
             aria-label={`Re-classify ${label} with Jev`}
             title={
               canReclassify
-                ? `Run the Jev classifier on this folder now (mode: ${ai.mode})`
+                ? `Run the Jev classifier on this folder now (mode: ${settings.mode})`
                 : 'No preview item in this group to classify'
             }
             sx={{ flexShrink: 0, p: 0.25 }}
@@ -188,10 +192,10 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
           variant="contained"
           disabled={working || acceptCount === 0}
           onClick={() => onGroupAction('accept', group)}
-          aria-label={`Accept ${acceptCount} in this group`}
+          aria-label={acceptAction.ariaLabel}
           title={acceptTitle}
         >
-          Accept {acceptCount}
+          {acceptAction.text}
         </Button>
         {/* aria-label, not a Tooltip: a Tooltip would replace the button's accessible name with its warning text. */}
         <Button
@@ -228,7 +232,8 @@ type PreviewRowProps = {
   groupSelected: boolean;
   excluded: boolean;
   working: boolean;
-  ai: IngressAiSettings;
+  /** Absent from a backend predating issue #36, which the UI reads as mode "off" with no answers. */
+  ai?: IngressAiSettings;
   onToggleExcluded: (item: IngressQueueItem, checked: boolean) => void;
   onItemAction: (action: 'accept' | 'ignore' | 'retry', item: IngressQueueItem) => void;
   /** The flat queue table's own per-item affordances, reused here rather than re-invented (#35 review). */
@@ -247,7 +252,7 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
   onReclassify,
   onAssign,
 }) => {
-  const aiLabel = getItemAiLabel(item, ai);
+  const aiLabel = getItemAiLabel(item, getAiSettings(ai));
   return (
     <Box
       data-testid={`triage-item-${item.id}`}
@@ -275,7 +280,7 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
       </Typography>
       {/* Jev's own answer for this file — label + confidence, or the explicit no-answer state. Always
           rendered: a folder with AI off and a folder with answers keep the same 90px slot. */}
-      <Box data-testid={`triage-item-ai-${item.id}`} title={aiLabel.detail} sx={{ minWidth: 0 }}>
+      <Box data-testid={`triage-ai-${item.id}`} title={aiLabel.detail} sx={{ minWidth: 0 }}>
         <Chip
           size="small"
           variant={aiLabel.answered ? 'filled' : 'outlined'}

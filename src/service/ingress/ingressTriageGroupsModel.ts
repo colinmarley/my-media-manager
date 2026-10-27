@@ -451,34 +451,48 @@ export function getAiAnswer(item: IngressQueueItem): IngressAIClassification | n
 /** Answer text for a preview row. Always returned, answered or not, so the row height never shifts. */
 export function getItemAiLabel(
   item: IngressQueueItem,
-  ai: IngressAiSettings
+  ai?: IngressAiSettings
 ): { text: string; detail: string; answered: boolean } {
+  const settings = getAiSettings(ai);
   const answer = getAiAnswer(item);
   if (!answer) {
     const failure = item.parsed_info?.ai_classification_failed;
     return {
       text: failure ? 'AI failed' : 'no AI',
-      detail: failure ? `Jev could not classify this file: ${failure}` : `No Jev answer — ${AI_MODE_HINT[ai.mode]}`,
+      detail: failure ? `Jev could not classify this file: ${failure}` : `No Jev answer — ${AI_MODE_HINT[settings.mode]}`,
       answered: false,
     };
   }
   const model = answer.model ? ` by ${answer.model}` : '';
   return {
     text: `${AI_LABEL_SHORT[answer.label]} ${formatAiConfidence(answer.confidence)}`,
-    detail: `Jev says ${answer.label.replace(/_/g, ' ')} at ${formatAiConfidence(answer.confidence)}${model} — ${AI_MODE_HINT[ai.mode]}`,
+    detail: `Jev says ${answer.label.replace(/_/g, ' ')} at ${formatAiConfidence(answer.confidence)}${model} — ${AI_MODE_HINT[settings.mode]}`,
     answered: true,
   };
 }
 
 /** Agree / conflict / weakest answer across a group, for the group row's third line. */
-export function getGroupAiSummaryLabel(group: IngressQueueGroup, ai: IngressAiSettings): string {
+export function getGroupAiSummaryLabel(group: IngressQueueGroup, ai?: IngressAiSettings): string {
+  const settings = getAiSettings(ai);
   const summary = group.ai_summary;
   if (!summary || summary.answered === 0) {
     const files = summary ? summary.missing : group.matching_count;
-    return `Jev: no answers in ${formatGroupCount(files)} file${files === 1 ? '' : 's'} — ${AI_MODE_HINT[ai.mode]}`;
+    return `Jev: no answers in ${formatGroupCount(files)} file${files === 1 ? '' : 's'} — ${AI_MODE_HINT[settings.mode]}`;
   }
   const weakest = summary.min_confidence === null ? '—' : formatAiConfidence(summary.min_confidence);
   return `Jev ${summary.answered}/${summary.answered + summary.missing} answered · ${summary.agree} agree · ${summary.conflict} conflict · min ${weakest}`;
+}
+
+/**
+ * The Accept control's wording. The floor it will send belongs in the accessible name, because it changes
+ * which items come back organized: "Accept 12" and "Accept 12 ≥ 80%" are not the same request.
+ */
+export function describeAcceptAction(count: number, minConfidence: number | null): { text: string; ariaLabel: string } {
+  const floor = minConfidence === null ? null : formatAiConfidence(minConfidence);
+  return {
+    text: `Accept ${count}${floor ? ` ≥ ${floor}` : ''}`,
+    ariaLabel: `Accept ${count} ${floor ? `items ≥ ${floor} confidence ` : ''}in this group`,
+  };
 }
 
 /**

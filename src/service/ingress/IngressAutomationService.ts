@@ -181,6 +181,20 @@ export interface IngressBulkRequest {
   group?: IngressQueueGroupKey;
   statuses?: string[];
   classification?: QueueClassificationOverride;
+  /** issue #36: accept only items whose Jev answer reaches this 0-1 confidence. */
+  min_confidence?: number | null;
+}
+
+/** What one on-demand folder classification stored; `classifications` is one entry per file answered. */
+export interface IngressAIClassifyResult {
+  mode: 'off' | 'shadow' | 'assist' | string;
+  classifications: Array<{
+    item_id?: string;
+    file_name?: string;
+    label?: string;
+    confidence?: number;
+    error?: string | null;
+  }>;
 }
 
 export interface QueueManualAssignPayload {
