@@ -187,7 +187,8 @@ def test_group_statement_aggregates_the_stored_answer_shape():
     # The answer is read out of the classifier's own jsonb key, and measured against the parser hint.
     assert "'ai_classification'" in sql
     assert "'classification_hint'" in sql
-    assert "count(*) FILTER" in sql.upper()
+    # Compared case-insensitively: the Postgres dialect renders this aggregate as `count(*) FILTER`.
+    assert "count(*) filter" in sql.lower()
     assert DBQueueItem.parsed_info.name in sql
 
 
