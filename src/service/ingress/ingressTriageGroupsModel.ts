@@ -1,4 +1,6 @@
 import type {
+  IngressAiSettings,
+  IngressAIClassification,
   IngressBulkAction,
   IngressBulkRequest,
   IngressBulkResult,
@@ -143,7 +145,8 @@ export function togglePreviewItemSelection(
 export function buildGroupBulkRequest(
   action: IngressBulkAction,
   group: IngressQueueGroup,
-  excludedItemIds: string[]
+  excludedItemIds: string[],
+  minConfidence?: number | null
 ): IngressBulkRequest {
   const request: IngressBulkRequest = {
     action,
@@ -152,6 +155,11 @@ export function buildGroupBulkRequest(
   };
   if (excludedItemIds.length > 0) {
     request.excludeItemIds = excludedItemIds;
+  }
+  // Only accept carries a Jev floor, and only when the reviewer picked one: without it the batch is the
+  // plain #35 accept. The server still raises it to MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE.
+  if (minConfidence !== null && minConfidence !== undefined) {
+    request.min_confidence = minConfidence;
   }
   return request;
 }
@@ -173,6 +181,11 @@ export function describeBulkResult(result: IngressBulkResult, groupLabel: string
   }
   if (result.group_truncated) {
     parts.push(`capped at ${result.group_limit} items, run again for the rest`);
+  }
+  if (typeof result.confidence_floor === 'number') {
+    // Worth naming separately: it can be higher than the reviewer picked, because the configured
+    // MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE is a floor a request cannot lower.
+    parts.push(`Jev confidence floor ${formatAiConfidence(result.confidence_floor)}`);
   }
   return parts.join(' · ');
 }
@@ -386,4 +399,97 @@ export function formatConfidenceRange(group: IngressQueueGroup): string {
 
 export function formatGroupCount(count: number): string {
   return count.toLocaleString('en-US');
+}
+
+// --- Jev ingest classifier, as triage reads it (issue #36) --------------------------------------
+// The answers themselves are produced by the classifier (services/ingest_ai_classifier.py on
+// feat/jev-ingest-decisions) and stored at parsed_info["ai_classification"]. Triage only reads that
+// shape, so every helper below treats a missing answer as normal: AI off means no answer, not an error.
+
+export const DEFAULT_AI_MIN_CONFIDENCE = 0.7;
+/** Thresholds the triage toolbar offers. Anything under the configured floor is filtered out. */
+export const AI_CONFIDENCE_FLOOR_CHOICES = [0.6, 0.7, 0.8, 0.9];
+
+// The 90px answer column cannot hold `alternate_version 100%`; the full label goes in the title.
+const AI_LABEL_SHORT: Record<string, string> = {
+  main_feature: 'main',
+  alternate_version: 'alt',
+  special_feature: 'special',
+};
+
+// What each mode means for the answer on screen: `shadow` is advisory only and never moves a row.
+const AI_MODE_HINT: Record<string, string> = {
+  off: 'AI is off, so there is no answer to show',
+  shadow: 'shadow mode: advisory only, it never changes the queue status',
+  assist: 'assist mode: a confident answer acts like a classification override',
+};
+
+export function getAiSettings(settings?: IngressAiSettings): IngressAiSettings {
+  const mode = settings?.mode === 'shadow' || settings?.mode === 'assist' ? settings.mode : 'off';
+  const floor = typeof settings?.min_confidence === 'number' ? Math.min(Math.max(settings.min_confidence, 0), 1) : DEFAULT_AI_MIN_CONFIDENCE;
+  return { mode, min_confidence: floor };
+}
+
+/** Thresholds a reviewer may pick: never below the configured floor they cannot lower. */
+export function aiFloorChoices(floor: number): number[] {
+  return AI_CONFIDENCE_FLOOR_CHOICES.filter((choice) => choice >= floor);
+}
+
+export function formatAiConfidence(confidence: number): string {
+  return `${Math.round(confidence * 100)}%`;
+}
+
+/** The stored Jev answer, or null when this file has none (AI off, not yet run, or it failed). */
+export function getAiAnswer(item: IngressQueueItem): IngressAIClassification | null {
+  const answer = item.parsed_info?.ai_classification;
+  if (!answer || AI_LABEL_SHORT[answer.label] === undefined || typeof answer.confidence !== 'number') {
+    return null;
+  }
+  return answer;
+}
+
+/** Answer text for a preview row. Always returned, answered or not, so the row height never shifts. */
+export function getItemAiLabel(
+  item: IngressQueueItem,
+  ai: IngressAiSettings
+): { text: string; detail: string; answered: boolean } {
+  const answer = getAiAnswer(item);
+  if (!answer) {
+    const failure = item.parsed_info?.ai_classification_failed;
+    return {
+      text: failure ? 'AI failed' : 'no AI',
+      detail: failure ? `Jev could not classify this file: ${failure}` : `No Jev answer — ${AI_MODE_HINT[ai.mode]}`,
+      answered: false,
+    };
+  }
+  const model = answer.model ? ` by ${answer.model}` : '';
+  return {
+    text: `${AI_LABEL_SHORT[answer.label]} ${formatAiConfidence(answer.confidence)}`,
+    detail: `Jev says ${answer.label.replace(/_/g, ' ')} at ${formatAiConfidence(answer.confidence)}${model} — ${AI_MODE_HINT[ai.mode]}`,
+    answered: true,
+  };
+}
+
+/** Agree / conflict / weakest answer across a group, for the group row's third line. */
+export function getGroupAiSummaryLabel(group: IngressQueueGroup, ai: IngressAiSettings): string {
+  const summary = group.ai_summary;
+  if (!summary || summary.answered === 0) {
+    const files = summary ? summary.missing : group.matching_count;
+    return `Jev: no answers in ${formatGroupCount(files)} file${files === 1 ? '' : 's'} — ${AI_MODE_HINT[ai.mode]}`;
+  }
+  const weakest = summary.min_confidence === null ? '—' : formatAiConfidence(summary.min_confidence);
+  return `Jev ${summary.answered}/${summary.answered + summary.missing} answered · ${summary.agree} agree · ${summary.conflict} conflict · min ${weakest}`;
+}
+
+/**
+ * A 503 from /queue/ai-classify arrives as the raw JSON body the service throws with. Translate the one
+ * code that means "this backend has no classifier at all" (the classifier lands on
+ * feat/jev-ingest-decisions) into something a reviewer can act on; anything else is reported verbatim.
+ */
+export function describeAiClassifyError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  if (message.includes('INGEST_AI_NOT_CONFIGURED')) {
+    return 'No Jev classifier on this backend — set MEDIA_LIBRARY_INGEST_AI_MODE to shadow or assist to get answers';
+  }
+  return message || 'Jev classification failed';
 }

@@ -68,7 +68,45 @@ export interface IngressQueueItem {
     quality?: string;
     classification_hint?: string;
     is_companion?: boolean;
+    /** The Jev answer for this file, when the classifier has produced one. */
+    ai_classification?: IngressAIClassification;
+    /** Set when the model ran and failed, so "no answer" can say why. */
+    ai_classification_failed?: string;
   };
+}
+
+/**
+ * The Jev ingest classifier's answer, at exactly the shape `parsed_info["ai_classification"]` carries
+ * (services/ingest_ai_classifier.py, feat/jev-ingest-decisions). Triage only reads it: it never
+ * produces one, and a manual `classification_override` always outranks it.
+ */
+export interface IngressAIClassification {
+  label: 'main_feature' | 'alternate_version' | 'special_feature';
+  /** 0-1, as the model reported it. */
+  confidence: number;
+  probabilities?: Record<string, number>;
+  model?: string;
+  group_size?: number;
+  latency_ms?: number;
+  /** Epoch seconds, as the classifier stamps it. */
+  classified_at?: number;
+  demoted_from_main?: boolean;
+}
+
+/** Per-group roll-up of the Jev answers among that group's triageable items (issue #36). */
+export interface IngressGroupAiSummary {
+  answered: number;
+  missing: number;
+  agree: number;
+  conflict: number;
+  /** The weakest answer in the group: what an "accept ≥ threshold" would have to clear. */
+  min_confidence: number | null;
+}
+
+/** How those answers were produced, and the floor a bulk accept cannot go under. */
+export interface IngressAiSettings {
+  mode: 'off' | 'shadow' | 'assist';
+  min_confidence: number;
 }
 
 export type QueueGroupBy = 'parsed_title' | 'source_folder';
@@ -92,11 +130,10 @@ export interface IngressQueueGroup {
   status_counts: Record<string, number>;
   confidence_min: number | null;
   confidence_max: number | null;
+  ai_summary?: IngressGroupAiSummary;
   first_queued_at: number | string | null;
   last_queued_at: number | string | null;
   preview_items: IngressQueueItem[];
-  /** Filled by the per-group Suggestion API (issue #36); null until that lands. */
-  suggestion?: string | null;
 }
 
 export interface IngressQueueGroupsResult {
@@ -104,6 +141,8 @@ export interface IngressQueueGroupsResult {
   total_groups: number;
   total_items: number;
   status_counts: Record<string, number>;
+  /** Absent only from a backend predating issue #36; the UI treats that as mode "off". */
+  ai?: IngressAiSettings;
   group_by: QueueGroupBy;
   limit: number;
   offset: number;
@@ -129,6 +168,8 @@ export interface IngressBulkResult {
   skipped: number;
   group_truncated?: boolean;
   group_limit?: number;
+  /** The threshold items were really gated on: the requested one, raised to the configured floor. */
+  confidence_floor?: number | null;
   results: IngressBulkResultRow[];
 }
 
@@ -196,6 +237,13 @@ class IngressAutomationService {
   private static readonly BULK_REQUEST_TIMEOUT_MS = 120000;
 
   private static readonly REQUEST_TIMEOUT_MS = 15000;
+
+  /**
+   * A folder classification walks every file in the folder through the local model, so it gets the same
+   * long budget as a bulk batch instead of the 15s a normal admin read uses. The triage UI keeps the
+   * rest of the page usable while it runs.
+   */
+  private static readonly AI_CLASSIFY_REQUEST_TIMEOUT_MS = 120000;
 
   private async request(path: string, init?: RequestInit, timeoutMs = IngressAutomationService.REQUEST_TIMEOUT_MS): Promise<any> {
     const controller = new AbortController();
@@ -296,6 +344,24 @@ class IngressAutomationService {
         body: JSON.stringify(payload),
       },
       IngressAutomationService.BULK_REQUEST_TIMEOUT_MS
+    );
+    return result.data;
+  }
+
+  /**
+   * POST /api/ingress/queue/ai-classify: ask the Jev classifier for this folder's answers now, whatever
+   * the configured mode. One item id is enough — the classifier answers the whole folder and stores each
+   * answer at `parsed_info.ai_classification`. 503 `INGEST_AI_NOT_CONFIGURED` reaches the caller as a
+   * normal error so triage can say "no classifier on this backend" rather than failing the row.
+   */
+  async classifyQueueItemWithAI(itemId: string): Promise<IngressAIClassifyResult> {
+    const result = await this.request(
+      '/queue/ai-classify',
+      {
+        method: 'POST',
+        body: JSON.stringify({ itemId }),
+      },
+      IngressAutomationService.AI_CLASSIFY_REQUEST_TIMEOUT_MS
     );
     return result.data;
   }

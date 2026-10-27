@@ -396,7 +396,7 @@ def test_qa4_capped_group_bulk_action_acts_on_the_oldest_items_and_says_so(monke
 
     applied = []
 
-    async def _record(batch_id, history_extra, action, item_id, override):
+    async def _record(batch_id, history_extra, action, item_id, override, min_confidence=None):
         applied.append((item_id, action, history_extra))
         return triage._result(item_id, action, "succeeded", item_status="ignored")
 

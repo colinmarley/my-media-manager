@@ -4,13 +4,15 @@ Grouped listings and bulk actions read the persisted `ingress_queue` table so it
 detected before a restart stay groupable, pageable and triageable without re-scanning.
 """
 
+import os
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from sqlalchemy import String, and_, case, cast, func, or_, select, tuple_
+from sqlalchemy import Float, String, and_, case, cast, func, or_, select, tuple_
 from sqlalchemy.engine import Row
 
+from config.settings import settings
 from db.database import AsyncSessionLocal
 from db.models import IngressQueueItem as DBQueueItem
 from services.ingress_queue_service import (
@@ -58,6 +60,23 @@ QUEUE_GROUP_BY: Tuple[str, ...] = (QUEUE_GROUP_BY_TITLE, QUEUE_GROUP_BY_FOLDER)
 
 # Rows whose parsed_info/best_match carry no title land in this bucket instead of the file name.
 UNPARSED_TITLE_BUCKET = "(unparsed)"
+
+# --- Jev ingest classifier (issue #36) -------------------------------------------------------
+# The classifier (services/ingest_ai_classifier.py, feat/jev-ingest-decisions) owns the answer it
+# stores at parsed_info["ai_classification"]: {label, confidence, probabilities, model, group_size,
+# latency_ms, classified_at, demoted_from_main}. Triage only reads that shape: it never classifies,
+# and a manual classification_override always outranks an AI answer.
+AI_LABEL_MAIN = "main_feature"
+AI_LABEL_ALTERNATE = "alternate_version"
+AI_LABEL_SPECIAL = "special_feature"
+AI_LABELS = (AI_LABEL_MAIN, AI_LABEL_ALTERNATE, AI_LABEL_SPECIAL)
+# `shadow` answers are advisory only (they never move queue status), `assist` lets a confident answer
+# act like a classification override, `off` never classifies. The confidence env var is the floor the
+# classifier applies and the floor a bulk accept can raise but never lower.
+INGEST_AI_MODES = ("off", "shadow", "assist")
+INGEST_AI_MODE_ENV = "MEDIA_LIBRARY_INGEST_AI_MODE"
+INGEST_AI_MIN_CONFIDENCE_ENV = "MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE"
+DEFAULT_AI_MIN_CONFIDENCE = 0.70
 
 
 class TriageQueryError(RuntimeError):
@@ -108,6 +127,17 @@ GROUP_SOURCE_FOLDER = case(
     else_="",
 )
 
+# The Jev answer as SQL, for the per-group roll-up: label presence, its confidence, and the heuristic
+# it is measured against. The heuristic is the filename parser's hint (main feature when it had none);
+# a manual classification_override is deliberately not the heuristic, because a human correction is
+# not a second machine opinion and would distort agree/conflict.
+_AI_ANSWER = DBQueueItem.parsed_info["ai_classification"]
+_AI_LABEL = func.nullif(_AI_ANSWER["label"].as_string(), "")
+_AI_CONFIDENCE = func.cast(func.nullif(_AI_ANSWER["confidence"].as_string(), ""), Float)
+_HEURISTIC_LABEL = func.coalesce(
+    func.nullif(DBQueueItem.parsed_info["classification_hint"].as_string(), ""), AI_LABEL_MAIN,
+)
+
 GROUP_EXPRS = (GROUP_MEDIA_TYPE, GROUP_PATH, GROUP_TITLE)
 FOLDER_EXPRS = (GROUP_MEDIA_TYPE, GROUP_PATH, GROUP_SOURCE_FOLDER)
 
@@ -126,6 +156,44 @@ def source_folder_for(ingress_path: Any, file_path: Any) -> str:
     relative = path[len(root) + 1:]
     folder, separator, _ = relative.partition("/")
     return folder if separator else ""
+
+
+def ai_settings() -> Dict[str, Any]:
+    """Classifier mode + confidence floor, as triage needs to label an answer and gate a bulk accept.
+
+    The settings fields belong to the classifier, so they are read through getattr and the environment
+    while that branch is unmerged; MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE stays a hard lower bound on
+    any threshold a client asks for.
+    """
+    mode = str(getattr(settings, "ingest_ai_mode", None) or os.getenv(INGEST_AI_MODE_ENV, "")).strip().lower()
+    raw = getattr(settings, "ingest_ai_min_confidence", None)
+    if raw is None:
+        raw = os.getenv(INGEST_AI_MIN_CONFIDENCE_ENV, "")
+    try:
+        floor = float(raw)
+    except (TypeError, ValueError):
+        floor = DEFAULT_AI_MIN_CONFIDENCE
+    return {
+        "mode": mode if mode in INGEST_AI_MODES else "off",
+        "min_confidence": max(0.0, min(floor, 1.0)),
+    }
+
+
+def ai_answer(parsed_info: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The stored Jev answer, or None when this file has no AI answer at all."""
+    answer = (parsed_info or {}).get("ai_classification")
+    if not isinstance(answer, dict) or str(answer.get("label") or "") not in AI_LABELS:
+        return None
+    return answer
+
+
+def ai_confidence(answer: Optional[Dict[str, Any]]) -> Optional[float]:
+    """An answer's 0-1 confidence, or None when it carries no usable number."""
+    try:
+        confidence = float((answer or {}).get("confidence"))
+    except (TypeError, ValueError):
+        return None
+    return confidence if 0.0 <= confidence <= 1.0 else None
 
 
 def _iso(value: Any) -> Optional[str]:
@@ -223,6 +291,9 @@ class IngressTriageService:
             "total_groups": len(groups),
             "total_items": sum(group["matching_count"] for group in groups),
             "status_counts": status_counts,
+            # How the answers counted in `ai_summary` / preview_items were produced, and the floor a
+            # bulk accept cannot go under. mode == "off" is why rows legitimately show no AI answer.
+            "ai": ai_settings(),
             "group_by": group_by,
             "limit": page_size,
             "offset": page_offset,
@@ -238,8 +309,15 @@ class IngressTriageService:
         statuses: Optional[Sequence[str]] = None,
         classification: Optional[str] = None,
         exclude_item_ids: Optional[Sequence[str]] = None,
+        min_confidence: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Apply accept/ignore/retry/classify to selected items or a whole group, item by item."""
+        """Apply accept/ignore/retry/classify to selected items or a whole group, item by item.
+
+        `min_confidence` gates an action on the Jev answer's confidence: items with no answer, or with
+        one under the floor, are reported as skipped per item rather than accepted anyway. The
+        configured MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE is a hard lower bound, so a hand-crafted
+        request cannot lower it.
+        """
         normalized_action = str(action or "").strip().lower()
         if normalized_action not in BULK_ACTIONS:
             return {"error": f"Unsupported bulk action: {action}"}
@@ -259,6 +337,13 @@ class IngressTriageService:
             return {"error": "Bulk actions require item_ids or a group selector"}
 
         excluded = {str(item_id) for item_id in (exclude_item_ids or [])}
+        confidence_floor = None
+        if min_confidence is not None:
+            try:
+                requested_floor = float(min_confidence)
+            except (TypeError, ValueError):
+                return {"error": f"Unsupported minimum confidence: {min_confidence}"}
+            confidence_floor = max(requested_floor, ai_settings()["min_confidence"])
         batch_id = str(uuid.uuid4())
         history_extra = {"batch_id": batch_id, "action": normalized_action, "source": "bulk"}
         results: List[Dict[str, Any]] = []
@@ -267,7 +352,11 @@ class IngressTriageService:
             if not item_id or item_id in seen or item_id in excluded:
                 continue
             seen.add(item_id)
-            results.append(await self._apply_bulk_item(batch_id, history_extra, normalized_action, item_id, override))
+            results.append(
+                await self._apply_bulk_item(
+                    batch_id, history_extra, normalized_action, item_id, override, min_confidence=confidence_floor,
+                )
+            )
 
         summary = {
             "batch_id": batch_id,
@@ -280,6 +369,9 @@ class IngressTriageService:
             # more, the caller repeats the request (or narrows it) to work through the rest.
             "group_truncated": group_truncated,
             "group_limit": MAX_GROUP_ITEMS,
+            # What the items were really gated on: the caller's threshold raised to the configured
+            # floor, so the response can tell the two apart.
+            "confidence_floor": confidence_floor,
             "results": results,
         }
         logger.info(
@@ -346,6 +438,7 @@ class IngressTriageService:
         action: str,
         item_id: str,
         override: Optional[str],
+        min_confidence: Optional[float] = None,
     ) -> Dict[str, Any]:
         item = self.queue_service.get_item(item_id) or await self._hydrate_item(item_id)
         if item is None:
@@ -360,6 +453,27 @@ class IngressTriageService:
                 error=f"Cannot {action} an item in status '{current_status}'",
                 item_status=current_status,
             )
+
+        if min_confidence is not None:
+            # An item with no Jev answer has nothing to measure against the floor, so it stays put:
+            # accepting blind is exactly how a hand-crafted item id would sneak under the threshold.
+            confidence = ai_confidence(ai_answer(item.get("parsed_info")))
+            if confidence is None:
+                return self._result(
+                    item_id,
+                    action,
+                    "skipped",
+                    error=f"No Jev answer to check against the {min_confidence} confidence floor",
+                    item_status=current_status,
+                )
+            if confidence < min_confidence:
+                return self._result(
+                    item_id,
+                    action,
+                    "skipped",
+                    error=f"Jev confidence {confidence} is under the {min_confidence} floor",
+                    item_status=current_status,
+                )
 
         try:
             if action == BULK_ACCEPT:
@@ -442,6 +556,10 @@ class IngressTriageService:
                 func.max(DBQueueItem.confidence_score).label("max_confidence"),
                 func.min(DBQueueItem.queued_at).label("first_queued_at"),
                 func.max(DBQueueItem.queued_at).label("last_queued_at"),
+                func.count().filter(_AI_LABEL.isnot(None)).label("ai_answered"),
+                func.count().filter(_AI_LABEL.isnot(None), _AI_LABEL == _HEURISTIC_LABEL).label("ai_agree"),
+                func.count().filter(_AI_LABEL.isnot(None), _AI_LABEL != _HEURISTIC_LABEL).label("ai_conflict"),
+                func.min(_AI_CONFIDENCE).label("ai_confidence_min"),
             )
             .group_by(*group_exprs_for(group_by), DBQueueItem.status)
             .order_by(*group_exprs_for(group_by))
@@ -482,6 +600,7 @@ class IngressTriageService:
                     "status_counts": {},
                     "confidence_min": None,
                     "confidence_max": None,
+                    "ai_summary": {"answered": 0, "missing": 0, "agree": 0, "conflict": 0, "min_confidence": None},
                     "first_queued_at": None,
                     "last_queued_at": None,
                     "preview_items": [],
@@ -495,6 +614,17 @@ class IngressTriageService:
             status_counts[status] = status_counts.get(status, 0) + count
             if not requested_statuses or status in requested_statuses:
                 group["matching_count"] += count
+                # Aggregated per (group, status) row by _group_statement, so the roll-up only counts
+                # the statuses the caller asked to triage.
+                summary = group["ai_summary"]
+                summary["answered"] += int(getattr(row, "ai_answered", 0) or 0)
+                summary["agree"] += int(getattr(row, "ai_agree", 0) or 0)
+                summary["conflict"] += int(getattr(row, "ai_conflict", 0) or 0)
+                if getattr(row, "ai_confidence_min", None) is not None:
+                    lowest = float(row.ai_confidence_min)
+                    summary["min_confidence"] = (
+                        lowest if summary["min_confidence"] is None else min(summary["min_confidence"], lowest)
+                    )
             if row.min_confidence is not None and (
                 group["confidence_min"] is None or int(row.min_confidence) < group["confidence_min"]
             ):
@@ -512,7 +642,13 @@ class IngressTriageService:
                 group["media_type"], group["ingress_path"], group["source_folder"], group["title"] or "",
             ),
         )
-        return [group for group in ranked if group["matching_count"] > 0], status_counts
+        triaged = [group for group in ranked if group["matching_count"] > 0]
+        for group in triaged:  # `missing` needs the group's whole matching count, which rows add up
+            summary = group["ai_summary"]
+            summary["missing"] = max(group["matching_count"] - summary["answered"], 0)
+            if summary["min_confidence"] is not None:
+                summary["min_confidence"] = round(summary["min_confidence"], 2)
+        return triaged, status_counts
 
     async def _load_previews(
         self,
