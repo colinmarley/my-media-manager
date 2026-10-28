@@ -90,13 +90,28 @@ class _StubQueueService:
         self.items = {item["id"]: item for item in items}
         self.items_by_id = self.items
         self.organized = []
+        # Every status change goes through one of these, so an empty list proves nothing moved.
+        self.mutations = []
 
     def get_item(self, item_id):
         return self.items.get(item_id)
 
     async def mark_complete(self, item_id, history_extra=None):
         self.organized.append(item_id)
+        self.mutations.append(("mark_complete", item_id))
         return SimpleNamespace(id=item_id, status="completed", last_error=None)
+
+    async def mark_ignored(self, item_id, history_extra=None):
+        self.mutations.append(("mark_ignored", item_id))
+        return SimpleNamespace(id=item_id, status="ignored", last_error=None)
+
+    async def retry_item(self, item_id, history_extra=None):
+        self.mutations.append(("retry_item", item_id))
+        return SimpleNamespace(id=item_id, status=QUEUE_PENDING, last_error=None)
+
+    async def update_classification(self, item_id, override, history_extra=None):
+        self.mutations.append(("update_classification", item_id))
+        return SimpleNamespace(id=item_id, status=QUEUE_NEEDS_REVIEW, last_error=None)
 
 
 def _triage(items):
@@ -252,3 +267,23 @@ def test_bulk_rejects_a_threshold_it_cannot_read():
     summary = asyncio.run(triage.bulk_action(action="accept", item_ids=["any"], min_confidence="maybe"))
 
     assert summary["error"] == "Unsupported minimum confidence: maybe"
+
+
+def test_reading_the_queue_moves_no_row_in_any_mode(monkeypatch):
+    """AC2: an answer is data, not an action. In `shadow` (and in `assist`) a confident answer stays
+    advisory: reading the triage queue never organizes a row and never touches a status."""
+    for mode in ("off", "shadow", "assist"):
+        monkeypatch.setenv("MEDIA_LIBRARY_INGEST_AI_MODE", mode)
+        monkeypatch.setenv("MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE", "0.7")
+        items = [
+            _queued_item("confident", {"label": "main_feature", "confidence": 0.99}, status=QUEUE_NEEDS_REVIEW),
+            _queued_item("under", {"label": "alternate_version", "confidence": 0.4}, status=QUEUE_NEEDS_REVIEW),
+            _queued_item("unanswered", None, status=QUEUE_NEEDS_REVIEW),
+        ]
+        service, triage = _triage(items)
+
+        asyncio.run(triage.get_queue_groups(preview_size=2))
+        asyncio.run(triage.get_queue_groups(preview_size=0, statuses=[QUEUE_NEEDS_REVIEW]))
+
+        assert [item["status"] for item in service.items.values()] == [QUEUE_NEEDS_REVIEW] * 3
+        assert service.mutations == [], f"{mode} mode moved a row by itself"
