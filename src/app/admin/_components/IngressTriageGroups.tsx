@@ -41,12 +41,17 @@ import {
   GROUP_ROWS_PER_PAGE_OPTIONS,
   QUEUE_GROUP_BY_OPTIONS,
   QUEUE_GROUP_STATUS_OPTIONS,
+  aiFloorChoices,
   applyBulkResultToGroup,
   buildGroupBulkRequest,
   buildRowOffsets,
   buildTriageRows,
+  describeAiClassifyError,
   describeBulkResult,
+  formatAiConfidence,
   formatGroupCount,
+  getAiClassifyAnswers,
+  getAiSettings,
   getBulkFailureLines,
   getGroupActionCount,
   getGroupLabel,
@@ -65,7 +70,7 @@ import useIngressQueueActions from '@/hooks/ingress/useIngressQueueActions';
 import IngressManualAssignDialog from './ingress/IngressManualAssignDialog';
 import { IngressTriageGroupRow, IngressTriageMoreRow, IngressTriagePreviewRow, ROW_COLUMNS } from './ingress/IngressTriageRows';
 
-type PendingAction = { action: IngressBulkAction; group: IngressQueueGroup; count: number };
+type PendingAction = { action: IngressBulkAction; group: IngressQueueGroup; count: number; minConfidence: number | null };
 type ActionReport = { text: string; failures: string[]; severity: 'success' | 'warning' };
 
 /**
@@ -91,6 +96,12 @@ export const IngressTriageGroups: React.FC = () => {
   const [scrollTop, setScrollTop] = useState(0);
   const [pending, setPending] = useState<PendingAction | null>(null);
   const [inFlight, setInFlight] = useState<string | null>(null);
+  // Jev confidence floor the reviewer wants Accept to honour; null means "accept everything actionable".
+  const [minConfidence, setMinConfidence] = useState<number | null>(null);
+  // Which group's folder classification is running. Separate from `working` on purpose: a folder can
+  // take a while through the local model, and neither the rows nor the other groups wait on it.
+  const [reclassifying, setReclassifying] = useState<string | null>(null);
+  const ai = getAiSettings(data?.ai);
   const [reloadToken, setReloadToken] = useState(0);
   // Per-item work started from a preview row (classification override, manual assign) belongs to the
   // reused queue hooks, not to a group batch: keep its in-flight flag separate.
@@ -185,14 +196,22 @@ export const IngressTriageGroups: React.FC = () => {
   }, []);
 
   const runGroupAction = useCallback(
-    async (action: IngressBulkAction, group: IngressQueueGroup, excludedItemIds: string[], count: number) => {
+    async (
+      action: IngressBulkAction,
+      group: IngressQueueGroup,
+      excludedItemIds: string[],
+      count: number,
+      acceptMinConfidence: number | null = null
+    ) => {
       const signature = queueGroupSignature(group);
       setWorking(true);
       setInFlight(signature);
       setError(null);
       patchGroup(signature, (current) => optimisticGroupForAction(current, action, count));
       try {
-        const result = await IngressAutomationService.bulkQueueAction(buildGroupBulkRequest(action, group, excludedItemIds));
+        const result = await IngressAutomationService.bulkQueueAction(
+          buildGroupBulkRequest(action, group, excludedItemIds, action === 'accept' ? acceptMinConfidence : null)
+        );
         setReport({
           text: describeBulkResult(result, getGroupLabel(group, groupBy)),
           failures: getBulkFailureLines(result),
@@ -225,16 +244,62 @@ export const IngressTriageGroups: React.FC = () => {
   const requestGroupAction = (action: IngressBulkAction, group: IngressQueueGroup) => {
     const excludedItemIds = selection[queueGroupSignature(group)] ?? [];
     const count = getGroupActionCount(group, action, excludedItemIds.length);
+    // Only accept carries a floor: the server compares it against each item's Jev answer and skips the
+    // rest, so the count shown here is the most the batch can do, not a promise it will do all of them.
+    const floor = action === 'accept' ? minConfidence : null;
     if (count === 0) {
       return;
     }
     // Ignore is only undoable from the history log, so it always asks; accept asks once it is big.
     if (action === 'ignore' || needsActionConfirmation(count)) {
-      setPending({ action, group, count });
+      setPending({ action, group, count, minConfidence: floor });
       return;
     }
-    void runGroupAction(action, group, excludedItemIds, count);
+    void runGroupAction(action, group, excludedItemIds, count, floor);
   };
+
+  /**
+   * "Re-classify with Jev": ask the classifier for this folder's answers now, whatever the mode says.
+   * One request per group (the classifier answers every file in the folder from one of its ids), kept
+   * off the batch `working` flag so the rest of the triage page stays usable while it runs, and re-read
+   * afterwards so the answers on screen are the ones the server just stored.
+   */
+  const reclassifyGroupWithAI = useCallback(
+    async (group: IngressQueueGroup) => {
+      const signature = queueGroupSignature(group);
+      const itemId = (group.preview_items || [])[0]?.id;
+      if (!itemId || reclassifying !== null) {
+        return;
+      }
+      setReclassifying(signature);
+      try {
+        const result = await IngressAutomationService.classifyQueueItemWithAI(itemId);
+        // The classifier answers the folder in one call, keyed by item id, and skips the files it could
+        // not label — count what it actually answered, in either shape it may send.
+        const answered = getAiClassifyAnswers(result).filter((answer) => answer?.label).length;
+        setReport({
+          text: `Jev answered ${answered} file${answered === 1 ? '' : 's'} in ${getGroupLabel(group, groupBy)} (mode: ${result?.mode || ai.mode})`,
+          failures: [],
+          severity: 'success',
+        });
+        setReloadToken((token) => token + 1);
+      } catch (err) {
+        // 503 INGEST_AI_NOT_CONFIGURED is a normal answer on a backend without the classifier: say so,
+        // and keep the rows as they are.
+        setReport({
+          text: `Jev did not re-classify ${getGroupLabel(group, groupBy)}`,
+          failures: [describeAiClassifyError(err)],
+          severity: 'warning',
+        });
+        if (isIngressTimeoutError(err)) {
+          setReloadToken((token) => token + 1); // the answers may have landed anyway — let the server answer
+        }
+      } finally {
+        setReclassifying(null);
+      }
+    },
+    [ai.mode, groupBy, reclassifying]
+  );
 
   // Single rows go through the same bulk endpoint with itemIds, so accept/ignore semantics match the group.
   const runItemAction = useCallback(
@@ -345,6 +410,29 @@ export const IngressTriageGroups: React.FC = () => {
               ))}
             </Select>
           </FormControl>
+          <FormControl size="small" sx={{ minWidth: 168 }}>
+            <InputLabel id="triage-ai-floor-label">Jev accept floor</InputLabel>
+            <Select
+              labelId="triage-ai-floor-label"
+              label="Jev accept floor"
+              value={minConfidence === null ? 'none' : String(minConfidence)}
+              onChange={(event) =>
+                setMinConfidence(event.target.value === 'none' ? null : Number(event.target.value))
+              }
+            >
+              <MenuItem value="none">No floor</MenuItem>
+              {/* Choices under the configured MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE are not offered: a
+                  request cannot lower that floor, so offering them would only be a lie. */}
+              {aiFloorChoices(ai.min_confidence).map((choice) => (
+                <MenuItem key={choice} value={String(choice)}>
+                  {`≥ ${formatAiConfidence(choice)}`}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <Typography variant="caption" color="text.secondary" data-testid="triage-ai-mode">
+            {`Jev ${ai.mode} · floor ${formatAiConfidence(ai.min_confidence)}`}
+          </Typography>
           <TextField
             size="small"
             label="Search path or title"
@@ -451,9 +539,13 @@ export const IngressTriageGroups: React.FC = () => {
                 excludedCount={(selection[queueGroupSignature(row.group)] ?? []).length}
                 working={working}
                 inFlight={inFlight === queueGroupSignature(row.group)}
+                ai={ai}
+                reclassifying={reclassifying === queueGroupSignature(row.group)}
+                acceptMinConfidence={minConfidence}
                 onToggleGroup={(group) => setSelection((prev) => toggleGroupSelection(prev, group))}
                 onToggleExpand={toggleExpand}
                 onGroupAction={requestGroupAction}
+                onReclassifyGroup={(group) => void reclassifyGroupWithAI(group)}
               />
             ) : row.kind === 'more' ? (
               <IngressTriageMoreRow key={row.key} label={row.label} />
@@ -464,6 +556,7 @@ export const IngressTriageGroups: React.FC = () => {
                 groupSelected={getGroupSelectionState(row.group, selection) !== 'none'}
                 excluded={(selection[queueGroupSignature(row.group)] ?? []).includes(row.item.id)}
                 working={working || perItemWorking}
+                ai={ai}
                 onToggleExcluded={(item, checked) =>
                   setSelection((prev) => togglePreviewItemSelection(prev, row.group, item.id, checked))
                 }
@@ -499,6 +592,10 @@ export const IngressTriageGroups: React.FC = () => {
                 ? `${pending.action === 'ignore' ? 'Ignore' : 'Accept'} ${formatGroupCount(pending.count)} item${
                     pending.count === 1 ? '' : 's'
                   } in ${getGroupLabel(pending.group, groupBy)}?${
+                    pending.minConfidence !== null
+                      ? ` Only items Jev answers with at least ${formatAiConfidence(pending.minConfidence)} confidence are organized; the rest are skipped.`
+                      : ''
+                  }${
                     pending.action === 'ignore' ? ' This is only undoable from the history log.' : ''
                   }`
                 : ''}
@@ -514,7 +611,7 @@ export const IngressTriageGroups: React.FC = () => {
                   return;
                 }
                 const excludedItemIds = selection[queueGroupSignature(pending.group)] ?? [];
-                void runGroupAction(pending.action, pending.group, excludedItemIds, pending.count);
+                void runGroupAction(pending.action, pending.group, excludedItemIds, pending.count, pending.minConfidence);
                 setPending(null);
               }}
             >

@@ -63,6 +63,23 @@ class QueueBulkRequest(BaseModel):
     statuses: Optional[List[str]] = Field(default=None, description="status filter applied to a group selector")
     classification: Optional[str] = Field(default=None)
     excludeItemIds: Optional[List[str]] = Field(default=None, max_length=500)
+    # issue #36 spells the selector the way GET /queue/groups returns it (`group_key` + `status` +
+    # `group_by`); #34's `group` / `statuses` keep working. The selector itself already carries
+    # title or source_folder, so group_by only records which listing the row came from.
+    group_key: Optional[Dict[str, Any]] = Field(default=None, description="alias of group")
+    status: Optional[List[str]] = Field(default=None, description="alias of statuses")
+    group_by: Optional[str] = Field(default=None, description="parsed_title | source_folder")
+    min_confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="accept only items whose Jev answer reaches this confidence; never below "
+                    "MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE",
+    )
+
+
+class QueueAIClassifyRequest(BaseModel):
+    itemId: str
 
 
 class ProcessPendingRequest(BaseModel):
@@ -443,10 +460,11 @@ async def bulk_ingress_queue_action(payload: QueueBulkRequest, req: Request):
         result = await triage_service.bulk_action(
             action=payload.action,
             item_ids=payload.itemIds,
-            group=payload.group,
-            statuses=payload.statuses,
+            group=payload.group or payload.group_key,
+            statuses=payload.statuses or payload.status,
             classification=payload.classification,
             exclude_item_ids=payload.excludeItemIds,
+            min_confidence=payload.min_confidence,
         )
     except TriageQueryError:
         raise _triage_unavailable()
@@ -460,6 +478,42 @@ async def bulk_ingress_queue_action(payload: QueueBulkRequest, req: Request):
     return {
         "success": True,
         "data": result,
+        "timestamp": str(int(time.time())),
+    }
+
+
+@router.post("/queue/ai-classify")
+async def ai_classify_ingress_item(payload: QueueAIClassifyRequest, req: Request):
+    """Run the Jev decision model on this item's folder now, whatever the configured mode.
+
+    The model itself lives on feat/jev-ingest-decisions (`services/ingest_ai_classifier.py`); this route
+    only reaches through the queue service for it, so the triage "Re-classify with Jev" button talks to a
+    stable contract. A backend built without that classifier answers 503 instead of guessing at labels
+    here — issue #36 is explicit that there is only ever one classifier.
+    """
+    queue_service = req.app.state.ingress_queue_service
+    classifier = getattr(queue_service, "ai_classifier", None)
+    refresh = getattr(queue_service, "refresh_ai_classification", None)
+    if classifier is None or refresh is None:
+        raise HTTPException(status_code=503, detail={
+            "type": "ServiceUnavailable",
+            "message": "AI classification is not configured (set MEDIA_LIBRARY_INGEST_AI_MODE to shadow or assist)",
+            "code": "INGEST_AI_NOT_CONFIGURED",
+        })
+    if payload.itemId not in queue_service.items_by_id:
+        raise HTTPException(status_code=404, detail={
+            "type": "NotFoundError",
+            "message": f"Queue item {payload.itemId} not found",
+            "code": "QUEUE_ITEM_NOT_FOUND",
+        })
+
+    classifications = await refresh(payload.itemId)
+    return {
+        "success": bool(classifications),
+        "data": {
+            "mode": getattr(classifier, "mode", "off"),
+            "classifications": classifications or [],
+        },
         "timestamp": str(int(time.time())),
     }
 

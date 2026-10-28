@@ -6,6 +6,7 @@ import {
   Button,
   Checkbox,
   Chip,
+  CircularProgress,
   FormControl,
   IconButton,
   MenuItem,
@@ -16,22 +17,29 @@ import ChevronRightIcon from '@mui/icons-material/ChevronRight';
 import EditIcon from '@mui/icons-material/Edit';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import type {
+  IngressAiSettings,
   IngressQueueGroup,
   IngressQueueItem,
   QueueClassificationOverride,
   QueueGroupBy,
 } from '@/service/ingress/IngressAutomationService';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import { CLASSIFICATION_OPTIONS, STATUS_COLORS, isClassificationEditable, isQueueItemAssignable } from '@/service/ingress/ingressQueueModel';
 import {
   GROUP_ROW_HEIGHT,
   MORE_ROW_HEIGHT,
   PREVIEW_ROW_HEIGHT,
+  describeAcceptAction,
+  formatAiConfidence,
   formatConfidenceRange,
   formatGroupCount,
   getGroupActionCount,
+  getGroupAiSummaryLabel,
   getGroupLabel,
   getGroupStatusChips,
   getGroupSubLabel,
+  getItemAiLabel,
+  getAiSettings,
   getOldestAgeLabel,
   getQueueStatusLabel,
   queueGroupSignature,
@@ -50,9 +58,16 @@ type GroupRowProps = {
   working: boolean;
   /** A batch for this group is in flight: the row already shows its optimistic status. */
   inFlight: boolean;
+  /** Live Jev mode and confidence floor, from GET /queue/groups — decides how answers read. */
+  ai?: IngressAiSettings;
+  /** A folder classification for this group is running; only this button waits for it. */
+  reclassifying: boolean;
+  /** Reviewer-picked Jev confidence floor for this group's Accept, or null for a plain accept. */
+  acceptMinConfidence: number | null;
   onToggleGroup: (group: IngressQueueGroup) => void;
   onToggleExpand: (group: IngressQueueGroup) => void;
   onGroupAction: (action: 'accept' | 'ignore', group: IngressQueueGroup) => void;
+  onReclassifyGroup: (group: IngressQueueGroup) => void;
 };
 
 export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
@@ -63,13 +78,27 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
   excludedCount,
   working,
   inFlight,
+  ai,
+  reclassifying,
+  acceptMinConfidence,
   onToggleGroup,
   onToggleExpand,
   onGroupAction,
+  onReclassifyGroup,
 }) => {
   const label = getGroupLabel(group, groupBy);
+  const settings = getAiSettings(ai);
   const acceptCount = getGroupActionCount(group, 'accept', excludedCount);
+  const acceptAction = describeAcceptAction(acceptCount, acceptMinConfidence);
   const ignoreCount = getGroupActionCount(group, 'ignore', excludedCount);
+  // The classifier answers a whole folder from one of its files, and triage only holds the preview.
+  const canReclassify = (group.preview_items || []).length > 0;
+  // Same button either way — the floor only narrows what the server agrees to organize, and saying so
+  // here is what tells a reviewer why the accepted count can come back smaller than this number.
+  const acceptTitle =
+    acceptMinConfidence === null
+      ? 'Organize every item in this folder and write the library records — the same path as accepting one item'
+      : `Organize only the items Jev answers with at least ${formatAiConfidence(acceptMinConfidence)} confidence — the rest are skipped, and the configured floor is never lower`;
 
   return (
     <Box
@@ -103,11 +132,35 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
         <Typography noWrap variant="caption" color="text.secondary" title={group.ingress_path}>
           {getGroupSubLabel(group)}
         </Typography>
-        {group.suggestion ? (
-          <Typography noWrap variant="caption" color="text.secondary" display="block">
-            Suggested: {group.suggestion}
-          </Typography>
-        ) : null}
+        {/* #36's line: the group's Jev summary. Rendered whether or not there are answers, so rows
+            with AI and rows without keep the same height. */}
+        <Typography
+          noWrap
+          variant="caption"
+          color="text.secondary"
+          display="flex"
+          alignItems="center"
+          gap={0.5}
+          title={getGroupAiSummaryLabel(group, settings)}
+        >
+          <Box component="span" sx={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {getGroupAiSummaryLabel(group, settings)}
+          </Box>
+          <IconButton
+            size="small"
+            disabled={working || reclassifying || !canReclassify}
+            onClick={() => onReclassifyGroup(group)}
+            aria-label={`Re-classify ${label} with Jev`}
+            title={
+              canReclassify
+                ? `Run the Jev classifier on this folder now (mode: ${settings.mode})`
+                : 'No preview item in this group to classify'
+            }
+            sx={{ flexShrink: 0, p: 0.25 }}
+          >
+            {reclassifying ? <CircularProgress size={14} /> : <AutoAwesomeIcon fontSize="small" />}
+          </IconButton>
+        </Typography>
         {inFlight ? (
           <Typography variant="caption" display="block">
             Applying…
@@ -139,10 +192,10 @@ export const IngressTriageGroupRow: React.FC<GroupRowProps> = ({
           variant="contained"
           disabled={working || acceptCount === 0}
           onClick={() => onGroupAction('accept', group)}
-          aria-label={`Accept ${acceptCount} in this group`}
-          title="Organize every item in this folder and write the library records — the same path as accepting one item"
+          aria-label={acceptAction.ariaLabel}
+          title={acceptTitle}
         >
-          Accept {acceptCount}
+          {acceptAction.text}
         </Button>
         {/* aria-label, not a Tooltip: a Tooltip would replace the button's accessible name with its warning text. */}
         <Button
@@ -179,6 +232,8 @@ type PreviewRowProps = {
   groupSelected: boolean;
   excluded: boolean;
   working: boolean;
+  /** Absent from a backend predating issue #36, which the UI reads as mode "off" with no answers. */
+  ai?: IngressAiSettings;
   onToggleExcluded: (item: IngressQueueItem, checked: boolean) => void;
   onItemAction: (action: 'accept' | 'ignore' | 'retry', item: IngressQueueItem) => void;
   /** The flat queue table's own per-item affordances, reused here rather than re-invented (#35 review). */
@@ -191,95 +246,108 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
   groupSelected,
   excluded,
   working,
+  ai,
   onToggleExcluded,
   onItemAction,
   onReclassify,
   onAssign,
-}) => (
-  <Box
-    data-testid={`triage-item-${item.id}`}
-    sx={{
-      alignItems: 'center',
-      display: 'grid',
-      gap: 1,
-      gridTemplateColumns: ROW_COLUMNS,
-      height: `${PREVIEW_ROW_HEIGHT}px`,
-      pl: 6,
-      pr: 1,
-    }}
-    role="row"
-  >
-    <Checkbox
-      size="small"
-      checked={groupSelected && !excluded}
-      disabled={working || !groupSelected}
-      onChange={(event) => onToggleExcluded(item, event.target.checked)}
-      inputProps={{ 'aria-label': `Include ${item.file_name} in the batch` }}
-    />
-    <Box />
-    <Typography noWrap variant="body2" title={item.file_path}>
-      {item.file_name}
-    </Typography>
-    <Box />
-    <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-      <Chip
+}) => {
+  const aiLabel = getItemAiLabel(item, getAiSettings(ai));
+  return (
+    <Box
+      data-testid={`triage-item-${item.id}`}
+      sx={{
+        alignItems: 'center',
+        display: 'grid',
+        gap: 1,
+        gridTemplateColumns: ROW_COLUMNS,
+        height: `${PREVIEW_ROW_HEIGHT}px`,
+        pl: 6,
+        pr: 1,
+      }}
+      role="row"
+    >
+      <Checkbox
         size="small"
-        variant="outlined"
-        color={getChipColor(item.status)}
-        label={getQueueStatusLabel(item.status)}
+        checked={groupSelected && !excluded}
+        disabled={working || !groupSelected}
+        onChange={(event) => onToggleExcluded(item, event.target.checked)}
+        inputProps={{ 'aria-label': `Include ${item.file_name} in the batch` }}
       />
-      {/* Same classification override the flat queue table row exposes: triage from the folder view without
-          losing the row to a re-scan, and the parent posts the identical request. */}
-      <FormControl size="small" sx={{ flexShrink: 0, width: 104 }}>
-        <Select
-          value={item.classification_override || 'auto'}
-          disabled={!isClassificationEditable(item) || working}
-          onChange={(event) => onReclassify(item, event.target.value as QueueClassificationOverride)}
-          // The name has to land on the combobox itself (MUI keeps a FormControl's aria-label on the
-          // wrapper), and it has to name the file: a folder view holds one control per preview row.
-          inputProps={{ 'aria-label': `Classification override for ${item.file_name}` }}
-        >
-          {CLASSIFICATION_OPTIONS.map((option) => (
-            <MenuItem key={option.value} value={option.value}>
-              {option.label}
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
-      {item.best_match?.title ? (
-        <Typography noWrap variant="caption" color="text.secondary">
-          {item.best_match.title}
-        </Typography>
-      ) : null}
-    </Box>
-    <Box />
-    <Typography variant="caption" color="text.secondary">
-      {item.confidence_score === undefined ? '—' : `${item.confidence_score}%`}
-    </Typography>
-    <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
-      {isQueueItemAssignable(item) ? (
-        <IconButton
+      <Box />
+      <Typography noWrap variant="body2" title={item.file_path}>
+        {item.file_name}
+      </Typography>
+      {/* Jev's own answer for this file — label + confidence, or the explicit no-answer state. Always
+          rendered: a folder with AI off and a folder with answers keep the same 90px slot. */}
+      <Box data-testid={`triage-ai-${item.id}`} title={aiLabel.detail} sx={{ minWidth: 0 }}>
+        <Chip
           size="small"
-          disabled={working}
-          onClick={() => onAssign(item)}
-          aria-label={`Assign ${item.file_name} manually`}
-          title="Pick the title by hand — the same dialog the flat queue list uses"
-        >
-          <EditIcon fontSize="small" />
-        </IconButton>
-      ) : null}
-      <Button size="small" color="inherit" disabled={working} onClick={() => onItemAction('retry', item)}>
-        Retry
-      </Button>
-      <Button size="small" color="inherit" disabled={working} onClick={() => onItemAction('accept', item)}>
-        Accept
-      </Button>
-      <Button size="small" color="inherit" disabled={working} onClick={() => onItemAction('ignore', item)}>
-        Ignore
-      </Button>
+          variant={aiLabel.answered ? 'filled' : 'outlined'}
+          color={aiLabel.answered ? 'primary' : 'default'}
+          label={aiLabel.text}
+        />
+      </Box>
+      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+        <Chip
+          size="small"
+          variant="outlined"
+          color={getChipColor(item.status)}
+          label={getQueueStatusLabel(item.status)}
+        />
+        {/* Same classification override the flat queue table row exposes: triage from the folder view without
+            losing the row to a re-scan, and the parent posts the identical request. */}
+        <FormControl size="small" sx={{ flexShrink: 0, width: 104 }}>
+          <Select
+            value={item.classification_override || 'auto'}
+            disabled={!isClassificationEditable(item) || working}
+            onChange={(event) => onReclassify(item, event.target.value as QueueClassificationOverride)}
+            // The name has to land on the combobox itself (MUI keeps a FormControl's aria-label on the
+            // wrapper), and it has to name the file: a folder view holds one control per preview row.
+            inputProps={{ 'aria-label': `Classification override for ${item.file_name}` }}
+          >
+            {CLASSIFICATION_OPTIONS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        {item.best_match?.title ? (
+          <Typography noWrap variant="caption" color="text.secondary">
+            {item.best_match.title}
+          </Typography>
+        ) : null}
+      </Box>
+      <Box />
+      <Typography variant="caption" color="text.secondary">
+        {item.confidence_score === undefined ? '—' : `${item.confidence_score}%`}
+      </Typography>
+      <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+        {isQueueItemAssignable(item) ? (
+          <IconButton
+            size="small"
+            disabled={working}
+            onClick={() => onAssign(item)}
+            aria-label={`Assign ${item.file_name} manually`}
+            title="Pick the title by hand — the same dialog the flat queue list uses"
+          >
+            <EditIcon fontSize="small" />
+          </IconButton>
+        ) : null}
+        <Button size="small" color="inherit" disabled={working} onClick={() => onItemAction('retry', item)}>
+          Retry
+        </Button>
+        <Button size="small" color="inherit" disabled={working} onClick={() => onItemAction('accept', item)}>
+          Accept
+        </Button>
+        <Button size="small" color="inherit" disabled={working} onClick={() => onItemAction('ignore', item)}>
+          Ignore
+        </Button>
+      </Box>
     </Box>
-  </Box>
-);
+  );
+};
 
 // The parent owns every request; this row only reports intent.
 function getChipColor(status: string) {

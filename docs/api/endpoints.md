@@ -460,6 +460,18 @@ path; `limit` is 1-50 groups and `previewSize` 0-10 items per group. An unknown 
   stay two groups. Files sitting directly in the ingress root share the `""` bucket, and
   `ingress_path` stays part of the key so identically named rip folders under different watched
   roots never merge.
+- Each group also carries an `ai_summary` roll-up of the Jev ingest-classifier answers among its
+  triageable items, read out of `parsed_info->'ai_classification'` — the key the decision model writes
+  (epic #17). `agree` counts answers that match the filename parser's hint
+  (`parsed_info->>'classification_hint'`, main feature when it had none), `conflict` the ones that do
+  not, and `min_confidence` is the weakest answer in the group (`null` when nothing answered). A manual
+  `classification_override` outranks the answer and is deliberately left out of the comparison, so a
+  human correction never reads as a second machine opinion.
+- That makes `ai_summary` the *AI vs parser* axis the triage rows show. The classifier branch
+  (`feat/jev-ingest-decisions`) also exposes `GET /api/ingress/queue/ai-report`, which counts a
+  different axis — *AI vs what the human finally chose*, read out of the `classification_updated` /
+  `classification_override` history events — so the two sets of numbers answer different questions and
+  are not expected to match file for file.
 
 **Response:**
 ```json
@@ -475,11 +487,13 @@ path; `limit` is 1-50 groups and `previewSize` 0-10 items per group. An unknown 
       "confidence_max": 91,
       "first_queued_at": "2026-05-01T12:00:00+00:00",
       "last_queued_at": "2026-05-01T12:30:00+00:00",
+      "ai_summary": {"answered": 2, "missing": 0, "agree": 1, "conflict": 1, "min_confidence": 0.61},
       "preview_items": [{"id": "…", "file_name": "The.Matrix.2000.mkv", "status": "pending"}]
     }],
     "total_groups": 1,
     "total_items": 2,
     "status_counts": {"pending": 2, "processing": 0, "auto_assigned": 0, "needs_review": 0, "failed": 1, "completed": 0, "ignored": 0},
+    "ai": {"mode": "shadow", "min_confidence": 0.7},
     "group_by": "parsed_title",
     "limit": 25,
     "offset": 0,
@@ -490,6 +504,14 @@ path; `limit` is 1-50 groups and `previewSize` 0-10 items per group. An unknown 
 
 With `groupBy=source_folder` the group instead carries
 `"group_key": {"media_type": "movie", "ingress_path": "/ark/ingest", "title": null, "source_folder": "The.Matrix.1999.DISC1"}`.
+
+The top-level `ai` block reports how those answers were produced: `mode` is
+`MEDIA_LIBRARY_INGEST_AI_MODE` (`off` / `shadow` / `assist`, unknown values read as `off`) and
+`min_confidence` is `MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE` (default `0.7`) — the floor the
+classifier applied and the floor a bulk accept can raise but never lower. A preview item carries its
+own answer at `parsed_info.ai_classification` (`label`, `confidence`, `probabilities`, `model`,
+`classified_at`, …), which is what the triage row shows per file; a file with no answer shows that as
+"no AI answer" rather than an error.
 
 ### Bulk Queue Action
 ```http
@@ -502,7 +524,8 @@ Content-Type: application/json
   "group": {"media_type": "movie", "ingress_path": "/ark/ingest", "title": "the matrix"},
   "statuses": ["pending", "failed"],
   "excludeItemIds": ["9c2d…"],
-  "classification": "special_feature"
+  "classification": "special_feature",
+  "min_confidence": 0.8
 }
 ```
 Applies one `action` to `itemIds` and/or every item resolved from a `group` selector, item by item,
@@ -536,6 +559,16 @@ the `group_key` returned by the listing feeds straight back in. Each mutated ite
 }
 ```
 
+`min_confidence` (0-1) gates the action on the Jev answer stored at
+`parsed_info->'ai_classification'`: an item with no answer, or with one under the threshold, comes
+back `status: "skipped"` with its own error line instead of being applied. It applies to whichever
+action it is sent with — the triage UI sends it on `accept` only. The configured
+`MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE` is a hard lower bound, so the threshold actually applied is
+the higher of the two and comes back as `confidence_floor` (`null` when nothing was gated); other
+actions ignore the field, and a value outside 0-1 returns 422. Accepting without `min_confidence`
+keeps the ungated behaviour, because `MEDIA_LIBRARY_INGEST_AI_MODE=off` means there is no answer to
+gate on.
+
 Requests without a valid `action`, without `itemIds`/`group`, or with an unknown `classification`
 return 400 with `code: "INVALID_BULK_REQUEST"`.
 
@@ -558,6 +591,39 @@ An `ignored` file stays ignored when the watcher sees it again, including after 
 (the backend indexes persisted rows by `file_path` at startup). A re-detected file updates its
 existing row instead of adding a new one. An explicit `POST /api/ingress/queue/add-files` may still
 re-queue an ignored file.
+
+### Re-classify A Queue Folder With Jev
+```http
+POST /api/ingress/queue/ai-classify
+Content-Type: application/json
+
+{"itemId": "0f6a…"}
+```
+Runs the ingest decision model on the folder this queue item belongs to *now*, whatever the configured
+mode, and stores each answer at `parsed_info->'ai_classification'` — the same classifier the watcher
+already uses, reached through the queue service, so there is never a second one. One item id is
+enough: the model answers every file in that folder from it, which is what the triage page's
+per-group "Re-classify with Jev" action posts.
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "mode": "shadow",
+    "classifications": {
+      "0f6a…": {"label": "alternate_version", "confidence": 0.83, "model": "jev-decisions"}
+    }
+  }
+}
+```
+`classifications` is one entry per file the model labelled, keyed by queue item id (a client should
+also accept the array form, which is what a listing of stored answers sends); files the model could not
+read are left out and get `parsed_info.ai_classification_failed` instead. `success` is `false` when the
+model ran but answered nothing for this folder. A backend built without
+the classifier (`MEDIA_LIBRARY_INGEST_AI_MODE` unset/`off`) returns 503 with
+`code: "INGEST_AI_NOT_CONFIGURED"` rather than guessing at a label, and an id that is not in the queue
+returns 404 with `code: "QUEUE_ITEM_NOT_FOUND"`.
 
 ---
 
