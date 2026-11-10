@@ -148,7 +148,7 @@ def test_mark_complete_settles_a_status_when_the_assignment_step_itself_raises()
     service.assignment_orchestrator = _ObservingOrchestrator(service)
     item = _queued(service, "/inbox/Heat/heat.mkv", QUEUE_NEEDS_REVIEW)
 
-    async def boom(queue_item, force_organize=False):
+    async def boom(queue_item, force_organize=False, manual_action=False):
         raise RuntimeError("assignment step exploded")
 
     service._attempt_auto_assignment = boom
@@ -169,7 +169,7 @@ async def test_mark_complete_endpoint_answers_409_for_a_busy_item():
     from main import app
 
     class _Busy:
-        async def mark_complete(self, item_id, history_extra=None):
+        async def mark_complete(self, item_id, history_extra=None, manual_action=False):
             raise QueueItemBusy(f"Queue item '{item_id}' is being processed; try again once it finishes")
 
     saved = getattr(app.state, "ingress_queue_service", None)

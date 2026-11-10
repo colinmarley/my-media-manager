@@ -192,7 +192,9 @@ class AssignmentOrchestrator:
                     db_assignment.assigned_by = assignment_doc.get("source")
                     db_assignment.assigned_date = datetime.utcnow()
                     db_assignment.confidence = queue_item.get("confidence_score") or 0
-                    db_assignment.is_manual_assignment = (best_match.get("source") == "manual")
+                    # Set by the route that received the person's action (manual
+                    # assign, accept), never inferred from the match source.
+                    db_assignment.is_manual_assignment = bool(queue_item.get("manual_assignment"))
                     db_assignment.match_data = assignment_doc.get("match") or {}
 
                     if media_file is not None:

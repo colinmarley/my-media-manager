@@ -196,9 +196,10 @@ def test_qa5_bulk_accept_and_single_item_accept_take_the_same_mark_complete_path
     mark_complete_calls = []
     original_mark_complete = IngressQueueService.mark_complete
 
-    async def spy(self, item_id, history_extra=None):
-        mark_complete_calls.append({"item_id": item_id, "history_extra": history_extra})
-        return await original_mark_complete(self, item_id, history_extra)
+    async def spy(self, item_id, history_extra=None, manual_action=False):
+        mark_complete_calls.append({"item_id": item_id, "history_extra": history_extra,
+                                    "manual_action": manual_action})
+        return await original_mark_complete(self, item_id, history_extra, manual_action=manual_action)
 
     monkeypatch.setattr(IngressQueueService, "mark_complete", spy)
 
@@ -231,6 +232,8 @@ def test_qa5_bulk_accept_and_single_item_accept_take_the_same_mark_complete_path
     assert by_item[single_item.id]["history_extra"] is None
     bulk_extra = by_item[bulk_item.id]["history_extra"]
     assert bulk_extra["action"] == "accept" and bulk_extra["source"] == "bulk" and bulk_extra["batch_id"]
+    # Both routes received a person's accept, so both record a manual assignment.
+    assert {entry["manual_action"] for entry in mark_complete_calls} == {True}
 
     # AC5: both ask the orchestrator to organize, with the same effective payload
     assert len(orchestrator.calls) == 2

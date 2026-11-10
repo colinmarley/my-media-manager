@@ -572,7 +572,7 @@ async def mark_ingress_item_complete(payload: QueueRetryRequest, req: Request):
     queue_service = req.app.state.ingress_queue_service
 
     try:
-        queue_item = await queue_service.mark_complete(payload.itemId)
+        queue_item = await queue_service.mark_complete(payload.itemId, manual_action=True)
     except QueueItemBusy as exc:
         raise HTTPException(status_code=409, detail={
             "type": "ConflictError",
@@ -711,6 +711,7 @@ async def manual_assign_ingress_item(
         payload.itemId,
         match_payload,
         organize_now=payload.organizeNow,
+        manual_action=True,
     )
     if queue_item is None:
         raise HTTPException(status_code=404, detail={

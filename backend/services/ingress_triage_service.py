@@ -477,7 +477,10 @@ class IngressTriageService:
 
         try:
             if action == BULK_ACCEPT:
-                updated = await self.queue_service.mark_complete(item_id, history_extra=history_extra)
+                # Bulk accept is only reachable from POST /queue/bulk, i.e. a person's action.
+                updated = await self.queue_service.mark_complete(
+                    item_id, history_extra=history_extra, manual_action=True
+                )
             elif action == BULK_IGNORE:
                 updated = await self.queue_service.mark_ignored(item_id, history_extra=history_extra)
             elif action == BULK_RETRY:
