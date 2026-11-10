@@ -40,6 +40,10 @@ TITLE_POINTS_MAX = 55
 YEAR_EXACT_POINTS = 25
 YEAR_OFF_BY_ONE_POINTS = 15
 YEAR_OFF_BY_TWO_POINTS = 5
+# A year further off is evidence against the candidate, not just missing evidence:
+# without it a same-named show or remake from decades later ("Unsolved Mysteries"
+# 1988 vs 2020) lands within the ambiguity margin once both scores hit the 100 cap.
+YEAR_MISMATCH_POINTS = -20
 SERIES_KIND_POINTS = 15
 EPISODE_PRESENT_POINTS = 10
 ID_MATCH_POINTS = 100
@@ -472,6 +476,31 @@ class AutoMatcherService:
 
         return candidates
 
+    def _tmdb_search_results(self, kind: str, title: str, year: Optional[int]) -> List[Dict[str, Any]]:
+        """Run a TMDB title search, filtered by year first.
+
+        TMDB treats the year as a hard filter, and a folder year is often one off
+        from TMDB's date (a series dated by its first special, a film by its
+        festival premiere): "Unsolved Mysteries (1987)" first aired in 1988 on
+        TMDB, so the filtered search finds nothing. When that happens the search
+        is repeated without the year; the scorer still rewards a close year and
+        penalises a distant one.
+        """
+        year_param = "first_air_date_year" if kind == "tv" else "year"
+        attempts = [{year_param: year}, {}] if year else [{}]
+        results: List[Dict[str, Any]] = []
+        for extra in attempts:
+            response = requests.get(
+                f"{self.tmdb_base_url}/search/{kind}",
+                params={"api_key": self.tmdb_api_key, "query": title, **extra},
+                timeout=self.request_timeout,
+            )
+            response.raise_for_status()
+            results = response.json().get("results", []) or []
+            if results:
+                break
+        return results
+
     def _search_tmdb_movie(
         self, title: str, year: Optional[int] = None
     ) -> List[MatchCandidate]:
@@ -481,22 +510,7 @@ class AutoMatcherService:
 
         candidates = []
         try:
-            params: Dict[str, Any] = {
-                "api_key": self.tmdb_api_key,
-                "query": title,
-            }
-            if year:
-                params["year"] = year
-
-            response = requests.get(
-                f"{self.tmdb_base_url}/search/movie",
-                params=params,
-                timeout=self.request_timeout,
-            )
-            response.raise_for_status()
-
-            data = response.json()
-            for result in data.get("results", [])[:10]:
+            for result in self._tmdb_search_results("movie", title, year)[:10]:
                 candidates.append(self._tmdb_result_to_candidate(result, "movie"))
 
         except requests.RequestException as exc:
@@ -517,22 +531,7 @@ class AutoMatcherService:
 
         candidates = []
         try:
-            params: Dict[str, Any] = {
-                "api_key": self.tmdb_api_key,
-                "query": title,
-            }
-            if year:
-                params["first_air_date_year"] = year
-
-            response = requests.get(
-                f"{self.tmdb_base_url}/search/tv",
-                params=params,
-                timeout=self.request_timeout,
-            )
-            response.raise_for_status()
-
-            data = response.json()
-            for result in data.get("results", [])[:10]:
+            for result in self._tmdb_search_results("tv", title, year)[:10]:
                 candidate = self._tmdb_result_to_candidate(result, "series")
                 candidate.season = season
                 candidate.episode = episode
@@ -815,7 +814,9 @@ class AutoMatcherService:
                 breakdown.append({"rule": "year_off_by_two", "points": YEAR_OFF_BY_TWO_POINTS,
                                   "note": f"{parsed_year} vs {candidate.year}"})
             else:
-                breakdown.append({"rule": "year_mismatch", "points": 0, "note": f"{parsed_year} vs {candidate.year}"})
+                score += YEAR_MISMATCH_POINTS
+                breakdown.append({"rule": "year_mismatch", "points": YEAR_MISMATCH_POINTS,
+                                  "note": f"{parsed_year} vs {candidate.year}"})
         elif parsed_year and not candidate.year:
             breakdown.append({"rule": "year_unknown", "points": 0, "note": "candidate has no year"})
         else:
