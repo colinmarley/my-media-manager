@@ -23,6 +23,14 @@ from sqlalchemy.exc import IntegrityError
 from config.settings import settings
 from db.models import IngressProcessingHistory as DBIngressProcessingHistory
 from db.models import IngressQueueItem as DBIngressQueueItem
+from services.auto_matcher_service import AutoMatcherService
+from services.disc_track_mapper import (
+    ROLE_EPISODE,
+    DiscTrackMapper,
+    SetMapping,
+    TrackFile,
+    is_track_stem,
+)
 from services.filename_parser import FilenameParser
 from utils.logging import logger
 
@@ -198,6 +206,9 @@ class IngressQueueService:
         # One proposal refresh at a time, so an older snapshot can never be
         # written over a newer one.
         self._proposal_refresh_lock = threading.Lock()
+        # Track-set mappings by (folder, tracks and durations), so every file of
+        # a disc rip reuses the mapping computed for its first file.
+        self._track_set_cache: Dict[Tuple[str, Tuple[Tuple[str, Any], ...]], Optional[SetMapping]] = {}
 
     @staticmethod
     def _to_datetime(value: Optional[float]) -> Optional[datetime]:
@@ -472,11 +483,21 @@ class IngressQueueService:
                     parsed_info["title"] = self.parser._clean_folder_title(grandparent)
                     parsed_info["normalized_title"] = self.parser.normalize_title(parsed_info["title"])
                     parsed_info["year"] = parsed_info.get("year") or self.parser._extract_year(grandparent)
-            # The matcher compares the file duration with the provider runtime;
-            # it is passed alongside, not stored in parsed_info.
-            match_result = self._run_matcher(
-                {**parsed_info, "media_duration_ms": candidate.media_duration_ms}
-            )
+            # A folder of MakeMKV track files (B1_t00.mkv ...) that is a TV disc
+            # rip is matched as a set: series from the folder, episodes from
+            # track order and durations. Such a mapping is a guess, so it is
+            # always held for review with the proposal pre-filled.
+            track_result = self._match_track_set(candidate, parsed_info)
+            force_review_reason: Optional[str] = None
+            if track_result is not None:
+                match_result, parsed_info["track_mapping"], force_review_reason = track_result
+            else:
+                parsed_info.pop("track_mapping", None)
+                # The matcher compares the file duration with the provider runtime;
+                # it is passed alongside, not stored in parsed_info.
+                match_result = self._run_matcher(
+                    {**parsed_info, "media_duration_ms": candidate.media_duration_ms}
+                )
             best_match = match_result.get("best_match") if match_result else None
             has_best_match = isinstance(best_match, dict) and bool(best_match)
             ambiguous = bool(match_result.get("ambiguous")) if match_result else False
@@ -494,7 +515,9 @@ class IngressQueueService:
                     confidence_score = 0
 
             review_reason: Optional[str] = None
-            if not has_best_match:
+            if force_review_reason:
+                review_reason = force_review_reason
+            elif not has_best_match:
                 status_value = (match_result or {}).get("status")
                 if status_value == "no_title":
                     review_reason = "no title could be parsed from the filename or folders"
@@ -538,6 +561,7 @@ class IngressQueueService:
                     QUEUE_AUTO_ASSIGNED
                     if has_best_match
                     and not ambiguous
+                    and not force_review_reason
                     and confidence_score is not None
                     and confidence_score >= self.auto_assign_threshold
                     else QUEUE_NEEDS_REVIEW
@@ -1271,6 +1295,12 @@ class IngressQueueService:
                 or bool(re.match(r"^[A-Za-z]\d+[_-]t\d+$", stem))
             )
 
+        def _is_mapped_track(item: Dict[str, Any]) -> bool:
+            # A disc track mapped to an episode has its own episode proposal; it
+            # neither anchors nor inherits a companion match.
+            mapping = (item.get("parsed_info") or {}).get("track_mapping") or {}
+            return bool(mapping.get("mapped")) and mapping.get("role") == ROLE_EPISODE
+
         def _classification_override(item: Dict[str, Any]) -> Optional[str]:
             override = (
                 item.get("classification_override")
@@ -1445,7 +1475,9 @@ class IngressQueueService:
             if not matched:
                 continue
 
-            anchor_candidates = [i for i in matched if not _looks_like_companion_item(items[i])]
+            anchor_candidates = [
+                i for i in matched if not _looks_like_companion_item(items[i]) and not _is_mapped_track(items[i])
+            ]
             if not anchor_candidates:
                 continue
 
@@ -1458,6 +1490,7 @@ class IngressQueueService:
             companion_indices = [
                 i for i in source_indices
                 if i != anchor_idx and i not in resolved and _looks_like_companion_item(items[i])
+                and not _is_mapped_track(items[i])
             ]
 
             for offset, idx in enumerate(sorted(companion_indices, key=lambda i: items[i].get("media_duration_ms") or 0, reverse=True), start=0):
@@ -1893,6 +1926,185 @@ class IngressQueueService:
             score += 5
 
         return max(0, min(score, 100))
+
+    # ------------------------------------------------------------------
+    # Disc track sets (MakeMKV B1_t00.mkv files of a TV disc)
+    # ------------------------------------------------------------------
+
+    _TRACK_SET_CACHE_MAX = 256
+    _NON_YEAR_PAREN_GROUP = re.compile(r"\((?!\s*(?:19|20)\d{2})[^)]*\)")
+
+    def _track_set_queries(
+        self, file_path: str, ingress_path: str, parsed_info: Dict[str, Any]
+    ) -> List[Tuple[str, Optional[int]]]:
+        """Series titles to try for a track set, most specific first.
+
+        "SpongeBob SquarePants (lost at sea) (1999-)" is tried as is, then
+        without the volume name in parentheses, then as its parent folder.
+        """
+        folder = os.path.dirname(os.path.abspath(file_path))
+        folder_name = os.path.basename(folder)
+        year = self.parser._folder_year(folder_name) or parsed_info.get("year")
+        names = [folder_name, self._NON_YEAR_PAREN_GROUP.sub(" ", folder_name)]
+        parent = os.path.dirname(folder)
+        root = os.path.abspath(ingress_path) if ingress_path else ""
+        if root and parent != root and self._is_within_path(parent, root):
+            names.append(os.path.basename(parent))
+        queries: List[Tuple[str, Optional[int]]] = []
+        seen: Set[str] = set()
+        for name in names:
+            title = self.parser._clean_folder_title(name)
+            key = self.parser.normalize_title(title)
+            if not key or key in seen or self.parser.is_generic_companion_label(title):
+                continue
+            if key in self.parser._generic_root_folders:
+                continue
+            seen.add(key)
+            queries.append((title, self.parser._folder_year(name) or year))
+        return queries
+
+    def _track_set_files(self, candidate: IngressQueueItem) -> List[TrackFile]:
+        """Every MakeMKV track file in the candidate's folder, with the durations known so far."""
+        folder = os.path.dirname(os.path.abspath(candidate.file_path))
+        paths: List[str] = []
+        try:
+            for name in os.listdir(folder):
+                full_path = os.path.join(folder, name)
+                if (
+                    is_track_stem(os.path.splitext(name)[0])
+                    and self._is_video_file_path(full_path)
+                    and os.path.isfile(full_path)
+                ):
+                    paths.append(os.path.abspath(full_path))
+        except OSError:
+            paths = []
+        with self.lock:
+            queued = {
+                os.path.abspath(item.file_path): item
+                for item in self.items_by_id.values()
+                if os.path.dirname(os.path.abspath(item.file_path)) == folder
+                and is_track_stem(os.path.splitext(item.file_name)[0])
+            }
+        if not paths:
+            paths = list(queued)
+        own_path = os.path.abspath(candidate.file_path)
+        if own_path not in paths:
+            paths.append(own_path)
+
+        tracks: List[TrackFile] = []
+        for path in paths:
+            item = candidate if path == own_path else queued.get(path)
+            duration = item.media_duration_ms if item is not None else None
+            if duration is None:
+                duration = _get_file_duration(path)
+                if item is not None and duration is not None:
+                    with self.lock:
+                        if item.media_duration_ms is None:
+                            item.media_duration_ms = duration
+            tracks.append(TrackFile(
+                file_path=path,
+                stem=os.path.splitext(os.path.basename(path))[0],
+                duration_ms=duration,
+            ))
+        return tracks
+
+    def _match_track_set(
+        self, candidate: IngressQueueItem, parsed_info: Dict[str, Any]
+    ) -> Optional[Tuple[Dict[str, Any], Dict[str, Any], str]]:
+        """Match result, track_mapping info and review reason for a disc track file.
+
+        None when the file is not a MakeMKV track of a TV set; the caller then
+        runs the normal matcher.
+        """
+        matcher = self.auto_matcher_service
+        if not isinstance(matcher, AutoMatcherService):
+            return None
+        if not is_track_stem(os.path.splitext(candidate.file_name)[0]):
+            return None
+        if parsed_info.get("imdb_id") or parsed_info.get("tmdb_id"):
+            return None  # the id-first lookup settles identity
+        mapper = DiscTrackMapper(matcher)
+        if not mapper.available():
+            return None
+
+        tracks = self._track_set_files(candidate)
+        folder = os.path.dirname(os.path.abspath(candidate.file_path))
+        key = (folder, tuple(sorted((t.stem, t.duration_ms) for t in tracks)))
+        if key in self._track_set_cache:
+            mapping = self._track_set_cache[key]
+        else:
+            try:
+                mapping = mapper.map_set(
+                    os.path.basename(folder),
+                    self._track_set_queries(candidate.file_path, candidate.ingress_path, parsed_info),
+                    tracks,
+                )
+            except Exception as exc:
+                logger.warning("Disc track mapping failed", folder=folder, error=str(exc))
+                return None
+            if len(self._track_set_cache) >= self._TRACK_SET_CACHE_MAX:
+                self._track_set_cache.clear()
+            self._track_set_cache[key] = mapping
+        if mapping is None:
+            return None
+
+        own = mapping.files.get(os.path.abspath(candidate.file_path)) or {}
+        series = dict(mapping.series)
+        breakdown = list(series.get("score_breakdown") or []) + [dict(e) for e in mapping.set_entries]
+        file_note = own.get("note")
+        info: Dict[str, Any] = {
+            "mapped": mapping.mapped,
+            "role": own.get("role"),
+            "set_folder": os.path.basename(folder),
+            "set_size": len(tracks),
+            "series_title": series.get("title"),
+            "series_tmdb_id": series.get("media_id"),
+        }
+        reason = mapping.review_reason + (f"; this file: {file_note}" if file_note else "")
+
+        if mapping.mapped and own.get("role") == ROLE_EPISODE:
+            breakdown.append({"rule": "track_episode", "points": 0, "note": file_note})
+            runtime_entry = matcher._runtime_entry(
+                candidate.media_duration_ms,
+                int(round(own["runtime"])) if own.get("runtime") else None,
+                episode=True,
+            )
+            if runtime_entry is not None:
+                breakdown.append(runtime_entry)
+            breakdown.append({
+                "rule": "needs_confirmation",
+                "points": 0,
+                "note": "episode guessed from track order and durations; never auto-assigned",
+            })
+            best = dict(series)
+            best.update({
+                "season": own["season"],
+                "episode": own["episode"],
+                "episode_title": own.get("episode_title"),
+                "score_breakdown": breakdown,
+                "confidence_score": max(0, min(sum(int(e.get("points") or 0) for e in breakdown), 100)),
+            })
+            best["match_reason"] = matcher._format_reason(breakdown)
+            info.update({"season": own["season"], "episode": own["episode"]})
+            return (
+                {"status": "success", "found": True, "candidates": [best], "best_match": best,
+                 "ambiguous": False, "margin": None, "lookup": "track_set"},
+                info,
+                reason,
+            )
+
+        # Unmapped set, or a non-episode track of a mapped set: the series is
+        # shown as a candidate but nothing is proposed.
+        if file_note:
+            breakdown.append({"rule": "track_role", "points": 0, "note": file_note})
+        series["score_breakdown"] = breakdown
+        series["match_reason"] = matcher._format_reason(breakdown)
+        return (
+            {"status": "success", "found": False, "candidates": [series], "best_match": None,
+             "ambiguous": False, "margin": None, "lookup": "track_set"},
+            info,
+            reason,
+        )
 
     def _run_matcher(self, parsed_info: Dict[str, Any]) -> Dict[str, Any]:
         if self.auto_matcher_service is None:
