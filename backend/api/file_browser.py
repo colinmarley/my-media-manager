@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from config.settings import settings
 from services.jellyfin_movie_organizer import JellyfinMovieOrganizer
 from services.jellyfin_show_organizer import JellyfinShowOrganizer
+from services.path_builder import PathBuilder
 
 router = APIRouter(prefix="/api/files", tags=["files"])
 
@@ -401,10 +402,7 @@ SUBTITLE_EXTENSIONS = {".srt", ".vtt", ".ass", ".ssa", ".sub", ".idx"}
 
 
 def _sanitize_filename(name: str) -> str:
-    invalid = '<>:"/\\|?*'
-    for ch in invalid:
-        name = name.replace(ch, "")
-    return name.strip()
+    return PathBuilder.sanitize(name)
 
 
 def _build_jellyfin_folder_name(title: str, year: Optional[str], imdb_id: Optional[str]) -> str:

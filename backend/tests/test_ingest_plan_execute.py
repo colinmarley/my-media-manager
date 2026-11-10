@@ -360,3 +360,35 @@ def test_restart_keeps_the_organized_movie_as_anchor_for_its_extras(tmp_path, mo
     extra = service.items_by_id['extra']
     assert extra.proposed_path == 'Movies/Some Movie (2010)/Special Feature 1.mkv'
     assert service.items_by_id['main'].proposed_path == os.fspath(organized), 'an anchor is never rewritten'
+
+
+# ---------------------------------------------------------------------------
+# Slashes in titles become a hyphen instead of being dropped
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "title, expected",
+    [
+        ("50/50", "50-50"),
+        ("Face/Off", "Face-Off"),
+        ("Face / Off", "Face - Off"),
+        ("AC\DC", "AC-DC"),
+        ('Star Wars: A "New" Hope?', "Star Wars A New Hope"),
+    ],
+)
+def test_sanitize_keeps_word_breaks_from_slashes(title, expected):
+    assert PathBuilder.sanitize(title) == expected
+
+
+def test_folder_for_a_slash_title_keeps_the_separator():
+    assert (
+        PathBuilder.folder_name("50/50", 2011, "tt1306980")
+        == "50-50 (2011) [imdbid-tt1306980]"
+    )
+
+
+def test_file_browser_titles_use_the_same_sanitizer():
+    from api.file_browser import _sanitize_filename
+
+    assert _sanitize_filename("50/50") == "50-50"

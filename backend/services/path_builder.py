@@ -33,7 +33,10 @@ ROLE_KEEP_NAME = "keep_name"
 EPISODE_TYPES = ("episode", "series", "tv")
 FEATURE_TYPES = ("movie", "documentary", "live_performance")
 
-_INVALID_CHARS = '<>:"/\\|?*'
+_INVALID_CHARS = '<>:"|?*'
+# Slashes separate words in titles such as "50/50" or "Face/Off", so they
+# become a hyphen instead of being dropped ("5050").
+_SEPARATOR_CHARS = "/\\"
 _IMDB_ID_RE = re.compile(r"tt\d+")
 
 
@@ -69,6 +72,8 @@ class PathBuilder:
     def sanitize(name: Any) -> str:
         """Drop characters that are invalid in file or folder names and collapse spaces."""
         text = str(name or "")
+        for char in _SEPARATOR_CHARS:
+            text = text.replace(char, "-")
         for char in _INVALID_CHARS:
             text = text.replace(char, "")
         return re.sub(r"\s{2,}", " ", text).strip()
