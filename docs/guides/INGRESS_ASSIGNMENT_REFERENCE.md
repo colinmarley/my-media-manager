@@ -201,6 +201,7 @@ threshold of 80 and an exact title alone does not.
 | Exact year match | `year_exact` | +25 |
 | Year off by 1 | `year_off_by_one` | +15 |
 | Year off by 2 | `year_off_by_two` | +5 |
+| Year off by 3 or more | `year_mismatch` | −20 |
 | Episode file + candidate is a series | `series_kind` | +15 |
 | Parsed `episode` present | `episode_number` | +10 |
 | Source = internal library with IMDb ID (not yet implemented) | `library_entry` | +20 |

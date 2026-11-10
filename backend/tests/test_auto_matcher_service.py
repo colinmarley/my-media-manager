@@ -105,7 +105,8 @@ def test_search_is_not_ambiguous_when_year_separates_candidates(monkeypatch):
     assert result["ambiguous"] is False
     assert result["best_match"]["imdb_id"] == "tt0133152"
     assert result["best_match"]["confidence_score"] == 80
-    assert result["margin"] == 25
+    # 80 vs 35: the 1968 film gets no year points and the year_mismatch penalty (-20).
+    assert result["margin"] == 45
 
 
 def test_imdb_tag_short_circuits_search_and_scores_100(monkeypatch):
