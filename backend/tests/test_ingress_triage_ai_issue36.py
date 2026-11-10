@@ -96,7 +96,7 @@ class _StubQueueService:
     def get_item(self, item_id):
         return self.items.get(item_id)
 
-    async def mark_complete(self, item_id, history_extra=None):
+    async def mark_complete(self, item_id, history_extra=None, manual_action=False):
         self.organized.append(item_id)
         self.mutations.append(("mark_complete", item_id))
         return SimpleNamespace(id=item_id, status="completed", last_error=None)

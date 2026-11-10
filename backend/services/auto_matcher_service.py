@@ -13,6 +13,14 @@ high-scoring match for review.
 Identifier-first: when the parsed info carries an IMDb or TMDB id (from a
 ``[imdbid-tt…]`` folder tag), the matcher looks the title up by id and returns
 a single certain candidate instead of searching.
+
+TMDB-first: a title search queries TMDB and falls back to an OMDb search only
+when TMDB is not configured or returns nothing. The leading candidates are
+then checked against the provider: TMDB details (with ``external_ids``) supply
+the IMDb id and runtime, OMDb is asked *by IMDb id* for whatever TMDB lacks,
+the parsed season/episode is validated against ``/tv/{id}/season/{s}``, and
+the file's duration (``media_duration_ms``) is compared with the provider
+runtime. Each check adds its own ``score_breakdown`` entry.
 """
 
 import os
@@ -37,6 +45,19 @@ EPISODE_PRESENT_POINTS = 10
 ID_MATCH_POINTS = 100
 DEFAULT_AMBIGUITY_MARGIN = 10
 
+# Provider checks (weights from section 6.5 of
+# docs/architecture/INGEST_AUTOMATION_ANALYSIS_AND_REDESIGN.md).
+RUNTIME_WITHIN_5PCT_POINTS = 15
+EPISODE_RUNTIME_WITHIN_10PCT_POINTS = 10
+RUNTIME_OFF_OVER_25PCT_POINTS = -30
+SEASON_EXISTS_POINTS = 8
+EPISODE_EXISTS_POINTS = 8
+EPISODE_MISSING_POINTS = -30
+SEASON_MISSING_POINTS = -30
+# Provider checks cost extra HTTP calls, so only the best few candidates of the
+# initial title/year scoring get them.
+PROVIDER_CHECK_TOP_N = 3
+
 
 @dataclass
 class MatchCandidate:
@@ -50,6 +71,8 @@ class MatchCandidate:
     season: Optional[int] = None
     episode: Optional[int] = None
     imdb_id: Optional[str] = None
+    runtime_minutes: Optional[int] = None
+    episode_title: Optional[str] = None
     confidence_score: int = 0
     match_reason: str = ""
     score_breakdown: List[Dict[str, Any]] = field(default_factory=list)
@@ -122,7 +145,10 @@ class AutoMatcherService:
         tmdb_id = parsed_info.get("tmdb_id")
         if imdb_id or tmdb_id:
             try:
-                id_candidate = self._lookup_by_id(imdb_id, tmdb_id, media_type, season, episode)
+                id_candidate = self._lookup_by_id(
+                    imdb_id, tmdb_id, media_type, season, episode,
+                    media_duration_ms=parsed_info.get("media_duration_ms"),
+                )
             except Exception as exc:
                 id_candidate = None
                 logger.warning("Identifier lookup failed", imdb_id=imdb_id, tmdb_id=tmdb_id, error=str(exc))
@@ -143,41 +169,31 @@ class AutoMatcherService:
         candidates: List[MatchCandidate] = []
         mode = self.metadata_source
 
-        should_call_omdb = mode in ("library_then_omdb", "omdb_only", "library_only")
+        # TMDB is the primary search; OMDb searches only when TMDB is not
+        # configured or finds nothing. "omdb_only"/"library_only" keep the
+        # OMDb-only search and "tmdb_only" never calls OMDb.
+        use_tmdb = mode in ("library_then_omdb", "tmdb_only") and bool(self.tmdb_api_key)
+        use_omdb = mode != "tmdb_only"
 
-        if should_call_omdb:
-            try:
-                if media_type == "episode":
-                    candidates.extend(self._search_series(title, year, season=season, episode=episode))
-                else:
-                    candidates.extend(self._search_movie(title, year))
-            except Exception as exc:
-                logger.warning(
-                    "OMDB search failed",
-                    title=title,
-                    error=str(exc),
-                )
-
-        should_call_tmdb = mode == "tmdb_only" or (mode == "library_then_omdb" and len(candidates) == 0)
-        if should_call_tmdb and self.tmdb_api_key:
+        if use_tmdb:
             try:
                 if media_type == "episode":
                     candidates.extend(self._search_tmdb_series(title, year, season=season, episode=episode))
                 else:
                     candidates.extend(self._search_tmdb_movie(title, year))
-                if candidates:
-                    logger.info(
-                        "TMDB lookup returned candidates",
-                        title=title,
-                        count=len(candidates),
-                        mode=mode,
-                    )
             except Exception as exc:
-                logger.warning(
-                    "TMDB lookup failed",
-                    title=title,
-                    error=str(exc),
-                )
+                logger.warning("TMDB lookup failed", title=title, error=str(exc))
+
+        if not candidates and use_omdb:
+            try:
+                if media_type == "episode":
+                    candidates.extend(self._search_series(title, year, season=season, episode=episode))
+                else:
+                    candidates.extend(self._search_movie(title, year))
+                if candidates and use_tmdb:
+                    logger.info("OMDb fallback returned candidates", title=title, count=len(candidates), mode=mode)
+            except Exception as exc:
+                logger.warning("OMDB search failed", title=title, error=str(exc))
 
         # Calculate confidence for each candidate
         for candidate in candidates:
@@ -186,6 +202,21 @@ class AutoMatcherService:
             candidate.score_breakdown = breakdown
             candidate.match_reason = self._format_reason(breakdown)
 
+        candidates.sort(key=lambda c: -c.confidence_score)
+
+        # Provider checks for the leading candidates: enrich (IMDb id, runtime),
+        # validate season/episode, compare runtimes. They can reorder the list.
+        season_cache: Dict[Tuple[str, int], Optional[Dict[str, Any]]] = {}
+        for candidate in candidates[:PROVIDER_CHECK_TOP_N]:
+            try:
+                self._apply_provider_checks(candidate, parsed_info, season_cache, allow_omdb=use_omdb)
+            except Exception as exc:
+                logger.warning(
+                    "Provider checks failed",
+                    title=candidate.title,
+                    source=candidate.source,
+                    error=str(exc),
+                )
         candidates.sort(key=lambda c: -c.confidence_score)
 
         best_candidate = candidates[0] if candidates else None
@@ -225,6 +256,7 @@ class AutoMatcherService:
         media_type: Optional[str],
         season: Optional[int],
         episode: Optional[int],
+        media_duration_ms: Optional[float] = None,
     ) -> Optional[MatchCandidate]:
         """Resolve a definitive identifier to a single candidate scored 100."""
         candidate: Optional[MatchCandidate] = None
@@ -287,6 +319,7 @@ class AutoMatcherService:
                 if data.get("id"):
                     candidate = self._tmdb_result_to_candidate(data, "series" if kind == "tv" else "movie")
                     candidate.imdb_id = (data.get("external_ids") or {}).get("imdb_id")
+                    candidate.runtime_minutes = self._tmdb_runtime_minutes(data)
                     source_note = f"tmdb id {tmdb_id} resolved via TMDB"
 
         if candidate is None:
@@ -296,6 +329,17 @@ class AutoMatcherService:
         candidate.episode = episode
         candidate.confidence_score = ID_MATCH_POINTS
         candidate.score_breakdown = [{"rule": "id_tag", "points": ID_MATCH_POINTS, "note": source_note}]
+        if candidate.runtime_minutes is None and candidate.source == "omdb":
+            candidate.runtime_minutes = self._parse_runtime_minutes((candidate.raw_data or {}).get("Runtime"))
+        # The id settles identity. A runtime mismatch only says the file may be
+        # an extra rather than the feature, so it is shown but not scored.
+        if candidate.media_type == "movie" and media_duration_ms:
+            entry = self._runtime_entry(media_duration_ms, candidate.runtime_minutes, episode=False)
+            if entry is not None:
+                if entry["points"] < 0:
+                    entry["note"] += "; not scored, the id tag settles identity (the file may be an extra)"
+                entry["points"] = 0
+                candidate.score_breakdown.append(entry)
         candidate.match_reason = self._format_reason(candidate.score_breakdown)
         return candidate
 
@@ -498,6 +542,235 @@ class AutoMatcherService:
             logger.error("TMDB series search failed", title=title, error=str(exc))
 
         return candidates
+
+    # ------------------------------------------------------------------
+    # Provider checks (enrichment, season/episode, runtime)
+    # ------------------------------------------------------------------
+
+    def _apply_provider_checks(
+        self,
+        candidate: MatchCandidate,
+        parsed_info: Dict[str, Any],
+        season_cache: Dict[Tuple[str, int], Optional[Dict[str, Any]]],
+        allow_omdb: bool = True,
+    ) -> None:
+        """Enrich one candidate from its provider and add the check entries to its breakdown."""
+        media_duration_ms = parsed_info.get("media_duration_ms")
+        parsed_season = parsed_info.get("season")
+        parsed_episode = parsed_info.get("episode")
+        is_episode = parsed_info.get("media_type") == "episode" or parsed_season is not None
+        added: List[Dict[str, Any]] = []
+
+        if candidate.source == "tmdb":
+            self._enrich_from_tmdb(candidate)
+        # OMDb by IMDb id for whatever TMDB did not supply, and for the runtime
+        # of an OMDb search hit (search responses never carry one).
+        needs_omdb = bool(candidate.imdb_id) and (
+            candidate.year is None or (bool(media_duration_ms) and candidate.runtime_minutes is None)
+        )
+        if allow_omdb and needs_omdb and self.omdb_api_key:
+            self._enrich_from_omdb(candidate)
+
+        expected_runtime = candidate.runtime_minutes
+        runtime_is_episode = False
+        if is_episode and candidate.media_type == "series":
+            runtime_is_episode = True
+            if candidate.source == "tmdb" and parsed_season is not None:
+                episode_entries, episode_runtime = self._check_tmdb_episode(
+                    candidate, parsed_season, parsed_episode, parsed_info.get("episode_end"), season_cache
+                )
+                added.extend(episode_entries)
+                if episode_runtime is not None:
+                    expected_runtime = episode_runtime
+
+        if media_duration_ms:
+            entry = self._runtime_entry(media_duration_ms, expected_runtime, episode=runtime_is_episode)
+            if entry is not None:
+                added.append(entry)
+
+        if not added:
+            return
+        candidate.score_breakdown.extend(added)
+        total = sum(int(entry.get("points") or 0) for entry in candidate.score_breakdown)
+        candidate.confidence_score = max(0, min(total, 100))
+        candidate.match_reason = self._format_reason(candidate.score_breakdown)
+
+    def _enrich_from_tmdb(self, candidate: MatchCandidate) -> None:
+        """Fetch TMDB details with external ids: the IMDb id and the runtime."""
+        if not self.tmdb_api_key or not candidate.media_id:
+            return
+        kind = "tv" if candidate.media_type == "series" else "movie"
+        response = requests.get(
+            f"{self.tmdb_base_url}/{kind}/{candidate.media_id}",
+            params={"api_key": self.tmdb_api_key, "append_to_response": "external_ids"},
+            timeout=self.request_timeout,
+        )
+        response.raise_for_status()
+        details = response.json() or {}
+        if not details.get("id"):
+            return
+        imdb_id = details.get("imdb_id") or (details.get("external_ids") or {}).get("imdb_id")
+        if imdb_id and not candidate.imdb_id:
+            candidate.imdb_id = imdb_id
+        if candidate.runtime_minutes is None:
+            candidate.runtime_minutes = self._tmdb_runtime_minutes(details)
+        if candidate.year is None:
+            candidate.year = self._parse_year(details.get("release_date") or details.get("first_air_date"))
+        raw = dict(candidate.raw_data or {})
+        raw.update({key: value for key, value in details.items() if key not in ("seasons", "credits")})
+        candidate.raw_data = raw
+
+    def _enrich_from_omdb(self, candidate: MatchCandidate) -> None:
+        """Ask OMDb by IMDb id for the fields the candidate is still missing."""
+        response = requests.get(
+            self.omdb_base_url,
+            params={"apikey": self.omdb_api_key, "i": candidate.imdb_id},
+            timeout=self.request_timeout,
+        )
+        response.raise_for_status()
+        data = response.json() or {}
+        if data.get("Response") != "True":
+            return
+        if candidate.runtime_minutes is None:
+            candidate.runtime_minutes = self._parse_runtime_minutes(data.get("Runtime"))
+        if candidate.year is None:
+            candidate.year = self._parse_year(data.get("Year"))
+        raw = dict(candidate.raw_data or {})
+        if candidate.source == "omdb":
+            raw.update({key: value for key, value in data.items() if key not in raw})
+        else:
+            raw["omdbData"] = data
+        candidate.raw_data = raw
+
+    def _fetch_tmdb_season(
+        self,
+        tv_id: str,
+        season: int,
+        cache: Dict[Tuple[str, int], Optional[Dict[str, Any]]],
+    ) -> Optional[Dict[str, Any]]:
+        """Return the TMDB season payload, or None when the season does not exist."""
+        key = (str(tv_id), int(season))
+        if key in cache:
+            return cache[key]
+        response = requests.get(
+            f"{self.tmdb_base_url}/tv/{tv_id}/season/{season}",
+            params={"api_key": self.tmdb_api_key},
+            timeout=self.request_timeout,
+        )
+        if getattr(response, "status_code", 200) == 404:
+            cache[key] = None
+            return None
+        response.raise_for_status()
+        data = response.json() or {}
+        payload = data if isinstance(data.get("episodes"), list) else None
+        cache[key] = payload
+        return payload
+
+    def _check_tmdb_episode(
+        self,
+        candidate: MatchCandidate,
+        season: int,
+        episode: Optional[int],
+        episode_end: Optional[int],
+        cache: Dict[Tuple[str, int], Optional[Dict[str, Any]]],
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Validate the parsed season/episode against TMDB.
+
+        Returns the breakdown entries and the expected runtime in minutes of
+        the episode (summed over a multi-episode file) when TMDB knows it.
+        """
+        if not self.tmdb_api_key or not candidate.media_id:
+            return [], None
+        season_data = self._fetch_tmdb_season(candidate.media_id, season, cache)
+        if season_data is None:
+            return [{
+                "rule": "season_missing",
+                "points": SEASON_MISSING_POINTS,
+                "note": f"'{candidate.title}' has no season {season} on TMDB",
+            }], None
+
+        episodes = {
+            ep.get("episode_number"): ep
+            for ep in season_data.get("episodes") or []
+            if isinstance(ep, dict) and ep.get("episode_number") is not None
+        }
+        entries: List[Dict[str, Any]] = [{
+            "rule": "season_exists",
+            "points": SEASON_EXISTS_POINTS,
+            "note": f"season {season} has {len(episodes)} episodes on TMDB",
+        }]
+        if episode is None:
+            return entries, None
+
+        last = episode_end if isinstance(episode_end, int) and episode_end >= episode else episode
+        wanted = list(range(episode, last + 1))
+        label = f"S{season:02d}E{episode:02d}" + (f"-E{last:02d}" if last != episode else "")
+        if any(number not in episodes for number in wanted):
+            entries.append({
+                "rule": "episode_missing",
+                "points": EPISODE_MISSING_POINTS,
+                "note": f"{label} not on TMDB (season {season} has {len(episodes)} episodes)",
+            })
+            return entries, None
+
+        candidate.episode_title = episodes[episode].get("name") or None
+        entries.append({
+            "rule": "episode_exists",
+            "points": EPISODE_EXISTS_POINTS,
+            "note": label + (f" '{candidate.episode_title}'" if candidate.episode_title else ""),
+        })
+        runtimes = [episodes[number].get("runtime") for number in wanted]
+        known = [float(r) for r in runtimes if isinstance(r, (int, float)) and r > 0]
+        if len(known) == len(wanted):
+            return entries, int(sum(known))
+        return entries, None
+
+    @staticmethod
+    def _runtime_entry(
+        media_duration_ms: Any,
+        provider_minutes: Optional[int],
+        episode: bool,
+    ) -> Optional[Dict[str, Any]]:
+        """Compare the file duration with the provider runtime; None when either is unknown."""
+        try:
+            file_minutes = float(media_duration_ms) / 60000.0
+        except (TypeError, ValueError):
+            return None
+        if file_minutes <= 0 or not provider_minutes or provider_minutes <= 0:
+            return None
+        diff = abs(file_minutes - provider_minutes) / float(provider_minutes)
+        note = f"file {file_minutes:.0f} min vs {provider_minutes} min (off {diff:.0%})"
+        if diff <= 0.05:
+            return {"rule": "runtime_within_5pct", "points": RUNTIME_WITHIN_5PCT_POINTS, "note": note}
+        if episode and diff <= 0.10:
+            return {"rule": "episode_runtime_within_10pct", "points": EPISODE_RUNTIME_WITHIN_10PCT_POINTS,
+                    "note": note}
+        if diff > 0.25:
+            return {"rule": "runtime_off_over_25pct", "points": RUNTIME_OFF_OVER_25PCT_POINTS, "note": note}
+        return {"rule": "runtime_differs", "points": 0, "note": note}
+
+    @staticmethod
+    def _tmdb_runtime_minutes(details: Dict[str, Any]) -> Optional[int]:
+        runtime = details.get("runtime")
+        if isinstance(runtime, (int, float)) and runtime > 0:
+            return int(runtime)
+        episode_run_time = details.get("episode_run_time")
+        if isinstance(episode_run_time, list):
+            values = [v for v in episode_run_time if isinstance(v, (int, float)) and v > 0]
+            if values:
+                return int(round(sum(values) / len(values)))
+        return None
+
+    @staticmethod
+    def _parse_runtime_minutes(value: Any) -> Optional[int]:
+        """Parse an OMDb runtime such as '136 min'; None for 'N/A'."""
+        if not value:
+            return None
+        match = re.search(r"(\d+)", str(value))
+        if not match:
+            return None
+        minutes = int(match.group(1))
+        return minutes if minutes > 0 else None
 
     # ------------------------------------------------------------------
     # Scoring

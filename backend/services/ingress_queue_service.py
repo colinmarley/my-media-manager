@@ -472,7 +472,11 @@ class IngressQueueService:
                     parsed_info["title"] = self.parser._clean_folder_title(grandparent)
                     parsed_info["normalized_title"] = self.parser.normalize_title(parsed_info["title"])
                     parsed_info["year"] = parsed_info.get("year") or self.parser._extract_year(grandparent)
-            match_result = self._run_matcher(parsed_info)
+            # The matcher compares the file duration with the provider runtime;
+            # it is passed alongside, not stored in parsed_info.
+            match_result = self._run_matcher(
+                {**parsed_info, "media_duration_ms": candidate.media_duration_ms}
+            )
             best_match = match_result.get("best_match") if match_result else None
             has_best_match = isinstance(best_match, dict) and bool(best_match)
             ambiguous = bool(match_result.get("ambiguous")) if match_result else False
@@ -788,8 +792,12 @@ class IngressQueueService:
         self,
         item_id: str,
         history_extra: Optional[Dict[str, Any]] = None,
+        manual_action: bool = False,
     ) -> Optional[IngressQueueItem]:
-        """Mark an item complete and attempt organization to Jellyfin."""
+        """Mark an item complete and attempt organization to Jellyfin.
+
+        Routes that receive a person's accept pass ``manual_action=True``.
+        """
         await self.hydrate_item(item_id)
         with self.lock:
             item = self.items_by_id.get(item_id)
@@ -812,6 +820,7 @@ class IngressQueueService:
                 assignment_result = await self._attempt_auto_assignment(
                     item,
                     force_organize=True,
+                    manual_action=manual_action,
                 )
                 if assignment_result:
                     assignment_id = assignment_result.get("assignment_id")
@@ -906,8 +915,12 @@ class IngressQueueService:
         item_id: str,
         match_payload: Dict[str, Any],
         organize_now: bool = False,
+        manual_action: bool = False,
     ) -> Optional[IngressQueueItem]:
-        """Manually assign a queue item to explicit media and optionally organize now."""
+        """Manually assign a queue item to explicit media and optionally organize now.
+
+        The manual-assign route passes ``manual_action=True``.
+        """
         await self.hydrate_item(item_id)
         with self.lock:
             item = self.items_by_id.get(item_id)
@@ -975,6 +988,7 @@ class IngressQueueService:
             assignment_result = await self._attempt_auto_assignment(
                 item,
                 force_organize=organize_now,
+                manual_action=manual_action,
             )
 
         with self.lock:
@@ -1948,7 +1962,14 @@ class IngressQueueService:
         self,
         item: IngressQueueItem,
         force_organize: bool = False,
+        manual_action: bool = False,
     ) -> Optional[Dict[str, Any]]:
+        """Create the assignment for ``item`` (and organize it when asked).
+
+        ``manual_action`` is True only when a person approved this item through
+        an API route (manual assign, accept); the orchestrator records it as
+        ``is_manual_assignment``. Automatic approvals leave it False.
+        """
         # Until this returns the item's proposal belongs to this call: a refresh
         # running in a worker thread must not rewrite it between resolving the
         # destination and organizing the file.
@@ -1956,8 +1977,10 @@ class IngressQueueService:
         try:
             self._repair_missing_source_path(item)
             self._prime_organization_hints_for_item(item)
+            queue_payload = item.to_dict()
+            queue_payload["manual_assignment"] = bool(manual_action)
             return await self.assignment_orchestrator.auto_assign(
-                item.to_dict(),
+                queue_payload,
                 force_organize=force_organize,
             )
         except Exception as exc:
