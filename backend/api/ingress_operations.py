@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
 from db.database import get_db
 from db.models import MediaAssignment, MediaFile, Movie, Series
+from services.ingest_operations import IngestUndoService, OperationLog, UndoError
 from services.ingress_queue_service import QueueItemBusy
 from services.ingress_triage_service import (
     QUEUE_GROUP_BY,
@@ -121,6 +122,10 @@ class QueueManualAssignRequest(BaseModel):
 
 
 class QueueResetToEncodedRequest(BaseModel):
+    itemId: str
+
+
+class QueueUndoRequest(BaseModel):
     itemId: str
 
 
@@ -802,6 +807,54 @@ async def reset_ingress_item_to_encoded(
             "filesReset": sum(1 for r in reset_results if r.get("success")),
             "errors": failures,
         },
+        "timestamp": str(int(time.time())),
+    }
+
+
+_UNDO_STATUS = {
+    "QUEUE_ITEM_NOT_FOUND": 404,
+    "QUEUE_ITEM_BUSY": 409,
+    "NOTHING_TO_UNDO": 400,
+    "UNDO_CONFLICT": 409,
+}
+
+
+@router.post("/queue/undo")
+async def undo_ingress_item(payload: QueueUndoRequest, req: Request):
+    """Undo an executed queue item from its recorded ingest_operations.
+
+    Moves each file back to where it was, in reverse order, but only while every
+    recorded destination still exists with the recorded size; otherwise nothing
+    is touched (409). The item returns to needs_review with a fresh proposal.
+    """
+    queue_service = req.app.state.ingress_queue_service
+    db_session_factory = getattr(queue_service, "db_session_factory", None)
+    if db_session_factory is None:
+        raise HTTPException(status_code=503, detail={
+            "type": "ServiceUnavailable",
+            "message": "Undo needs the database that records ingest operations",
+            "code": "OPERATION_LOG_UNAVAILABLE",
+        })
+
+    undo_service = IngestUndoService(
+        operation_log=OperationLog(db_session_factory),
+        file_manager=req.app.state.file_manager,
+        queue_service=queue_service,
+        db_session_factory=db_session_factory,
+    )
+    try:
+        result = await undo_service.undo_queue_item(payload.itemId)
+    except UndoError as exc:
+        raise HTTPException(status_code=_UNDO_STATUS.get(exc.code, 400), detail={
+            "type": "UndoError",
+            "message": str(exc),
+            "code": exc.code,
+            "problems": exc.problems,
+        })
+
+    return {
+        "success": result["success"],
+        "data": result,
         "timestamp": str(int(time.time())),
     }
 
