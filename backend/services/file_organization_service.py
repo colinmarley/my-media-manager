@@ -15,6 +15,13 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from xml.sax.saxutils import escape
 from config.settings import settings
+from services.ingest_operations import (
+    OP_MKDIR,
+    OP_MOVE,
+    OP_WRITE_NFO,
+    OperationLog,
+    OperationRecorder,
+)
 from services.path_builder import PathBuilder
 from utils.logging import logger
 
@@ -35,9 +42,15 @@ class FileOrganizationService:
         filesystem_manager: Optional[Any] = None,
         jellyfin_dest_base: Optional[str] = None,
         db_session_factory: Optional[Callable] = None,
+        operation_log: Optional[Any] = None,
     ):
         self.filesystem_manager = filesystem_manager
         self.db_session_factory = db_session_factory
+        # Every filesystem step of a plan is recorded in ingest_operations so it
+        # can be undone. Without a database (tests, scripts) nothing is recorded.
+        self.operation_log = operation_log or (
+            OperationLog(db_session_factory) if db_session_factory else None
+        )
         self.jellyfin_dest_base = (
             jellyfin_dest_base
             or settings.jellyfin_dest_base
@@ -114,12 +127,19 @@ class FileOrganizationService:
             if not source_files:
                 raise ValueError("No source files in assignment")
 
+            recorder = OperationRecorder(
+                self.operation_log,
+                queue_item_id=assignment.get("queueItemId"),
+                assignment_id=assignment.get("id"),
+            )
+
             # Create folder structure
-            folder_result = await self._create_jel_folder_structure(target_path)
+            folder_result = await self._create_jel_folder_structure(target_path, recorder)
             if not folder_result["success"]:
                 raise ValueError(f"Failed to create folder: {folder_result.get('error')}")
 
-            # Move files
+            # Move files. A failed step stops the plan: the moves before it stay
+            # done and recorded, the ones after it are not attempted.
             move_results = []
             for index, source_file in enumerate(source_files):
                 try:
@@ -130,22 +150,24 @@ class FileOrganizationService:
                         assignment,
                         media,
                         planned_destination=planned_file if index == 0 else None,
+                        recorder=recorder,
                     )
-                    move_results.append(result)
-
-                    if not result["success"]:
-                        logger.warning(
-                            "File move failed",
-                            source=source_file,
-                            target=target_path,
-                            error=result.get("error"),
-                        )
                 except Exception as e:
-                    move_results.append({
+                    result = {
                         "success": False,
                         "source": source_file,
                         "error": str(e),
-                    })
+                    }
+                move_results.append(result)
+                if not result.get("success"):
+                    logger.warning(
+                        "File move failed - stopping the plan",
+                        source=source_file,
+                        target=target_path,
+                        error=result.get("error"),
+                        not_attempted=len(source_files) - index - 1,
+                    )
+                    break
 
             # Check if all moves succeeded
             all_successful = all(r.get("success", False) for r in move_results)
@@ -154,12 +176,13 @@ class FileOrganizationService:
             # Create local NFO metadata files for Jellyfin when at least one file moved.
             nfo_files_created: List[str] = []
             if all_successful:
-                nfo_files_created = self._create_jellyfin_nfo_files(
+                nfo_files_created = await self._create_jellyfin_nfo_files(
                     media_type=media_type,
                     target_path=target_path,
                     move_results=move_results,
                     assignment=assignment,
                     media=media,
+                    recorder=recorder,
                 )
 
             result = {
@@ -169,7 +192,7 @@ class FileOrganizationService:
                 "targetPath": target_path,
                 "needsReview": False,
                 "filesMoved": sum(1 for r in move_results if r.get("success")),
-                "totalFiles": len(move_results),
+                "totalFiles": len(source_files),
                 "folderCreated": folder_result.get("folderPath"),
                 "nfoFilesCreated": nfo_files_created,
                 "operations": move_results,
@@ -299,9 +322,9 @@ class FileOrganizationService:
         return files
 
     async def _create_jel_folder_structure(
-        self, target_path: str
+        self, target_path: str, recorder: Optional[OperationRecorder] = None
     ) -> Dict[str, Any]:
-        """Create necessary folder structure."""
+        """Create necessary folder structure, one recorded mkdir per missing level."""
         try:
             if not self.filesystem_manager:
                 logger.warning(
@@ -313,8 +336,7 @@ class FileOrganizationService:
                     "error": "FileSystemManager not available",
                 }
 
-            # Create directory
-            os.makedirs(target_path, exist_ok=True)
+            await self._make_recorded_dirs(target_path, recorder)
             logger.info("Jellyfin folder created", path=target_path)
 
             return {
@@ -333,6 +355,30 @@ class FileOrganizationService:
                 "error": str(e),
             }
 
+    @staticmethod
+    async def _make_recorded_dirs(target_path: str, recorder: Optional[OperationRecorder]) -> None:
+        """Create the levels of ``target_path`` that do not exist yet, top down,
+        each as its own recorded mkdir, so undo removes exactly the folders the
+        plan made."""
+        missing: List[str] = []
+        current = os.path.normpath(target_path)
+        while current and not os.path.isdir(current):
+            missing.append(current)
+            parent = os.path.dirname(current)
+            if parent == current:
+                break
+            current = parent
+        for folder in reversed(missing):
+            op_id = await recorder.before(OP_MKDIR, dst=folder) if recorder else None
+            try:
+                os.makedirs(folder, exist_ok=True)
+            except Exception as exc:
+                if recorder:
+                    await recorder.failed(op_id, str(exc))
+                raise
+            if recorder:
+                await recorder.done(op_id)
+
     async def _move_file_to_jellyfin(
         self,
         source_file: str,
@@ -341,12 +387,17 @@ class FileOrganizationService:
         assignment: Optional[Dict[str, Any]] = None,
         media: Optional[Dict[str, Any]] = None,
         planned_destination: Optional[str] = None,
+        recorder: Optional[OperationRecorder] = None,
     ) -> Dict[str, Any]:
         """Move a file to Jellyfin directory.
 
         ``planned_destination`` is the proposal's exact file path. It is used
         as is; only if something appeared there since the plan was resolved is
         a free variant taken, and the result then reports ``deviatedFromPlan``.
+
+        With a ``recorder`` the move is written to ``ingest_operations`` before
+        it runs and updated after; if that row cannot be written the file is
+        not moved.
         """
         try:
             if not self.filesystem_manager:
@@ -377,8 +428,32 @@ class FileOrganizationService:
                 planned = os.path.join(target_dir, filename)
             destination = self._resolve_unique_destination(planned, source_file)
 
+            op_id = None
+            if recorder:
+                try:
+                    # A destination in a new subfolder (an extras folder, say)
+                    # gets its mkdir recorded before the move that needs it.
+                    await self._make_recorded_dirs(os.path.dirname(destination), recorder)
+                    op_id = await recorder.before(
+                        OP_MOVE,
+                        src=source_file,
+                        dst=destination,
+                        planned_dst=planned,
+                        size_before=self._file_size(source_file),
+                    )
+                except Exception as exc:
+                    return {
+                        "success": False,
+                        "source": source_file,
+                        "destination": destination,
+                        "error": f"Could not record the move, file left in place: {exc}",
+                    }
+
             # Move file
-            result = self.filesystem_manager.move_file(source_file, destination)
+            try:
+                result = self.filesystem_manager.move_file(source_file, destination)
+            except Exception as exc:
+                result = {"success": False, "error": str(exc)}
 
             if result.get("success"):
                 logger.info(
@@ -386,15 +461,26 @@ class FileOrganizationService:
                     source=source_file,
                     destination=destination,
                 )
-                return {
+                size = self._file_size(destination)
+                move_result = {
                     "success": True,
                     "op": "move",
                     "source": source_file,
                     "destination": destination,
                     "plannedDestination": planned,
                     "deviatedFromPlan": bool(planned_destination) and destination != planned,
-                    "size": self._file_size(destination),
+                    "size": size,
                 }
+                if recorder:
+                    try:
+                        await recorder.done(op_id, dst=destination, size=size)
+                    except Exception as exc:
+                        # The file moved but undo cannot see it: stop the plan here.
+                        move_result["success"] = False
+                        move_result["error"] = f"Moved but the operation record could not be completed: {exc}"
+                    if op_id:
+                        move_result["operationId"] = op_id
+                return move_result
             else:
                 error_msg = result.get("error", "Unknown error")
                 logger.warning(
@@ -402,6 +488,8 @@ class FileOrganizationService:
                     source=source_file,
                     error=error_msg,
                 )
+                if recorder:
+                    await recorder.failed(op_id, str(error_msg))
                 return {
                     "success": False,
                     "source": source_file,
@@ -729,13 +817,14 @@ class FileOrganizationService:
             },
         }
 
-    def _create_jellyfin_nfo_files(
+    async def _create_jellyfin_nfo_files(
         self,
         media_type: str,
         target_path: str,
         move_results: List[Dict[str, Any]],
         assignment: Dict[str, Any],
         media: Dict[str, Any],
+        recorder: Optional[OperationRecorder] = None,
     ) -> List[str]:
         """Create Jellyfin-compatible NFO files after successful organization."""
         created: List[str] = []
@@ -743,14 +832,14 @@ class FileOrganizationService:
         try:
             if media_type in ("movie", "documentary", "live_performance"):
                 movie_nfo_path = os.path.join(target_path, "movie.nfo")
-                if self._write_nfo_if_missing(movie_nfo_path, self._build_movie_nfo(media)):
+                if await self._write_nfo_if_missing(movie_nfo_path, self._build_movie_nfo(media), recorder):
                     created.append(movie_nfo_path)
 
             elif media_type == "episode":
                 series_dir = os.path.dirname(target_path.rstrip("/"))
 
                 tvshow_nfo_path = os.path.join(series_dir, "tvshow.nfo")
-                if self._write_nfo_if_missing(tvshow_nfo_path, self._build_tvshow_nfo(media)):
+                if await self._write_nfo_if_missing(tvshow_nfo_path, self._build_tvshow_nfo(media), recorder):
                     created.append(tvshow_nfo_path)
 
                 for item in move_results:
@@ -762,25 +851,34 @@ class FileOrganizationService:
                     stem, _ = os.path.splitext(destination)
                     episode_nfo_path = f"{stem}.nfo"
                     xml_text = self._build_episode_nfo(media, assignment)
-                    if self._write_nfo_if_missing(episode_nfo_path, xml_text):
+                    if await self._write_nfo_if_missing(episode_nfo_path, xml_text, recorder):
                         created.append(episode_nfo_path)
         except Exception as exc:
             logger.warning("Failed to create NFO files", error=str(exc), target_path=target_path)
 
         return created
 
-    def _write_nfo_if_missing(self, path: str, content: str) -> bool:
+    async def _write_nfo_if_missing(
+        self, path: str, content: str, recorder: Optional[OperationRecorder] = None
+    ) -> bool:
         """Write NFO only when not already present to avoid clobbering hand-edited metadata."""
+        op_id = None
         try:
             if os.path.exists(path):
                 return False
+            if recorder:
+                op_id = await recorder.before(OP_WRITE_NFO, dst=path)
             os.makedirs(os.path.dirname(path), exist_ok=True)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             logger.info("NFO file created", path=path)
+            if recorder:
+                await recorder.done(op_id, size=self._file_size(path))
             return True
         except Exception as exc:
             logger.warning("Failed to write NFO file", path=path, error=str(exc))
+            if recorder:
+                await recorder.failed(op_id, str(exc))
             return False
 
     def _build_movie_nfo(self, media: Dict[str, Any]) -> str:

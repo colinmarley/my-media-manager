@@ -502,6 +502,32 @@ class IngressQueueItem(Base):
     updated_at        = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class IngestOperation(Base):
+    """One filesystem step of executing a queue item's plan (redesign 6.3 / 6.7).
+
+    Written before the step runs (status ``running``) and again after it
+    (``done`` or ``failed``), so a crash mid-plan leaves the earlier steps on
+    record. Undo replays the ``done`` rows of a queue item in reverse.
+    """
+
+    __tablename__ = "ingest_operations"
+
+    id            = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
+    # No FKs: a log that must outlive (and never block on) the rows it names.
+    queue_item_id = Column(Text, index=True)
+    assignment_id = Column(Text, index=True)
+    op            = Column(Text, nullable=False)  # move / mkdir / write_nfo
+    src           = Column(Text)
+    dst           = Column(Text)
+    planned_dst   = Column(Text)
+    size_before   = Column(BigInteger)
+    status        = Column(Text, nullable=False, default="running")  # running / done / failed
+    error         = Column(Text)
+    executed_at   = Column(DateTime(timezone=True))
+    undone_at     = Column(DateTime(timezone=True))
+    created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
 class IngressProcessingHistory(Base):
     __tablename__ = "ingress_processing_history"
 
