@@ -53,7 +53,7 @@ class FileOrganizationService:
         Organize files according to assignment and media info.
 
         Args:
-            assignment: Media assignment from Firestore
+            assignment: Media assignment record
             media: Resolved media information
 
         Returns:
@@ -182,7 +182,6 @@ class FileOrganizationService:
                     file_count=result.get("filesMoved"),
                 )
 
-            # Update assignment status in Firestore
 
             return result
 
@@ -560,40 +559,6 @@ class FileOrganizationService:
                 return f"{series_name} - Unknown Episode{ext}"
 
         return source_name
-
-    async def _update_assignment_status(
-        self,
-        assignment_id: str,
-        success: bool,
-        target_path: str,
-        operation_result: Dict[str, Any],
-    ) -> None:
-        """Update assignment status in Firestore."""
-        try:
-            update_data = {
-                "organizationStatus": "completed" if success else "failed",
-                "targetPath": target_path,
-                "isOrganized": success,
-                "organizationDate": datetime.utcnow().isoformat(),
-                "updatedAt": datetime.utcnow().isoformat(),
-            }
-
-            if not success:
-                update_data["organizationError"] = operation_result.get("error", "Unknown error")
-
-
-            logger.info(
-                "Assignment status updated",
-                assignment_id=assignment_id,
-                status=update_data["organizationStatus"],
-            )
-
-        except Exception as e:
-            logger.error(
-                "Failed to update assignment status",
-                assignment_id=assignment_id,
-                error=str(e),
-            )
 
     async def _upsert_catalog_jellyfin_info(
         self,

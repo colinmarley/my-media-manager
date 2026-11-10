@@ -24,29 +24,6 @@ export function epCode(season: number, ep: number) {
   return `S${String(season).padStart(2, '0')}E${String(ep).padStart(2, '0')}`;
 }
 
-export function buildEpisodeMap(
-  selectedIndices: number[],
-  assignments: Record<number, Assignment>,
-  season: number,
-): Record<string, string> {
-  const map: Record<string, string> = {};
-  let specialN = 0;
-  for (const idx of [...selectedIndices].sort((a, b) => a - b)) {
-    const a = assignments[idx];
-    if (!a) continue;
-    if (a.type === 'episode') {
-      const code = epCode(season, a.episodeNumber);
-      map[String(idx)] = a.episodeName ? `${code} - ${a.episodeName}` : code;
-    } else if (a.type === 'special') {
-      specialN++;
-      map[String(idx)] = `SpecialFeature${String(specialN).padStart(3, '0')}`;
-    } else if (a.type === 'custom' && a.name.trim()) {
-      map[String(idx)] = a.name.trim();
-    }
-  }
-  return map;
-}
-
 export function previewFilenames(
   mediaType: 'movie' | 'show',
   title: string,

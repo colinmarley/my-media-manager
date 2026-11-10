@@ -18,8 +18,8 @@ export default function MovieSearchDialog({ open, fileName, onClose, onAssign }:
     setLoading(true); setError(''); setResults([]); setSelected(null);
     try {
       const res = await searchByText(query, 'movie');
-      setResults((res.Search ?? []) as typeof results);
-      if (!res.Search?.length) setError('No results found.');
+      setResults(res);
+      if (!res.length) setError('No results found.');
     } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Search failed'); }
     finally { setLoading(false); }
   };

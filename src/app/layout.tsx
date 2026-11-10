@@ -18,6 +18,7 @@ import {
 import { ChevronLeft, Menu as MenuIcon, Settings } from '@mui/icons-material';
 import { usePathname } from 'next/navigation';
 import { MediaSelectorProvider } from '@/context/MediaSelectorContext';
+import { NotificationProvider } from '@/context/NotificationContext';
 import { ThemeProvider } from '@emotion/react';
 import { AppProvider } from '@toolpad/core/AppProvider';
 import ProfileAccess from './_components/ProfileAccess';
@@ -39,6 +40,8 @@ export default function RootLayout({
   const navLinks = useMemo(() => [
     { label: BUTTON_LABELS.dashboard, href: '/dashboard' },
     { label: BUTTON_LABELS.myLibrary, href: '/dashboard/my-library' },
+    { label: 'Stats', href: '/dashboard/stats' },
+    { label: 'Wishlist', href: '/dashboard/wishlist' },
     { label: 'Movie Organizer', href: '/dashboard/movie-organization' },
     { label: 'TV Organizer', href: '/dashboard/show-organization' },
     { label: BUTTON_LABELS.ingressAutomation, href: '/ingress-automation' },
@@ -55,6 +58,7 @@ export default function RootLayout({
       <body>
         <AppProvider theme={theme}>
           <ThemeProvider theme={theme}>
+            <NotificationProvider>
             <MediaSelectorProvider>
               <Drawer
                 anchor="left"
@@ -156,6 +160,7 @@ export default function RootLayout({
                 {children}
               </Box>
             </MediaSelectorProvider>
+            </NotificationProvider>
           </ThemeProvider>
         </AppProvider>
       </body>

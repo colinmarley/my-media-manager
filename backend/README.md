@@ -49,7 +49,6 @@ backend/
 │   ├── ingress_operations.py   # Ingress queue management and health
 │   ├── library_operations.py   # Library scan and path management
 │   ├── library_paths.py        # Library path CRUD
-│   ├── media_operations.py     # Media file inspection
 │   ├── metadata_operations.py  # ffprobe metadata extraction
 │   └── posters.py              # Poster cache serving
 ├── config/
@@ -151,10 +150,9 @@ All tables live in the `public` schema. The ORM models are defined in `db/models
 | `series` | TV series catalog entries |
 | `seasons` | Season records linked to a series |
 | `episodes` | Episode records linked to a season |
-| `releases` | Physical release records (Blu-ray, DVD sets) |
-| `discs` | Individual disc records linked to a release |
-| `release_movies` | M2M — releases ↔ movies |
-| `release_series` | M2M — releases ↔ series |
+| `discs` | Individual physical disc records |
+| `disc_sets` | Boxed sets grouping discs/tapes |
+| `disc_media_links` | M2M — discs ↔ movies/series |
 
 ### Rating / metadata columns (added in migration `002`)
 
@@ -201,6 +199,8 @@ See `.env.example` for the full list. Key variables:
 | `NAS_HOST` | NAS hostname or IP (optional) |
 | `MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH` | NAS mount health-check path (e.g. `/ark/media`) |
 | `MEDIA_LIBRARY_POSTER_CACHE_DIR` | Override poster cache directory |
+| `MEDIA_LIBRARY_INGEST_AI_MODE` | Ingest decision model: `off` (default) / `shadow` (answers stored, never act on the queue) / `assist` (a confident answer acts like a classification override) |
+| `MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE` | 0-1 confidence the classifier applies, and the hard floor a triage bulk accept cannot go under (default `0.7`) |
 
 ## Tests
 

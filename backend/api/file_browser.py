@@ -125,7 +125,7 @@ async def browse_directory(request: BrowseRequest):
                         size = 0
                         try:
                             size = os.path.getsize(entry_path)
-                        except:
+                        except OSError:
                             pass
                         
                         entries.append(DirectoryEntry(
@@ -381,8 +381,9 @@ async def read_nfo_from_folder(request: NfoRequest):
                         result[tag] = [existing, val]
                 else:
                     result[tag] = val
-            # Include element attributes
-            result.update(root.attrib if el is root else child.attrib if False else {})
+            # Include the root element's attributes
+            if el is root:
+                result.update(root.attrib)
             return result
 
         nfo_data = {root.tag: elem_to_dict(root)}

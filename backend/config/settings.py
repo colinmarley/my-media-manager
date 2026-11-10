@@ -139,6 +139,17 @@ class LibrarySettings(BaseSettings):
         validation_alias=AliasChoices("MOBILE_TOKEN_EXPIRY_DAYS", "MEDIA_LIBRARY_MOBILE_TOKEN_EXPIRY_DAYS"),
     )
 
+    # Data retention job (services/retention_service.py): runs on startup, then
+    # every retention_interval_hours. Deletes expired sessions/mobile tokens,
+    # old ingress history and old *completed* queue items (never needs_review
+    # or failed). Dry run only logs what would be deleted.
+    # Env: MEDIA_LIBRARY_RETENTION_* (e.g. MEDIA_LIBRARY_RETENTION_DRY_RUN=true).
+    retention_enabled: bool = True
+    retention_dry_run: bool = False
+    retention_interval_hours: int = 24
+    retention_ingress_history_days: int = 180
+    retention_completed_queue_days: int = 90
+
     # Default app password — seeded automatically on first startup if no password hash
     # is found in the database. Set via APP_DEFAULT_PASSWORD env var.
     # Leave empty to require manual seeding via scripts/seed_password.py.

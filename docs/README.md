@@ -20,6 +20,7 @@ Folder layout: `architecture/` — current-state technical references;
 - **[Testing](./guides/TESTING.md)** — Isolated test environments, how to run tests
 - **[Poster Cache](./guides/POSTER_CACHE.md)** — How poster images are downloaded, cached, and served
 - **[Ingress Assignment Reference](./guides/INGRESS_ASSIGNMENT_REFERENCE.md)** — Auto-matching and confidence scoring
+- **[Grafana Dashboard](./grafana/README.md)** — Importing the media-manager metrics dashboard, plus the proposed Home Dashboard tile
 - **[Collection Cataloguing Workflow](./guides/COLLECTION_CATALOGUING_WORKFLOW.md)** — User-facing walkthrough: catalogue from the mobile app, rip here, check what's unripped, find a disc physically — spans this repo, media-manager-mobile, and disc-ripper-service
 
 ### Completed Work (implementation logs, kept for history)

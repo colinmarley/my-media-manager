@@ -20,6 +20,7 @@ from typing import Any
 from db.database import get_db
 from db.models import Movie, Series, Disc, DiscSet, DiscMediaLink, Tape, TapeMediaLink, MediaFile
 from api.mobile_auth import require_any_auth
+from services.catalog_stats import RECENT_DAYS_DEFAULT, build_catalog_stats
 from config.settings import settings
 
 router = APIRouter(prefix="/api/catalog", tags=["Catalog"])
@@ -1280,3 +1281,66 @@ async def reassign_discs(body: dict[str, Any], db: AsyncSession = Depends(get_db
 def _detect_media_type(media_id: str, db: Any) -> str:
     """Placeholder — type is inferred from query in the endpoint above."""
     return "movie"
+
+
+# ---------------------------------------------------------------------------
+# Collection Stats
+# ---------------------------------------------------------------------------
+
+@router.get("/stats")
+async def catalog_stats(
+    recent_days: int = Query(default=RECENT_DAYS_DEFAULT, ge=1, le=365),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Whole-catalog summary: counts by type, disc format and release
+    decade, what was added in the last `recent_days` (30 by default),
+    storage-location coverage, and what's currently lent out.
+
+    There is no existing stats endpoint to reuse — /metrics is Prometheus
+    scraping, not catalog figures — so the counting happens once here (in
+    services/catalog_stats.py) and the web page and mobile screen can share
+    it instead of each deriving totals from the list endpoints. Read-only
+    like every other GET in this router (no require_any_auth), at one query
+    per catalog table.
+
+    Loans have no column or table of their own, so "lent out" is read out of
+    the `raw_data` the mobile app writes. Two shapes are understood, and a
+    record counts while its newest loan is unreturned:
+
+      `loans` (also `loanHistory`/`lendingHistory`, a bare object counts too)
+        a list of loan objects naming who (`loanedTo`/`lentTo`/`borrower`/
+        `who`/`name`, or a nested `{"loanedTo": {"name": …}}`), when it left
+        (`loanedAt`/`date`/`dateOut`), when it is due (`due`), and what closed
+        it — a return date (`returnedAt`/`dateBack`/`returnDate`), a return
+        flag (`returned: true`, not `false`), or a loan `status`/`loanStatus`
+        that reads as back. A loan `status` is read from loan keys only: a
+        record-level `status` on a series is the series status ("Ended"), so
+        it is never a return marker.
+      bare fields on the record
+        `loanedTo`/`lentTo`/`borrower`/`onLoanTo` for the person, `onLoan`/
+        `loanOut`/`isLent` for the flag. `onLoan: false` or a record return
+        marker (`returnedAt`, `dateBack`, `returned`, …) means it came home.
+
+    Both shapes are consulted, so `loans: [{"loanedTo": "Bo"}]` counts even
+    when a stale `returned: true` sits next to it, and `loanedTo: "Sam"` with
+    `returnedAt: "2026-02-04"` does not. `services/catalog_stats.py` states
+    the contract in full next to the code that implements it.
+
+    `recentlyAdded.items` and `lentOut.items` are capped at 12 entries while
+    their `count` stays the whole total — callers (the web stats page) show
+    "Showing 12 of N" rather than pretending the list is the lot.
+
+    Issue #16 AC1 is pinned by backend/tests/test_catalog_stats.py::
+    test_ac1_endpoint_returns_every_breakdown_the_criterion_names (mocked DB),
+    with the route/auth/real-ORM/window/loan-shape probes in
+    tests/test_catalog_stats_qa_probes.py and
+    tests/test_catalog_stats_qa_probes_round2.py, and the per-figure
+    aggregator tests in tests/test_catalog_stats_builder.py.
+    """
+    movies = (await db.execute(select(Movie))).scalars().all()
+    series = (await db.execute(select(Series))).scalars().all()
+    discs = (await db.execute(select(Disc))).scalars().all()
+    tapes = (await db.execute(select(Tape))).scalars().all()
+    return build_catalog_stats(
+        movies=movies, series=series, discs=discs, tapes=tapes, recent_days=recent_days
+    )

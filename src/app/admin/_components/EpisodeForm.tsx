@@ -20,6 +20,7 @@ import styles from '../_styles/Form.module.css';
 import SubmitButton from '@/app/_components/SubmitButton';
 import { prepareTitleForStorage } from '../../../utils/titleUtils';
 import { FieldLabel, FormSection, FormSectionStack } from './forms/common';
+import { useNotify } from '@/context/NotificationContext';
 
 interface EpisodeValidation {
   title: string | null;
@@ -40,6 +41,7 @@ interface EpisodeValidation {
 }
 
 const EpisodeForm: React.FC = () => {
+  const notify = useNotify();
   const [title, setTitle] = useState('');
   const [seasonId, setSeasonId] = useState('');
   const [seriesId, setSeriesId] = useState('');
@@ -118,7 +120,7 @@ const EpisodeForm: React.FC = () => {
       const omdbSearchResults: OmdbSearchResponse[] = await searchByText(title);
       setOmdbResults(omdbSearchResults);
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Episode title search failed.');
+      notify(error instanceof Error ? error.message : 'Episode title search failed.', 'error');
     }
   };
 

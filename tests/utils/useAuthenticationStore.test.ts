@@ -109,7 +109,7 @@ describe('useAuthenticationStore', () => {
         useAuthenticationStore.getState().login('wrong')
       ).rejects.toThrow('API error 401');
 
-      expect(useAuthenticationStore.getState().error).toMatch('API error 401');
+      expect(useAuthenticationStore.getState().error).toBe('Incorrect passphrase. Please try again.');
       expect(useAuthenticationStore.getState().loading).toBe(false);
     });
 

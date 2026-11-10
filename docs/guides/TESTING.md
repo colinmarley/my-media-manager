@@ -92,6 +92,60 @@ make test-integration
 
 The test database lives in a Docker `tmpfs` mount (RAM-backed) and is automatically wiped when the container stops — no manual cleanup required.
 
+### End-to-end (Playwright) — needs a running app
+
+Playwright drives a **live deployment**; it does not start one, because `webServer` cannot bootstrap the Postgres + backend + frontend stack. Two env vars control it:
+
+| Variable | What it is | Default |
+|---|---|---|
+| `BASE_URL` | the app under test | `http://localhost:3010` — the `docker-compose.yml` frontend, published on `${FRONTEND_PORT:-3010}` |
+| `E2E_PASSWORD` | the passphrase the specs sign in with | `APP_DEFAULT_PASSWORD` from `docker-compose.yml` |
+
+Two suites with very different blast radii:
+
+| Suite | What it touches | Safe against |
+|---|---|---|
+| `e2e/smoke/` | read-only: login, my library, one title's detail page, physical media, and opening then cancelling the disc edit dialog | any environment, including production — the dialog step fails the run if a `POST`/`PUT`/`PATCH`/`DELETE` leaves the browser |
+| `e2e/write/` | creates and deletes its own physical-media and catalog records | a local or throwaway stack only |
+
+```bash
+# smoke suite — read-only
+E2E_PASSWORD='the-app-passphrase' npm run test:e2e:smoke
+
+# smoke + write — mutating, never against a shared instance
+E2E_PASSWORD='the-app-passphrase' npm run test:e2e
+
+# one spec, headed, while debugging
+npx playwright test e2e/smoke/detail-and-disc-edit.spec.ts --headed
+```
+
+`npm run test:e2e:smoke` exits non-zero when any spec fails — including when `BASE_URL` is unreachable, which Playwright reports as a failed navigation — so QA can gate on the exit code.
+
+#### Node >= 20
+
+`@playwright/test` 1.62 declares `engines.node: ">=20"`. The factory host (ai-workstation) still runs Node 18, so it has to move to Node 20 or newer before the smoke suite runs there:
+
+```bash
+node --version                     # must print v20 or newer
+npx playwright install chromium    # once per host: downloads the browser build
+```
+
+#### Reaching the app through an SSH tunnel
+
+QA usually runs on a machine that is not the app host, and the app is only reachable on its own LAN. Forward the app's frontend port to the QA machine and point `BASE_URL` at the tunnel:
+
+```bash
+# on the QA machine — no remote shell, local 3010 -> app host's 3010
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:3010:127.0.0.1:3010 <user>@192.168.0.227
+
+# in a second shell, run the suite through the tunnel
+BASE_URL=http://127.0.0.1:3010 E2E_PASSWORD='the-app-passphrase' npm run test:e2e:smoke
+```
+
+- `192.168.0.227` is the box running `docker-compose.yml` — the same host `docs/api/endpoints.md` scrapes metrics from. Keep both sides of `-L` on `3010` unless `FRONTEND_PORT` is overridden.
+- Bind the forward to `127.0.0.1` as shown, so the tunnel does not listen on the QA machine's LAN interface.
+- Keep the tunnel up for the whole run; a dropped tunnel shows up as navigation failures, never as a pass.
+
 ---
 
 ## Local Development (non-Docker)

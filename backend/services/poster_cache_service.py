@@ -55,7 +55,7 @@ def _load_meta(media_type: str, media_id: str) -> dict:
         try:
             return json.loads(p.read_text())
         except Exception:
-            pass
+            logger.warning("Failed to read poster cache metadata", path=str(p), exc_info=True)
     return {"posters": []}
 
 
@@ -90,8 +90,8 @@ def _migrate_flat_file(old_path: Path, media_type: str, media_id: str) -> None:
     })
     try:
         old_path.unlink()
-    except Exception:
-        pass
+    except OSError:
+        logger.warning("Failed to remove legacy poster file", path=str(old_path), exc_info=True)
     logger.info("Migrated poster to directory layout", media_type=media_type, media_id=media_id)
 
 
@@ -136,10 +136,6 @@ def _store_poster(data: bytes, url: str, media_type: str, media_id: str, meta: d
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-
-def get_poster_count(media_type: str, media_id: str) -> int:
-    return len(_load_meta(media_type, media_id)["posters"])
-
 
 def get_poster_path(media_type: str, media_id: str, index: int = 0) -> Path | None:
     """Return the Path to poster *index* if it exists on disk, else None.
@@ -219,8 +215,8 @@ async def refresh_if_stale(url: str, media_type: str, media_id: str) -> bool:
                 t = datetime.fromisoformat(entry["last_checked_at"])
                 if last_checked is None or t > last_checked:
                     last_checked = t
-            except Exception:
-                pass
+            except (KeyError, TypeError, ValueError):
+                logger.warning("Invalid last_checked_at in poster cache metadata", media_id=media_id, exc_info=True)
 
     if last_checked and (now - last_checked) < _CHECK_INTERVAL:
         return False  # Checked recently — skip

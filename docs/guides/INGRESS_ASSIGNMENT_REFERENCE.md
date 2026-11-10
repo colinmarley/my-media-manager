@@ -236,7 +236,7 @@ waiting is visible without opening it.
 
 The queue is restored from `ingress_queue` on startup (newest row per `file_path`
 wins; files that no longer exist are skipped; `processing` rows return to `pending`).
-`ingress_queue.file_path` is unique (migration `6f7a8b9c0d1e` removed the historical
+`ingress_queue.file_path` is unique (migration `7a8b9c0d1e2f` removed the historical
 duplicates). Dismissing an item (`mark_failed`) sets `attempts` to 3 so the automatic
 retry loop never resurrects it.
 

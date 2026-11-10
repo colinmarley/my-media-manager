@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { TextField, Button, Autocomplete } from '@mui/material';
+import { TextField, Button, Autocomplete, FormHelperText } from '@mui/material';
 import Grid from '@mui/material/Grid';
 import { MovieDirector } from '@/types/collections/Common.type';
 import useFormStore from '@/store/useFormStore';
@@ -17,6 +17,7 @@ const InitialMovieDirector: MovieDirector = {
 const DirectorInput: React.FC<DirectorInputProps> = ({ onAddDirector }) => {
   const { directorOptions, openAddDirectorModal, refreshDirectorOptions } = useFormStore();
   const [newDirector, setNewDirector] = useState<MovieDirector>(InitialMovieDirector);
+  const [error, setError] = useState<string | null>(null);
 
   React.useEffect(() => {
     void refreshDirectorOptions();
@@ -35,8 +36,9 @@ const DirectorInput: React.FC<DirectorInputProps> = ({ onAddDirector }) => {
     
       onAddDirector(directorToAdd);
       resetNewDirectorFields();
+      setError(null);
     } else {
-      alert('Please fill out all fields before adding a new director.');
+      setError('Please fill out all fields before adding a new director.');
     }
   };
 
@@ -80,6 +82,7 @@ const DirectorInput: React.FC<DirectorInputProps> = ({ onAddDirector }) => {
         <Button variant="contained" color="primary" onClick={handleAddDirector}>
           Add Director
         </Button>
+        {error && <FormHelperText error>{error}</FormHelperText>}
       </Grid>
     </Grid>
   );

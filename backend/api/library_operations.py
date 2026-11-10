@@ -51,7 +51,7 @@ class StartScanRequest(BaseModel):
         
     Note:
         When existingFiles/existingDirectories are provided, the system performs
-        offline duplicate detection. Otherwise, it queries Firestore (if available).
+        offline duplicate detection. Otherwise, no existing records are checked yet.
     """
     libraryPath: str
     userId: Optional[str] = None
@@ -134,7 +134,7 @@ async def start_library_scan(request: StartScanRequest, req: Request):
         - Asynchronous execution (non-blocking)
         - Optional metadata extraction
         - Duplicate detection with composite key strategy
-        - Supports both online (Firestore) and offline (provided data) duplicate checking
+        - Supports offline (provided data) duplicate checking
         
     Duplicate Detection Strategy:
         Uses composite keys in format: "{libraryPath}:{path}"
@@ -508,7 +508,6 @@ async def get_scanned_files(request: GetScannedFilesRequest, req: Request):
     try:
         library_scanner = req.app.state.library_scanner
         
-        # Firestore replaced by PostgreSQL - return empty list
         # TODO: implement Postgres-backed scan file retrieval
         files = []
         
@@ -539,7 +538,6 @@ async def get_scanned_directories(request: GetScannedDirectoriesRequest, req: Re
     try:
         library_scanner = req.app.state.library_scanner
         
-        # Firestore replaced by PostgreSQL - return empty list
         # TODO: implement Postgres-backed scan directory retrieval
         directories = []
         

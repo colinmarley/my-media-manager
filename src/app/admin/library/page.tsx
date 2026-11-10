@@ -53,6 +53,7 @@ import { LibraryPath, LibrarySettings, DEFAULT_NAMING_CONVENTIONS } from '../../
 import { DEFAULT_LIBRARY_SETTINGS } from '../../../service/library/LibraryScanner';
 import { useLibraryPaths } from '../../../hooks/library/useLibraryPaths';
 import useAuthenticationStore from '../../../store/useAuthenticationStore';
+import { useNotify } from '../../../context/NotificationContext';
 import {
   JELLYFIN_ROOT_STORAGE_KEY,
   LIBRARY_SETTINGS_STORAGE_KEY,
@@ -80,6 +81,7 @@ function TabPanel(props: TabPanelProps) {
 
 const LibraryManagementPage: React.FC = () => {
   const { authenticated } = useAuthenticationStore();
+  const notify = useNotify();
 
   const {
     libraryPaths,
@@ -178,7 +180,7 @@ const LibraryManagementPage: React.FC = () => {
 
   const handleStartScan = async (path: LibraryPath) => {
     if (!authenticated) {
-      alert('You must be logged in to start a scan');
+      notify('You must be logged in to start a scan', 'error');
       return;
     }
 
@@ -302,8 +304,7 @@ const LibraryManagementPage: React.FC = () => {
       setScanProgress(0);
       setScanStatus('');
       setScanId(null);
-      // You might want to show an error message to the user here
-      alert(`Failed to start scan: ${error instanceof Error ? error.message : 'Unknown error'}. ${!authenticated ? 'Please ensure you are logged in.' : ''}`);
+      notify(`Failed to start scan: ${error instanceof Error ? error.message : 'Unknown error'}. ${!authenticated ? 'Please ensure you are logged in.' : ''}`, 'error');
     }
   };
 

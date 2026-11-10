@@ -37,7 +37,6 @@ import time
 
 from utils.exceptions import (
     PathSecurityError,
-    InsufficientPermissionsError,
     FileOperationError
 )
 from utils.logging import logger

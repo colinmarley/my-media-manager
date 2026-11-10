@@ -33,7 +33,6 @@ from config.settings import settings
 from api.file_operations import router as file_router
 from api.library_operations import router as library_router
 from api.metadata_operations import router as metadata_router
-from api.media_operations import router as media_router, initialize_organization_services
 from api.file_browser import router as file_browser_router
 from api.ingress_operations import router as ingress_router
 from api.auth import router as auth_router
@@ -52,9 +51,11 @@ from api.cover_scan import router as cover_scan_router
 from api.ripper_proxy import router as ripper_proxy_router
 from api.wishlist import router as wishlist_router
 from api.storage_locations import router as storage_locations_router
+from api.metrics import MetricsMiddleware, router as metrics_router
 from api.errors import install_error_handling
 from db.database import engine, Base, AsyncSessionLocal
 from db.models import AppConfig
+from services.metrics import DomainMetricsCollector
 from services.filesystem_manager import FileSystemManager
 from services.file_watcher_service import FileWatcherService
 from services.ingress_queue_service import IngressQueueService
@@ -65,6 +66,7 @@ from services.metadata_extractor import MetadataExtractor
 from services.library_scanner import LibraryScanner
 from services.library_compliance_service import LibraryComplianceService
 from services.task_manager import AsyncTaskManager
+from services.retention_service import run_retention_loop
 from utils.logging import logger
 
 # Global service instances - initialized during application startup
@@ -112,19 +114,10 @@ async def run_ingress_auto_processor(app: FastAPI):
             if _retry_check_counter >= 30 and queue_service:
                 _retry_check_counter = 0
                 now = __import__('time').time()
-                retry_candidates = [
-                    item for item in queue_service.items_by_id.values()
-                    if item.status == "failed"
-                    and (item.attempts or 0) < 3
-                    and (item.last_attempt is None or now - item.last_attempt > 300)
-                ]
-                for item in retry_candidates:
-                    await queue_service.retry_item(item.id)
-                    logger.info(
-                        "Auto-retrying failed ingress item",
-                        item_id=item.id,
-                        attempts=item.attempts,
-                    )
+                # Terminal statuses (completed, ignored) are never auto-retried.
+                for item_id in queue_service.get_retry_candidate_ids(now=now):
+                    await queue_service.retry_item(item_id)
+                    logger.info("Auto-retrying failed ingress item", item_id=item_id)
 
             if (
                 watcher_service
@@ -240,6 +233,12 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("Ingress queue restore failed", error=str(exc))
 
+    try:
+        # Before the watcher starts: re-detected files must find their rows (and stay ignored if ignored).
+        await ingress_queue_service.load_persisted_paths()
+    except Exception as exc:
+        logger.warning("Could not load the ingress queue path index", error=str(exc))
+
     # Stored proposals are refreshed when a queue item changes. Recompute them once
     # at startup too: the role hints and inherited matches are not persisted, rows
     # written by an older version carry stale paths, and the library may have
@@ -295,9 +294,6 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Destination mount not found - file organization will fail", path=dest_base)
 
-    # Initialize Phase 4 services for file organization
-    initialize_organization_services(None)
-    
     file_watcher_service = FileWatcherService(
         file_manager=file_manager,
         queue_callback=ingress_queue_service.add_from_watcher,
@@ -351,7 +347,11 @@ async def lifespan(app: FastAPI):
             run_ingress_auto_processor(app)
         )
         app.state.ingress_auto_processor_task = ingress_auto_processor_task
-    
+
+    retention_task = None
+    if settings.retention_enabled:
+        retention_task = asyncio.create_task(run_retention_loop(AsyncSessionLocal))
+
     logger.info("Services initialized successfully")
     
     yield
@@ -381,6 +381,13 @@ async def lifespan(app: FastAPI):
         ingress_proposal_refresh_task.cancel()
         try:
             await ingress_proposal_refresh_task
+        except asyncio.CancelledError:
+            pass
+
+    if retention_task:
+        retention_task.cancel()
+        try:
+            await retention_task
         except asyncio.CancelledError:
             pass
 
@@ -417,12 +424,15 @@ app.add_middleware(
 # log line emitted while handling this request carries the same searchable ID.
 app.add_middleware(CorrelationMiddleware)
 
+# Request count + latency for the Prometheus RED dashboards, added last so it is
+# the outermost middleware and sees the final response status. /metrics is skipped.
+app.add_middleware(MetricsMiddleware)
+
 # Include API routers with prefixes and tags for OpenAPI documentation
 app.include_router(file_router, prefix="/api/files", tags=["File Operations"])
 app.include_router(file_browser_router, tags=["File Browser"])
 app.include_router(library_router, prefix="/api/library", tags=["Library Operations"])
 app.include_router(metadata_router, prefix="/api/metadata", tags=["Metadata Operations"])
-app.include_router(media_router, prefix="/api/media", tags=["Media Operations"])
 app.include_router(auth_router, prefix="/api")
 app.include_router(catalog_router)
 app.include_router(generic_data_router)
@@ -440,6 +450,12 @@ app.include_router(ripper_proxy_router)
 app.include_router(wishlist_router)
 app.include_router(storage_locations_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
+# Unauthenticated like /health — Prometheus pulls metrics and has no session cookie.
+app.include_router(metrics_router)
+
+# Gauges (catalog counts, ingest queue, compliance, assignments, poster cache,
+# sessions). Built at import so tests can override app.state.domain_metrics.
+app.state.domain_metrics = DomainMetricsCollector(AsyncSessionLocal)
 
 @app.get("/")
 async def root():

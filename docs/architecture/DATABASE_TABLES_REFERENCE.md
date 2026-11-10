@@ -85,6 +85,41 @@ Episode-level metadata and file linkage.
 - `imdb_id`, `tmdb_id`, `tvdb_id`
 - file state: `has_file`, `file_id`, `file_count`, `jellyfin_filename`
 
+### Loans (no table — recorded inside `raw_data`)
+
+There is no `loans` table. The mobile app records lending **inside the lent
+record's own `raw_data` JSONB document** (movies, series, discs and tapes can
+all be lent), and `backend/services/catalog_stats.py` reads it back to produce
+the "lent out" figure on `/dashboard/stats`. That service module states the
+contract next to the code; this is the data-model view of it.
+
+Two shapes occur, and a record counts as out while its **newest unreturned
+loan** is open:
+
+- **A loan list** under `loans` (also seen as `loanHistory` / `lendingHistory`),
+  oldest first, each entry holding who (`loanedTo`, `lentTo`, `borrower`, …),
+  when it left (`loanedAt`, `dateOut`, `date`, …), an optional `due`/`dueDate`,
+  and how it came back — a return date (`returnedAt`, `dateBack`, `returnDate`,
+  …), a return flag (`returned: true`), or a loan `status`/`loanStatus` that
+  reads as back ("returned", "back"). A single object under `loans` instead of
+  a list is one loan.
+- **Bare fields on the record itself** — a borrower name (`loanedTo`, `lentTo`,
+  `onLoanTo`, `borrower`) or a flag (`onLoan`, `loanOut`, `isLent`). A return
+  marker on the record (`returnedAt`, `dateBack`, `returned: true`, …) or an
+  explicit `onLoan: false` means the item is home again; mobile keeps the
+  borrower name on the record after it is returned, so the marker, not the
+  name, decides.
+
+Notes for anything reading these fields:
+
+- A record-level `status` is **not** a loan field. On `series` it is the series
+  status (`Continuing` / `Ended` / …); only loan-scoped keys (`loanStatus`,
+  `loanState`, or `status` inside a `loans[]` entry) describe lending.
+- Because lending lives in a document, there is no way to query, index or
+  paginate it in SQL; the stats endpoint aggregates it in Python over whole
+  tables. Promoting lending to a `loans` table is the fix if it ever needs
+  reporting beyond "how many are out".
+
 ---
 
 ## 3. People and Credits Tables
