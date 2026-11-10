@@ -66,6 +66,80 @@ const STATUS_COLORS: Record<string, 'default' | 'info' | 'warning' | 'error' | '
 
 const BULK_SELECTABLE_STATUSES = new Set(['needs_review', 'auto_assigned']);
 
+/**
+ * Tooltip body for the confidence cell: why the best match scored what it did,
+ * which alternatives were considered, and how the filename was parsed. All of
+ * this already came back from the API; it was simply never rendered.
+ */
+function MatchExplanation({ item }: { item: IngressQueueItem }) {
+  const best = item.best_match;
+  const candidates = item.match_candidates || [];
+  const parsed = item.parsed_info || {};
+  const notes = parsed.parse_notes || [];
+  const alternatives = candidates.filter(
+    (candidate) => !best || candidate.media_id !== best.media_id || candidate.source !== best.source,
+  );
+
+  return (
+    <Box sx={{ maxWidth: 420, fontSize: 12 }}>
+      <Typography variant="caption" component="div" sx={{ fontWeight: 600 }}>
+        {best ? `Best match: ${best.title}${best.year ? ` (${best.year})` : ''}` : 'No match'}
+        {best?.source ? ` · ${best.source}` : ''}
+        {best?.imdb_id ? ` · ${best.imdb_id}` : ''}
+      </Typography>
+      {best?.score_breakdown && best.score_breakdown.length > 0 && (
+        <Box component="ul" sx={{ m: 0, pl: 2 }}>
+          {best.score_breakdown.map((entry, index) => (
+            <li key={`${entry.rule}-${index}`}>
+              {entry.rule.replace(/_/g, ' ')}
+              {entry.points ? ` ${entry.points > 0 ? '+' : ''}${entry.points}` : ''}
+              {entry.note ? ` — ${entry.note}` : ''}
+            </li>
+          ))}
+        </Box>
+      )}
+      {!best?.score_breakdown?.length && best?.match_reason && (
+        <Typography variant="caption" component="div">{best.match_reason}</Typography>
+      )}
+      {alternatives.length > 0 && (
+        <>
+          <Typography variant="caption" component="div" sx={{ fontWeight: 600, mt: 1 }}>
+            Other candidates
+          </Typography>
+          <Box component="ul" sx={{ m: 0, pl: 2 }}>
+            {alternatives.map((candidate, index) => (
+              <li key={`${candidate.source}-${candidate.media_id || index}`}>
+                {candidate.title}
+                {candidate.year ? ` (${candidate.year})` : ''} — {candidate.confidence_score ?? '?'}
+                {candidate.source ? ` · ${candidate.source}` : ''}
+              </li>
+            ))}
+          </Box>
+        </>
+      )}
+      <Typography variant="caption" component="div" sx={{ fontWeight: 600, mt: 1 }}>
+        Parsed
+      </Typography>
+      <Typography variant="caption" component="div">
+        {parsed.media_type || 'unknown'}
+        {parsed.title ? ` · "${parsed.title}"` : ''}
+        {parsed.year ? ` (${parsed.year})` : ''}
+        {parsed.season != null ? ` · S${String(parsed.season).padStart(2, '0')}` : ''}
+        {parsed.episode != null ? `E${String(parsed.episode).padStart(2, '0')}` : ''}
+        {parsed.parse_quality != null ? ` · parse quality ${parsed.parse_quality}` : ''}
+        {parsed.title_source ? ` · title from ${parsed.title_source}` : ''}
+      </Typography>
+      {notes.length > 0 && (
+        <Box component="ul" sx={{ m: 0, pl: 2 }}>
+          {notes.map((note, index) => (
+            <li key={index}>{note}</li>
+          ))}
+        </Box>
+      )}
+    </Box>
+  );
+}
+
 const ACTIVE_QUEUE_STATUSES = new Set(['pending', 'processing', 'needs_review', 'auto_assigned']);
 const ASSIGN_RESULTS_BATCH_SIZE = 10;
 
@@ -133,6 +207,34 @@ function formatDuration(ms: number): string {
     return `${hours}h ${String(minutes).padStart(2, '0')}m`;
   }
   return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
+}
+
+/**
+ * Folder a queue item sits in, relative to the ingress root it was found under.
+ * A file without a destination is never moved, so this is where to find it.
+ */
+export function getSourceFolderLabel(item: IngressQueueItem): string {
+  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '');
+  const filePath = normalize(item.file_path || '');
+  const lastSlash = filePath.lastIndexOf('/');
+  if (lastSlash <= 0) {
+    return '';
+  }
+
+  const folder = filePath.slice(0, lastSlash);
+  const ingressRoot = normalize(item.ingress_path || '');
+  if (ingressRoot && folder.startsWith(`${ingressRoot}/`)) {
+    return folder.slice(ingressRoot.length + 1);
+  }
+  if (ingressRoot && folder === ingressRoot) {
+    return ingressRoot.slice(ingressRoot.lastIndexOf('/') + 1);
+  }
+  return folder;
+}
+
+/** True for an item that has been looked at and still has nowhere to go. */
+export function isAwaitingDestination(item: IngressQueueItem): boolean {
+  return !item.proposed_path && (item.status === 'needs_review' || item.status === 'failed');
 }
 
 export function getQueueClassificationBadges(item: IngressQueueItem): Array<{
@@ -1209,6 +1311,11 @@ const IngressAutomationPanel: React.FC = () => {
                             <Typography variant="body2" noWrap title={item.file_path}>
                               {item.file_name}
                             </Typography>
+                            {getSourceFolderLabel(item) && (
+                              <Typography variant="caption" display="block" color="text.secondary" noWrap title={item.file_path}>
+                                in {getSourceFolderLabel(item)}
+                              </Typography>
+                            )}
                             {item.last_error && (
                               <Typography variant="caption" color="error" noWrap title={item.last_error}>
                                 {item.last_error}
@@ -1272,8 +1379,41 @@ const IngressAutomationPanel: React.FC = () => {
                                 → {item.proposed_path}
                               </Typography>
                             )}
+                            {isAwaitingDestination(item) && (
+                              <Typography
+                                variant="caption"
+                                display="block"
+                                color="text.secondary"
+                                noWrap
+                                title="Nothing resolves a destination for this file yet. It stays in its source folder until it is matched."
+                                sx={{ fontStyle: 'italic' }}
+                              >
+                                No destination yet, stays in place
+                              </Typography>
+                            )}
+                            {item.parsed_info?.review_reason && (
+                              <Typography
+                                variant="caption"
+                                display="block"
+                                color={item.parsed_info.ambiguous_match ? 'warning.main' : 'text.secondary'}
+                                noWrap
+                                title={item.parsed_info.review_reason}
+                              >
+                                {item.parsed_info.review_reason}
+                              </Typography>
+                            )}
                           </TableCell>
-                          <TableCell>{item.confidence_score ?? '—'}</TableCell>
+                          <TableCell>
+                            <Tooltip
+                              arrow
+                              placement="left"
+                              title={<MatchExplanation item={item} />}
+                            >
+                              <Box component="span" sx={{ cursor: 'help', textDecoration: 'underline dotted' }}>
+                                {item.confidence_score ?? '—'}
+                              </Box>
+                            </Tooltip>
+                          </TableCell>
                           <TableCell>
                             <Box sx={{ display: 'flex', gap: 0.5 }}>
                               {(item.status === 'failed' || item.status === 'needs_review') && (

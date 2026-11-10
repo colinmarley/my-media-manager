@@ -35,6 +35,8 @@ export interface IngressQueueItem {
   id: string;
   file_path: string;
   file_name: string;
+  /** Ingress root the file was found under. */
+  ingress_path?: string | null;
   status: string;
   confidence_score?: number;
   attempts: number;
@@ -43,20 +45,19 @@ export interface IngressQueueItem {
   queued_at: number;
   processed_at?: number;
   media_duration_ms?: number | null;
+  /**
+   * Where the file would go, relative to the library root (absolute once it has
+   * been organized). Empty while nothing resolves a destination: the file then
+   * stays in its source folder.
+   */
   proposed_path?: string | null;
   classification_override?: QueueClassificationOverride | null;
   is_alternate_version?: boolean;
   version_number?: number;
   special_feature_number?: number;
-  best_match?: {
-    title?: string;
-    year?: number;
-    media_type?: string;
-    season?: number;
-    episode?: number;
-    source?: string;
-    confidence_score?: number;
-  };
+  best_match?: IngressMatchCandidate;
+  /** Top-5 scored candidates the matcher considered (best first). */
+  match_candidates?: IngressMatchCandidate[];
   parsed_info?: {
     title?: string;
     year?: number;
@@ -66,7 +67,36 @@ export interface IngressQueueItem {
     quality?: string;
     classification_hint?: string;
     is_companion?: boolean;
+    imdb_id?: string | null;
+    tmdb_id?: string | null;
+    title_source?: string | null;
+    /** How well the filename parsed (0–100); independent of whether a match was found. */
+    parse_quality?: number;
+    /** Why the item was held for review (no match / ambiguous / below threshold). */
+    review_reason?: string;
+    ambiguous_match?: boolean;
+    parse_notes?: string[];
   };
+}
+
+export interface IngressScoreBreakdownEntry {
+  rule: string;
+  points: number;
+  note?: string;
+}
+
+export interface IngressMatchCandidate {
+  title?: string;
+  year?: number;
+  media_type?: string;
+  season?: number;
+  episode?: number;
+  source?: string;
+  imdb_id?: string | null;
+  media_id?: string;
+  confidence_score?: number;
+  match_reason?: string;
+  score_breakdown?: IngressScoreBreakdownEntry[];
 }
 
 export interface QueueManualAssignPayload {

@@ -232,6 +232,23 @@ async def lifespan(app: FastAPI):
         auto_assign_threshold=settings.ingress_auto_assign_threshold,
         db_session_factory=AsyncSessionLocal,
     )
+    # The database is the source of truth for the queue; reload unfinished items so a
+    # restart neither empties the review queue nor re-creates rows on the next scan.
+    try:
+        restored_items = await ingress_queue_service.restore_from_db()
+        logger.info("Ingress queue items restored", count=restored_items)
+    except Exception as exc:
+        logger.warning("Ingress queue restore failed", error=str(exc))
+
+    # Stored proposals are refreshed when a queue item changes. Recompute them once
+    # at startup too: the role hints and inherited matches are not persisted, rows
+    # written by an older version carry stale paths, and the library may have
+    # changed while the service was down. It probes the NAS, so it runs in the
+    # background instead of delaying startup.
+    ingress_proposal_refresh_task = asyncio.create_task(
+        ingress_queue_service.refresh_proposals()
+    )
+    app.state.ingress_proposal_refresh_task = ingress_proposal_refresh_task
 
     ingress_runtime_config: dict = {
         "defaultIngressPaths": settings.ingress_default_paths,
@@ -357,6 +374,13 @@ async def lifespan(app: FastAPI):
         ingress_auto_processor_task.cancel()
         try:
             await ingress_auto_processor_task
+        except asyncio.CancelledError:
+            pass
+
+    if not ingress_proposal_refresh_task.done():
+        ingress_proposal_refresh_task.cancel()
+        try:
+            await ingress_proposal_refresh_task
         except asyncio.CancelledError:
             pass
 

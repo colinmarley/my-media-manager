@@ -70,28 +70,37 @@ class FileOrganizationService:
                 jellyfin_root_override,
             )
 
-            # If the path cannot be resolved, route to the staging folder so no
-            # file is ever silently dropped.
-            needs_review = False
+            # If the path cannot be resolved the file stays exactly where it is.
+            # It used to be renamed into a flat _NeedsReview folder, which threw
+            # away the parent folders (title, year, [imdbid-...] tag, Season N)
+            # that a person or a later pass needs to identify it.
             if not target_path:
                 source_file_name = (
                     (assignment.get("sourceFile") or assignment.get("file") or {}).get("fileName")
                     or "unknown"
                 )
-                stem, ext = os.path.splitext(source_file_name)
-                safe_stem = self._sanitize_path(stem) or "file"
-                needs_review = True
-                target_path = os.path.join(
-                    self.jellyfin_dest_base,
-                    settings.folder_needs_review,
+                error = (
+                    f"No destination could be resolved for media type '{media_type}'; "
+                    "file left in place for review"
                 )
-                assignment = dict(assignment)
-                assignment["_reviewFileName"] = f"{safe_stem} - NEEDS REVIEW{ext}"
                 logger.warning(
-                    "Could not calculate target path — routing to NeedsReview",
+                    "Could not calculate target path - leaving file in place",
                     media_type=media_type,
                     source_file=source_file_name,
                 )
+                return {
+                    "success": False,
+                    "assignmentId": assignment.get("id"),
+                    "mediaType": media_type,
+                    "targetPath": None,
+                    "needsReview": True,
+                    "filesMoved": 0,
+                    "totalFiles": 0,
+                    "operations": [],
+                    "moveErrors": [error],
+                    "error": error,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
 
             # Get source files from assignment
             source_files = await self._get_source_files(assignment)
@@ -150,7 +159,7 @@ class FileOrganizationService:
                 "assignmentId": assignment.get("id"),
                 "mediaType": media_type,
                 "targetPath": target_path,
-                "needsReview": needs_review,
+                "needsReview": False,
                 "filesMoved": sum(1 for r in move_results if r.get("success")),
                 "totalFiles": len(move_results),
                 "folderCreated": folder_result.get("folderPath"),
@@ -163,7 +172,7 @@ class FileOrganizationService:
 
             # Write jellyfinInfo back to the PostgreSQL catalog so My Library reflects
             # the organized state without needing Firebase.
-            if all_successful and not needs_review and self.db_session_factory:
+            if all_successful and self.db_session_factory:
                 await self._upsert_catalog_jellyfin_info(
                     media_type=media_type,
                     media_id=assignment.get("mediaId"),
@@ -200,7 +209,7 @@ class FileOrganizationService:
         """Calculate destination path based on media type.
 
         Supports: movie, episode, documentary, live_performance.
-        Returns None for unrecognised types so the caller can route to _NeedsReview.
+        Returns None for unrecognised types; the caller then leaves the file in place.
         """
         try:
             target_structure = assignment.get("targetFolderStructure", {})
@@ -264,7 +273,7 @@ class FileOrganizationService:
                 return f"{library_root}/{subfolder}/{folder_name}/{season_str}"
 
             else:
-                logger.error("Unknown media type — will route to NeedsReview", media_type=media_type)
+                logger.error("Unknown media type - file will be left in place", media_type=media_type)
                 return None
 
         except Exception as e:
@@ -455,20 +464,21 @@ class FileOrganizationService:
           is appended.
         Shows: <Series Folder Name> SxxExx[ Episode Title].ext when episode data exists.
           If no episode number can be resolved, uses "Unknown Episode N" suffix.
-        NeedsReview: uses the _reviewFileName set on the assignment dict.
         """
         ext = os.path.splitext(source_file)[1]
         source_name = os.path.basename(source_file)
-
-        # Catch-all: file routed to _NeedsReview has a pre-computed name
-        if assignment.get("_reviewFileName"):
-            return str(assignment["_reviewFileName"])
 
         if media_type in ("movie", "documentary", "live_performance"):
             folder_name = self._sanitize_path(os.path.basename(target_dir))
             if assignment.get("isAlternateVersion"):
                 version_num = assignment.get("versionNumber", 2)
                 return f"{folder_name} - Version {version_num}{ext}"
+            special_number = assignment.get("specialFeatureNumber")
+            if special_number is not None:
+                try:
+                    return f"Special Feature {int(special_number)}{ext}"
+                except (TypeError, ValueError):
+                    pass
             if folder_name:
                 return f"{folder_name}{ext}"
             return source_name
