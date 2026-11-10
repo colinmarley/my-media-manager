@@ -31,6 +31,7 @@ async def test_resolve_poster_url_falls_back_to_omdb_lookup_when_missing(monkeyp
                 'imdbID': 'tt0472033',
             }
 
+    monkeypatch.setattr(posters.settings, 'omdb_api_key', 'test-omdb-key')
     monkeypatch.setattr(posters.requests, 'get', lambda *args, **kwargs: FakeResponse())
 
     url = await posters._resolve_poster_url('movie', 'movie-9', fake_db)
