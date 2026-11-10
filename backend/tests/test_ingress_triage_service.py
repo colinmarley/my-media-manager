@@ -6,6 +6,7 @@ these tests feed fake session rows and check the shape plus the per-item result 
 
 import asyncio
 import os
+import posixpath
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -99,7 +100,7 @@ def _group_row(media_type, ingress_path, title, status, count, confidence_min=No
 def _persisted_row(item_id, file_name, status=QUEUE_PENDING, ingress_path='/inbox', best_match=None, **overrides):
     row = {
         'id': item_id,
-        'file_path': os.path.join(ingress_path, file_name),
+        'file_path': posixpath.join(ingress_path, file_name),
         'file_name': file_name,
         'ingress_path': ingress_path,
         'file_size': 1024,
@@ -623,7 +624,7 @@ async def test_grouped_listing_and_bulk_ignore_run_against_postgres():
             parts = [ingress_path] + ([folder] if folder else []) + [file_name]
             return DBQueueItem(
                 id=item_id,
-                file_path=os.path.join(*parts),
+                file_path=posixpath.join(*parts),
                 file_name=file_name,
                 ingress_path=ingress_path,
                 file_size=1024,

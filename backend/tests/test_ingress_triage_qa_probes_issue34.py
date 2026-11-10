@@ -12,7 +12,7 @@ Each probe maps to an acceptance criterion of the issue:
 """
 
 import asyncio
-import os
+import posixpath
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -51,7 +51,7 @@ def _row(item_id, file_name, status=QUEUE_PENDING, ingress_path=INGRESS_ROOT,
     """A persisted `ingress_queue` row shape (attribute access, like an ORM instance)."""
     row = SimpleNamespace(
         id=item_id,
-        file_path=os.path.join(ingress_path, file_name),
+        file_path=posixpath.join(ingress_path, file_name),
         file_name=file_name,
         ingress_path=ingress_path,
         file_size=1024,

@@ -33,7 +33,7 @@ SCRAPE_LABELS = {"job", "instance", "le"}
 
 
 def _dashboard() -> dict:
-    return json.loads(DASHBOARD_PATH.read_text())
+    return json.loads(DASHBOARD_PATH.read_text(encoding='utf-8'))
 
 
 def _exprs(dashboard: dict) -> list:
@@ -92,7 +92,7 @@ def test_dashboard_is_importable():
 
 
 def test_import_doc_covers_import_and_home_dashboard_tile():
-    doc = DOC_PATH.read_text()
+    doc = DOC_PATH.read_text(encoding='utf-8')
     assert "media-manager.json" in doc
     assert "Import" in doc
     tile = doc.split("## Proposed Home Dashboard tile", 1)[1]

@@ -39,7 +39,7 @@ const sourceFilesIn = (directory: string): string[] =>
 const splitFiles = [
   ...SPLIT_FILES.map((file) => path.join(REPO_ROOT, file)),
   ...SPLIT_DIRECTORIES.flatMap(sourceFilesIn),
-].map((file) => path.relative(REPO_ROOT, file));
+].map((file) => path.relative(REPO_ROOT, file).split(path.sep).join('/'));
 
 describe('media details split size budget (#13 AC1)', () => {
   it('covers the composition root, every section component and every library hook', () => {
