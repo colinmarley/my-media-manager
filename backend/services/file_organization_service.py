@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from xml.sax.saxutils import escape
 from config.settings import settings
+from services.path_builder import PathBuilder
 from utils.logging import logger
 
 
@@ -62,13 +63,19 @@ class FileOrganizationService:
         try:
             media_type = assignment.get("mediaType", "movie")
 
-            # Calculate target path
-            target_path = self._calculate_jellyfin_path(
-                media,
-                assignment,
-                media_type,
-                jellyfin_root_override,
-            )
+            # The queue's proposal is the plan: the primary file goes exactly
+            # where the proposal said. Only an assignment without one (not from
+            # the queue) has its destination built here, by the same builder.
+            planned_file = self._planned_destination(assignment, media_type, jellyfin_root_override)
+            if planned_file:
+                target_path = os.path.dirname(planned_file)
+            else:
+                target_path = self._calculate_jellyfin_path(
+                    media,
+                    assignment,
+                    media_type,
+                    jellyfin_root_override,
+                )
 
             # If the path cannot be resolved the file stays exactly where it is.
             # It used to be renamed into a flat _NeedsReview folder, which threw
@@ -114,7 +121,7 @@ class FileOrganizationService:
 
             # Move files
             move_results = []
-            for source_file in source_files:
+            for index, source_file in enumerate(source_files):
                 try:
                     result = await self._move_file_to_jellyfin(
                         source_file,
@@ -122,6 +129,7 @@ class FileOrganizationService:
                         media_type,
                         assignment,
                         media,
+                        planned_destination=planned_file if index == 0 else None,
                     )
                     move_results.append(result)
 
@@ -198,6 +206,35 @@ class FileOrganizationService:
                 "timestamp": datetime.utcnow().isoformat(),
             }
 
+    def _library_root(
+        self,
+        assignment: Dict[str, Any],
+        jellyfin_root_override: Optional[str] = None,
+    ) -> str:
+        target_structure = assignment.get("targetFolderStructure") or {}
+        return (
+            jellyfin_root_override
+            or target_structure.get("libraryRoot")
+            or self.jellyfin_dest_base
+        ).rstrip("/")
+
+    @staticmethod
+    def _primary_source(assignment: Dict[str, Any]) -> str:
+        payload = assignment.get("sourceFile") or assignment.get("file") or {}
+        return payload.get("filePath") or payload.get("fileName") or ""
+
+    def _planned_destination(
+        self,
+        assignment: Dict[str, Any],
+        media_type: str,
+        jellyfin_root_override: Optional[str] = None,
+    ) -> Optional[str]:
+        """Absolute destination of the primary file from the stored proposal, if any."""
+        proposed = assignment.get("proposedPath")
+        if not proposed or PathBuilder.subfolder(media_type) is None:
+            return None
+        return PathBuilder.absolute(self._library_root(assignment, jellyfin_root_override), str(proposed))
+
     def _calculate_jellyfin_path(
         self,
         media: Dict[str, Any],
@@ -205,76 +242,22 @@ class FileOrganizationService:
         media_type: str,
         jellyfin_root_override: Optional[str] = None,
     ) -> Optional[str]:
-        """Calculate destination path based on media type.
+        """Destination folder for an assignment, built by the shared PathBuilder.
 
         Supports: movie, episode, documentary, live_performance.
         Returns None for unrecognised types; the caller then leaves the file in place.
         """
         try:
-            target_structure = assignment.get("targetFolderStructure", {})
-            library_root = (
-                jellyfin_root_override
-                or target_structure.get("libraryRoot")
-                or self.jellyfin_dest_base
-            ).rstrip("/")
-
-            title = media.get("title", "Unknown")
-            title_sanitized = self._sanitize_path(title)
-
-            # Compute year suffix once
-            year_str = ""
-            if media.get("year"):
-                year_str = f" ({media.get('year')})"
-            elif media.get("releaseDate"):
-                try:
-                    year = int(media["releaseDate"][:4])
-                    year_str = f" ({year})"
-                except (ValueError, TypeError, IndexError):
-                    pass
-
-            # Compute IMDb tag once
-            imdb_info = ""
-            if media.get("imdbId"):
-                imdb_info = f" [imdbid-{media['imdbId']}]"
-
-            # Map media type to the configured destination subfolder name
-            _folder_map: Dict[str, str] = {
-                "movie":            settings.folder_movies,
-                "episode":          settings.folder_tv_shows,
-                "documentary":      settings.folder_documentaries,
-                "live_performance": settings.folder_live_performances,
-            }
-
-            if media_type in ("movie", "documentary", "live_performance"):
-                subfolder = _folder_map[media_type]
-                folder_name = f"{title_sanitized}{year_str}{imdb_info}"
-                return f"{library_root}/{subfolder}/{folder_name}"
-
-            elif media_type == "episode":
-                subfolder = _folder_map["episode"]
-                series_title = media.get("seriesTitle") or title
-                series_sanitized = self._sanitize_path(series_title)
-                folder_name = f"{series_sanitized}{year_str}{imdb_info}"
-
-                season_num_raw = assignment.get("seasonNumber")
-                if season_num_raw is None:
-                    season_num_raw = 0 if assignment.get("unknownEpisodeLabel") else 1
-                try:
-                    season_num = int(season_num_raw)
-                except (TypeError, ValueError):
-                    season_num = 0 if assignment.get("unknownEpisodeLabel") else 1
-                if season_num < 0:
-                    season_num = 0
-
-                # Season 0 uses "Specials" per Jellyfin convention
-                season_str = "Specials" if season_num == 0 else f"Season {season_num:02d}"
-
-                return f"{library_root}/{subfolder}/{folder_name}/{season_str}"
-
-            else:
+            if PathBuilder.subfolder(media_type) is None:
                 logger.error("Unknown media type - file will be left in place", media_type=media_type)
                 return None
-
+            spec = PathBuilder.spec_from_assignment(
+                assignment, media, media_type, self._primary_source(assignment)
+            )
+            relative_dir = PathBuilder.relative_dir(spec)
+            if relative_dir is None:
+                return None
+            return PathBuilder.absolute(self._library_root(assignment, jellyfin_root_override), relative_dir)
         except Exception as e:
             logger.error(
                 "Error calculating destination path",
@@ -357,8 +340,14 @@ class FileOrganizationService:
         media_type: str,
         assignment: Optional[Dict[str, Any]] = None,
         media: Optional[Dict[str, Any]] = None,
+        planned_destination: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Move a file to Jellyfin directory."""
+        """Move a file to Jellyfin directory.
+
+        ``planned_destination`` is the proposal's exact file path. It is used
+        as is; only if something appeared there since the plan was resolved is
+        a free variant taken, and the result then reports ``deviatedFromPlan``.
+        """
         try:
             if not self.filesystem_manager:
                 return {
@@ -375,18 +364,18 @@ class FileOrganizationService:
                     "error": f"Source file not found: {source_file}",
                 }
 
-            # Build Jellyfin-compliant filename
-            filename = self._build_jellyfin_filename(
-                source_file=source_file,
-                target_dir=target_dir,
-                media_type=media_type,
-                assignment=assignment or {},
-                media=media or {},
-            )
-
-            # Build destination path
-            destination = os.path.join(target_dir, filename)
-            destination = self._resolve_unique_destination(destination, source_file)
+            if planned_destination:
+                planned = planned_destination
+            else:
+                filename = self._build_jellyfin_filename(
+                    source_file=source_file,
+                    target_dir=target_dir,
+                    media_type=media_type,
+                    assignment=assignment or {},
+                    media=media or {},
+                )
+                planned = os.path.join(target_dir, filename)
+            destination = self._resolve_unique_destination(planned, source_file)
 
             # Move file
             result = self.filesystem_manager.move_file(source_file, destination)
@@ -399,8 +388,12 @@ class FileOrganizationService:
                 )
                 return {
                     "success": True,
+                    "op": "move",
                     "source": source_file,
                     "destination": destination,
+                    "plannedDestination": planned,
+                    "deviatedFromPlan": bool(planned_destination) and destination != planned,
+                    "size": self._file_size(destination),
                 }
             else:
                 error_msg = result.get("error", "Unknown error")
@@ -428,24 +421,16 @@ class FileOrganizationService:
                 "error": str(e),
             }
 
+    @staticmethod
+    def _file_size(path: str) -> Optional[int]:
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return None
+
     def _resolve_unique_destination(self, destination: str, source_file: str) -> str:
         """Return a collision-free destination path without overwriting existing files."""
-        if not os.path.exists(destination):
-            return destination
-
-        base, ext = os.path.splitext(destination)
-        source_stem = self._sanitize_path(os.path.splitext(os.path.basename(source_file))[0]) or "copy"
-
-        preferred = f"{base} - {source_stem}{ext}"
-        if preferred != destination and not os.path.exists(preferred):
-            return preferred
-
-        suffix = 2
-        while True:
-            candidate = f"{base} ({suffix}){ext}"
-            if not os.path.exists(candidate):
-                return candidate
-            suffix += 1
+        return PathBuilder.unique_path(destination, source_file)
 
     def _build_jellyfin_filename(
         self,
@@ -455,110 +440,17 @@ class FileOrganizationService:
         assignment: Dict[str, Any],
         media: Dict[str, Any],
     ) -> str:
+        """File name for an assignment without a stored proposal, from the shared PathBuilder.
+
+        Movies / Documentaries / Live Performances: the folder name, `` - Version N``
+        for an alternate version, ``Special Feature N`` for an extra.
+        Shows: ``<Series Folder> SxxExx[ Episode Title].ext``; a file whose
+        episode is unknown keeps its label or original name.
         """
-        Build a filename aligned with Jellyfin guidance.
-
-        Movies / Documentaries / Live Performances: filename matches folder name.
-          If assignment carries isAlternateVersion + versionNumber, a " - Version N" suffix
-          is appended.
-        Shows: <Series Folder Name> SxxExx[ Episode Title].ext when episode data exists.
-          If no episode number can be resolved, uses "Unknown Episode N" suffix.
-        """
-        ext = os.path.splitext(source_file)[1]
-        source_name = os.path.basename(source_file)
-
-        if media_type in ("movie", "documentary", "live_performance"):
-            folder_name = self._sanitize_path(os.path.basename(target_dir))
-            if assignment.get("isAlternateVersion"):
-                version_num = assignment.get("versionNumber", 2)
-                return f"{folder_name} - Version {version_num}{ext}"
-            special_number = assignment.get("specialFeatureNumber")
-            if special_number is not None:
-                try:
-                    return f"Special Feature {int(special_number)}{ext}"
-                except (TypeError, ValueError):
-                    pass
-            if folder_name:
-                return f"{folder_name}{ext}"
-            return source_name
-
-        if media_type == "episode":
-            season_dir = os.path.basename(target_dir)
-            series_dir = os.path.basename(os.path.dirname(target_dir))
-            series_name = self._sanitize_path(series_dir)
-
-            season_raw = assignment.get("seasonNumber")
-            if season_raw is None:
-                season_raw = assignment.get("parsedInfo", {}).get("season")
-            if season_raw is None and season_dir.lower().startswith("season "):
-                season_raw = season_dir.split(" ", 1)[1]
-
-            episode_raw = assignment.get("episodeNumber")
-            if episode_raw is None:
-                episode_raw = assignment.get("parsedInfo", {}).get("episode")
-
-            try:
-                season_num = int(season_raw)
-            except (TypeError, ValueError):
-                season_num = None
-
-            try:
-                episode_num = int(episode_raw)
-            except (TypeError, ValueError):
-                episode_num = None
-
-            if season_num is not None and season_num < 0:
-                season_num = 0
-            if episode_num is not None and episode_num < 0:
-                episode_num = 0
-
-            episode_title = (
-                assignment.get("parsedInfo", {}).get("episode_title")
-                or media.get("episodeTitle")
-                or ""
-            )
-            episode_title = self._sanitize_path(str(episode_title)).strip()
-
-            if series_name and episode_num is not None:
-                if season_num is None:
-                    # Anime absolute-episode numbering: no season available
-                    base_name = f"{series_name} E{episode_num:03d}"
-                    episode_end_raw = (
-                        assignment.get("parsedInfo", {}).get("episode_end")
-                        or assignment.get("episodeEnd")
-                    )
-                    try:
-                        episode_end_num = int(episode_end_raw)
-                        if episode_end_num > episode_num:
-                            base_name = f"{base_name}E{episode_end_num:03d}"
-                    except (TypeError, ValueError):
-                        pass
-                else:
-                    base_name = f"{series_name} S{season_num:02d}E{episode_num:02d}"
-                    # Multi-episode file: append the ending episode number
-                    episode_end_raw = (
-                        assignment.get("parsedInfo", {}).get("episode_end")
-                        or assignment.get("episodeEnd")
-                    )
-                    try:
-                        episode_end_num = int(episode_end_raw)
-                        if episode_end_num > episode_num:
-                            base_name = f"{base_name}E{episode_end_num:02d}"
-                    except (TypeError, ValueError):
-                        pass
-                if episode_title:
-                    base_name = f"{base_name} {episode_title}"
-                return f"{base_name}{ext}"
-
-            # Episode number unknown — use pre-computed unknown label if present,
-            # otherwise fall back to a generic suffix.
-            if series_name:
-                unknown_label = assignment.get("unknownEpisodeLabel")
-                if unknown_label:
-                    return f"{self._sanitize_path(str(unknown_label))}{ext}"
-                return f"{series_name} - Unknown Episode{ext}"
-
-        return source_name
+        if PathBuilder.subfolder(media_type) is None:
+            return os.path.basename(source_file)
+        spec = PathBuilder.spec_from_assignment(assignment, media, media_type, source_file)
+        return PathBuilder.file_name(spec)
 
     async def _upsert_catalog_jellyfin_info(
         self,
@@ -970,16 +862,4 @@ class FileOrganizationService:
 
     def _sanitize_path(self, name: str) -> str:
         """Sanitize name for use in file paths."""
-        # Remove problematic characters
-        invalid_chars = r'<>:"/\|?*'
-        for char in invalid_chars:
-            name = name.replace(char, "")
-
-        # Remove leading/trailing spaces
-        name = name.strip()
-
-        # Replace multiple spaces with single space
-        while "  " in name:
-            name = name.replace("  ", " ")
-
-        return name
+        return PathBuilder.sanitize(name)

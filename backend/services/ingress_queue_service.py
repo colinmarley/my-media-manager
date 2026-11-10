@@ -24,6 +24,7 @@ from config.settings import settings
 from db.models import IngressProcessingHistory as DBIngressProcessingHistory
 from db.models import IngressQueueItem as DBIngressQueueItem
 from services.filename_parser import FilenameParser
+from services.path_builder import ROLE_MAIN, ROLE_SPECIAL, ROLE_VERSION, PathBuilder
 from utils.logging import logger
 
 try:
@@ -1044,21 +1045,17 @@ class IngressQueueService:
     @staticmethod
     def _sanitize_title(title: str) -> str:
         """Strip characters that are invalid in file/folder names."""
-        for ch in r'<>:"/\|?*':
-            title = title.replace(ch, "")
-        return title.strip()
+        return PathBuilder.sanitize(title)
 
     @staticmethod
     def _folder_title(best_match: Dict[str, Any]) -> str:
-        """Folder name exactly as FileOrganizationService will create it:
+        """Folder name exactly as the organizer creates it:
         ``Title (Year) [imdbid-ttNNNNNNN]``."""
-        title = IngressQueueService._sanitize_title(best_match.get("title") or "Unknown")
-        year = best_match.get("year")
-        folder = f"{title} ({year})" if year else title
-        imdb_id = best_match.get("imdb_id")
-        if isinstance(imdb_id, str) and re.fullmatch(r"tt\d+", imdb_id.strip()):
-            folder = f"{folder} [imdbid-{imdb_id.strip()}]"
-        return folder
+        return PathBuilder.folder_name(
+            best_match.get("title") or "Unknown",
+            best_match.get("year"),
+            best_match.get("imdb_id"),
+        )
 
     @staticmethod
     def _shows_folder() -> str:
@@ -1066,73 +1063,23 @@ class IngressQueueService:
 
     @staticmethod
     def _build_main_path(file_name: str, best_match: Dict[str, Any]) -> str:
-        """Proposed path for the main feature file."""
-        ext = os.path.splitext(file_name)[1]
-        folder = IngressQueueService._folder_title(best_match)
-        media_type = best_match.get("media_type", "movie")
-        shows = IngressQueueService._shows_folder()
-        if media_type in ("episode", "series"):
-            season = best_match.get("season")
-            episode = best_match.get("episode")
-            # Season 0 → Specials folder (Jellyfin convention)
-            if season == 0:
-                season_str = "Specials"
-            elif season is not None:
-                season_str = f"Season {int(season):02d}"
-            else:
-                # Absolute-episode anime or season-pack — no season known
-                season_str = "Season 00"
-
-            if episode is not None:
-                if season is not None:
-                    ep_str = f"S{int(season):02d}E{int(episode):02d}"
-                else:
-                    # Anime absolute episode: use E-only notation
-                    ep_str = f"E{int(episode):03d}"
-                episode_end = best_match.get("episode_end")
-                if episode_end is not None and int(episode_end) > int(episode):
-                    if season is not None:
-                        ep_str = f"{ep_str}E{int(episode_end):02d}"
-                    else:
-                        ep_str = f"{ep_str}E{int(episode_end):03d}"
-                ep_title = best_match.get("episode_title") or ""
-                ep_label = f" {ep_title}" if ep_title else ""
-                return f"{shows}/{folder}/{season_str}/{folder} {ep_str}{ep_label}{ext}"
-            # Season-pack or unknown episode — keep original filename for manual ID
-            return f"{shows}/{folder}/{season_str}/{file_name}"
-        if media_type == "documentary":
-            return f"{settings.folder_documentaries}/{folder}/{folder}{ext}"
-        if media_type == "live_performance":
-            return f"{settings.folder_live_performances}/{folder}/{folder}{ext}"
-        return f"{settings.folder_movies}/{folder}/{folder}{ext}"
+        """Proposed path for the main feature file (or an episode)."""
+        return PathBuilder.relative_path(PathBuilder.spec_from_match(best_match, file_name, ROLE_MAIN))
 
     @staticmethod
     def _build_version_path(file_name: str, best_match: Dict[str, Any], version_number: int) -> str:
         """Proposed path for an alternate version of an already-processed movie."""
-        ext = os.path.splitext(file_name)[1]
-        folder = IngressQueueService._folder_title(best_match)
-        media_type = best_match.get("media_type", "movie")
-        subfolder = {
-            "documentary": settings.folder_documentaries,
-            "live_performance": settings.folder_live_performances,
-        }.get(media_type, settings.folder_movies)
-        return f"{subfolder}/{folder}/{folder} - Version {version_number}{ext}"
+        return PathBuilder.relative_path(
+            PathBuilder.spec_from_match(best_match, file_name, ROLE_VERSION, version_number)
+        )
 
     @staticmethod
     def _build_special_path(file_name: str, best_match: Dict[str, Any], number: int) -> str:
-        """Proposed path for an extra / special-feature file."""
-        ext = os.path.splitext(file_name)[1]
-        folder = IngressQueueService._folder_title(best_match)
-        media_type = best_match.get("media_type", "movie")
-        if media_type in ("episode", "series"):
-            season = best_match.get("season")
-            season_str = f"Season {int(season):02d}" if season is not None else "Season 00"
-            return f"{IngressQueueService._shows_folder()}/{folder}/{season_str}/{file_name}"
-        subfolder = {
-            "documentary": settings.folder_documentaries,
-            "live_performance": settings.folder_live_performances,
-        }.get(media_type, settings.folder_movies)
-        return f"{subfolder}/{folder}/Special Feature {number}{ext}"
+        """Proposed path for an extra / special-feature file. A show's extra keeps
+        its own name in the season folder."""
+        return PathBuilder.relative_path(
+            PathBuilder.spec_from_match(best_match, file_name, ROLE_SPECIAL, number)
+        )
 
     def _enrich_proposed_paths(self, items: List[Dict[str, Any]]) -> None:
         """
@@ -1307,13 +1254,66 @@ class IngressQueueService:
             else:
                 items[i]["proposed_path"] = None
 
+        # Special Feature N and Version N are numbered per destination folder,
+        # by one counter shared by the title-group pass and the companion pass
+        # below. Each used to start from what the folder holds on disk, so two
+        # files proposed in one refresh could get the same number. The counter
+        # starts after the highest number on disk and after any number a final
+        # item (organized, or being organized) already holds.
+        def _folder_key(best_match: Dict[str, Any]) -> Tuple[str, str]:
+            media_type = (best_match.get("media_type") or "movie").lower()
+            return (_subfolder_for(media_type), self._folder_title(best_match).lower())
+
+        reserved_numbers: Dict[Tuple[str, Tuple[str, str]], int] = defaultdict(int)
+        for i in resolved:
+            match = items[i].get("best_match")
+            path = items[i].get("proposed_path")
+            if not isinstance(match, dict) or not match or not path:
+                continue
+            if (match.get("media_type") or "movie").lower() in ("episode", "series"):
+                continue
+            key = _folder_key(match)
+            stem = os.path.splitext(os.path.basename(str(path).replace("\\", "/")))[0]
+            special_m = re.match(r"^Special Feature\s+(\d+)$", stem, re.IGNORECASE)
+            version_m = re.search(r"\s+-\s+Version\s+(\d+)$", stem, re.IGNORECASE)
+            if special_m:
+                slot = ("special", key)
+                reserved_numbers[slot] = max(reserved_numbers[slot], int(special_m.group(1)))
+            elif version_m:
+                slot = ("version", key)
+                reserved_numbers[slot] = max(reserved_numbers[slot], int(version_m.group(1)))
+
+        next_numbers: Dict[Tuple[str, Tuple[str, str]], int] = {}
+        # index -> folder key of the Special Feature slot it was given
+        special_slot_of: Dict[int, Tuple[str, str]] = {}
+
+        def _take_number(kind: str, best_match: Dict[str, Any]) -> int:
+            slot = (kind, _folder_key(best_match))
+            if slot not in next_numbers:
+                _, disk_special, _, disk_version = _movie_folder_state(best_match)
+                disk_next = disk_special if kind == "special" else disk_version
+                next_numbers[slot] = max(disk_next, reserved_numbers[slot] + 1)
+            number = next_numbers[slot]
+            next_numbers[slot] = number + 1
+            return number
+
+        def _propose_special(idx: int, best_match: Dict[str, Any]) -> None:
+            items[idx]["proposed_path"] = self._build_special_path(
+                items[idx].get("file_name") or "", best_match, _take_number("special", best_match)
+            )
+            special_slot_of[idx] = _folder_key(best_match)
+
+        def _propose_version(idx: int, best_match: Dict[str, Any]) -> None:
+            items[idx]["proposed_path"] = self._build_version_path(
+                items[idx].get("file_name") or "", best_match, _take_number("version", best_match)
+            )
+
         for indices in groups.values():
             sample_match = items[indices[0]].get("best_match") or {}
             media_type = (sample_match.get("media_type") or "movie").lower()
 
             # ── Episode handling ──────────────────────────────────────────────
             if media_type in ("episode", "series"):
-                special_offset = 0
                 for idx in indices:
                     ep_match = dict(items[idx].get("best_match") or {})
                     parsed_info = items[idx].get("parsed_info") or {}
@@ -1328,10 +1328,10 @@ class IngressQueueService:
 
                     items[idx]["best_match"] = ep_match
                     if override == "special_feature":
+                        # A show's extra keeps its own name; no number is used.
                         items[idx]["proposed_path"] = self._build_special_path(
-                            items[idx]["file_name"], ep_match, special_offset + 1
+                            items[idx]["file_name"], ep_match, 1
                         )
-                        special_offset += 1
                     elif ep_match.get("episode") is not None:
                         items[idx]["proposed_path"] = self._build_main_path(
                             items[idx]["file_name"], ep_match
@@ -1347,9 +1347,7 @@ class IngressQueueService:
                 continue
 
             # ── Movie / documentary / live_performance handling ───────────────
-            main_exists, next_special_number, main_duration_ms, next_version_number = (
-                _movie_folder_state(sample_match)
-            )
+            main_exists, _, main_duration_ms, _ = _movie_folder_state(sample_match)
             threshold = settings.movie_version_duration_threshold
 
             ordered = sorted(
@@ -1363,8 +1361,6 @@ class IngressQueueService:
             forced_version = [idx for idx in ordered if _classification_override(items[idx]) == "alternate_version"]
 
             if main_exists:
-                version_offset = 0
-                special_offset = 0
                 for idx in ordered:
                     override = _classification_override(items[idx])
                     item_duration = items[idx].get("media_duration_ms") or 0
@@ -1383,19 +1379,9 @@ class IngressQueueService:
                         )
                     )
                     if is_version:
-                        items[idx]["proposed_path"] = self._build_version_path(
-                            items[idx]["file_name"],
-                            items[idx]["best_match"],
-                            next_version_number + version_offset,
-                        )
-                        version_offset += 1
+                        _propose_version(idx, items[idx]["best_match"])
                     else:
-                        items[idx]["proposed_path"] = self._build_special_path(
-                            items[idx]["file_name"],
-                            items[idx]["best_match"],
-                            next_special_number + special_offset,
-                        )
-                        special_offset += 1
+                        _propose_special(idx, items[idx]["best_match"])
                 continue
 
             remaining = [
@@ -1404,19 +1390,11 @@ class IngressQueueService:
             ]
             main_idx = forced_main[0] if forced_main else (remaining[0] if remaining else None)
 
-            special_offset = 0
             for idx in forced_special:
-                items[idx]["proposed_path"] = self._build_special_path(
-                    items[idx]["file_name"], items[idx]["best_match"], special_offset + 1
-                )
-                special_offset += 1
+                _propose_special(idx, items[idx]["best_match"])
 
-            version_offset = 0
             for idx in forced_version:
-                items[idx]["proposed_path"] = self._build_version_path(
-                    items[idx]["file_name"], items[idx]["best_match"], next_version_number + version_offset
-                )
-                version_offset += 1
+                _propose_version(idx, items[idx]["best_match"])
 
             if main_idx is not None:
                 items[main_idx]["proposed_path"] = self._build_main_path(
@@ -1428,10 +1406,7 @@ class IngressQueueService:
                 if idx != main_idx
             ]
             for idx in auto_others:
-                items[idx]["proposed_path"] = self._build_special_path(
-                    items[idx]["file_name"], items[idx]["best_match"], special_offset + 1
-                )
-                special_offset += 1
+                _propose_special(idx, items[idx]["best_match"])
 
         # Fallback: companion files from the same source root should inherit the
         # matched movie/show anchor instead of being matched to generic titles like
@@ -1454,13 +1429,20 @@ class IngressQueueService:
             if not anchor_match:
                 continue
 
-            _, next_special_number, _, _ = _movie_folder_state(anchor_match)
             companion_indices = [
                 i for i in source_indices
                 if i != anchor_idx and i not in resolved and _looks_like_companion_item(items[i])
             ]
 
-            for offset, idx in enumerate(sorted(companion_indices, key=lambda i: items[i].get("media_duration_ms") or 0, reverse=True), start=0):
+            anchor_key = _folder_key(anchor_match)
+            for idx in sorted(
+                companion_indices,
+                key=lambda i: items[i].get("media_duration_ms") or 0,
+                reverse=True,
+            ):
+                if special_slot_of.get(idx) == anchor_key:
+                    # Already numbered in the anchor's folder by its title group.
+                    continue
                 inherited_match = dict(anchor_match)
                 parsed_info = items[idx].get("parsed_info") or {}
                 if inherited_match.get("media_type") in ("episode", "series"):
@@ -1479,11 +1461,7 @@ class IngressQueueService:
 
                 inherited_match["inferred_from_source_root"] = True
                 items[idx]["best_match"] = inherited_match
-                items[idx]["proposed_path"] = self._build_special_path(
-                    items[idx].get("file_name") or "",
-                    inherited_match,
-                    next_special_number + offset,
-                )
+                _propose_special(idx, inherited_match)
 
     @staticmethod
     def _extract_organized_path(assignment_result: Dict[str, Any]) -> Optional[str]:
@@ -1957,6 +1935,29 @@ class IngressQueueService:
         resolved_item = next((entry for entry in snapshot if entry.get("id") == item.id), None)
         if resolved_item is not None:
             self._apply_resolved_path_hints(item, resolved_item)
+        self._make_plan_unique(item)
+
+    @staticmethod
+    def _make_plan_unique(item: IngressQueueItem) -> None:
+        """Settle a name collision in the plan, not at move time.
+
+        The numbering above already steps past Special Feature and Version
+        files on disk; this covers any other file sitting at the planned path
+        (an episode organized before, a hand-placed file). The proposal then
+        names the free path the organizer will use.
+        """
+        proposed = item.proposed_path
+        if not proposed or os.path.isabs(proposed):
+            return
+        library_root = settings.jellyfin_dest_base
+        absolute = PathBuilder.absolute(library_root, proposed)
+        if not os.path.exists(absolute):
+            return
+        if os.path.abspath(absolute) == os.path.abspath(item.file_path):
+            return
+        unique = PathBuilder.unique_path(absolute, item.file_path)
+        prefix = f"{library_root.rstrip('/').rstrip(os.sep)}/"
+        item.proposed_path = unique[len(prefix):] if unique.startswith(prefix) else unique
 
     async def _attempt_auto_assignment(
         self,
@@ -2083,12 +2084,100 @@ class IngressQueueService:
                 self.item_order.append(item.id)
                 restored += 1
 
+        anchors = await self._restore_completed_anchors()
+
         logger.info(
             "Ingress queue restored from database",
             restored=restored,
+            completed_anchors=anchors,
             skipped_missing_files=skipped_missing,
             skipped_duplicate_rows=skipped_duplicate,
         )
+        return restored
+
+    async def _restore_completed_anchors(self) -> int:
+        """Reload the organized items that still anchor files waiting in their folder.
+
+        While the process runs, an organized movie stays in memory and the
+        unmatched extras left in its source folder inherit its match (see
+        ``_proposal_snapshot``). Completed rows were not restored, so after a
+        restart those extras lost the inherited proposal. This loads, read
+        only, each completed row with a match and a destination whose source
+        folder holds at least one restored open item. Its file has been moved,
+        so the file not existing at ``file_path`` is expected.
+        """
+        if self.db_session_factory is None:
+            return 0
+
+        with self.lock:
+            open_roots = {
+                self._source_root_for(item.file_path, item.ingress_path)
+                for item in self.items_by_id.values()
+                if item.status != QUEUE_COMPLETED
+            }
+        if not open_roots:
+            return 0
+
+        try:
+            async with self.db_session_factory() as session:
+                # Paths first, so only the rows that anchor something are read in full.
+                keys = (
+                    await session.execute(
+                        select(
+                            DBIngressQueueItem.id,
+                            DBIngressQueueItem.file_path,
+                            DBIngressQueueItem.ingress_path,
+                        )
+                        .where(
+                            DBIngressQueueItem.status == QUEUE_COMPLETED,
+                            DBIngressQueueItem.proposed_path.isnot(None),
+                        )
+                        .order_by(DBIngressQueueItem.queued_at.desc(), DBIngressQueueItem.created_at.desc())
+                    )
+                ).all()
+                wanted: List[str] = []
+                seen_paths: Set[str] = set()
+                for row_id, file_path, ingress_path in keys:
+                    if not file_path or file_path in seen_paths:
+                        continue
+                    seen_paths.add(file_path)
+                    root = self._source_root_for(
+                        file_path, ingress_path or self._infer_ingress_root(file_path)
+                    )
+                    if root in open_roots:
+                        wanted.append(str(row_id))
+                if not wanted:
+                    return 0
+                rows = list(
+                    (
+                        await session.execute(
+                            select(DBIngressQueueItem).where(DBIngressQueueItem.id.in_(wanted))
+                        )
+                    ).scalars().all()
+                )
+        except Exception as exc:
+            logger.warning("Failed to load completed ingress anchors", error=str(exc))
+            return 0
+
+        restored = 0
+        with self.lock:
+            for row in rows:
+                if not row.best_match or not row.proposed_path:
+                    continue
+                if row.id in self.items_by_id or row.file_path in self.path_to_item_id:
+                    continue
+                payload = queue_item_from_row(row)
+                if payload is None:
+                    continue
+                if not payload.get("ingress_path"):
+                    payload["ingress_path"] = self._infer_ingress_root(payload["file_path"])
+                item = IngressQueueItem(
+                    **{key: value for key, value in payload.items() if key in QUEUE_ITEM_FIELDS}
+                )
+                self.items_by_id[item.id] = item
+                self.path_to_item_id[item.file_path] = item.id
+                self.item_order.append(item.id)
+                restored += 1
         return restored
 
     def _queue_row_payload(self, item: IngressQueueItem) -> Dict[str, Any]:
@@ -2243,7 +2332,7 @@ class IngressQueueService:
         return False
 
     def _repair_missing_source_path(self, item: IngressQueueItem) -> None:
-        """Repair a stale source path when a source folder was moved to Unprocessed."""
+        """Repair a stale source path for a folder an earlier version moved to Unprocessed."""
         current_path = os.path.abspath(item.file_path)
         if os.path.exists(current_path):
             return
@@ -2325,20 +2414,6 @@ class IngressQueueService:
         return removed
 
     @staticmethod
-    def _unique_destination_path(base_dir: str, folder_name: str) -> str:
-        """Build a collision-safe destination folder path."""
-        candidate = os.path.join(base_dir, folder_name)
-        if not os.path.exists(candidate):
-            return candidate
-
-        index = 2
-        while True:
-            alt = os.path.join(base_dir, f"{folder_name} ({index})")
-            if not os.path.exists(alt):
-                return alt
-            index += 1
-
-    @staticmethod
     def _resolve_target_media_root(proposed_path: Optional[str]) -> Optional[str]:
         """Resolve the parent movie/show folder for passthrough files.
 
@@ -2401,7 +2476,12 @@ class IngressQueueService:
 
         Behavior:
         - If the source root has no files left: remove empty directories.
-        - If files remain: move the whole source root under <dest>/Unprocessed.
+        - If only non-video files remain (subtitles, artwork, NFOs): merge them
+          into the folder the file was organized to.
+        - Otherwise the folder stays where it is. It still holds videos the
+          queue has not organized (or files with nowhere to go), and moving it
+          elsewhere would cut them off from their folder context. It used to be
+          moved under ``<library>/Unprocessed``.
         """
         source_root = self._resolve_source_root(item)
         source_root_abs = os.path.abspath(source_root)
@@ -2442,21 +2522,11 @@ class IngressQueueService:
                 )
                 return
 
-            unprocessed_root = os.path.join(
-                settings.jellyfin_dest_base,
-                settings.folder_unprocessed,
-            )
-            os.makedirs(unprocessed_root, exist_ok=True)
-
-            folder_name = os.path.basename(source_root_abs.rstrip(os.sep))
-            destination_root = self._unique_destination_path(unprocessed_root, folder_name)
-            shutil.move(source_root_abs, destination_root)
-
-            logger.warning(
-                "Moved source folder to Unprocessed after organization",
+            logger.info(
+                "Leaving ingress source folder in place after organization",
                 item_id=item.id,
                 source_root=source_root_abs,
-                destination_root=destination_root,
+                holds_videos=self._contains_video_files(source_root_abs),
             )
         except Exception as exc:
             logger.warning(
