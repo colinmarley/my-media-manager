@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import IngressQueueTableRow from '@/app/admin/_components/ingress/IngressQueueTableRow';
 import type { IngressQueueItem } from '@/service/ingress/IngressAutomationService';
@@ -158,5 +158,60 @@ describe('IngressQueueTableRow', () => {
     renderRow(makeItem({ id: 'row-4', status: 'processing' }));
 
     expect(screen.getByRole('checkbox', { name: 'Select row-4.mkv' })).toBeDisabled();
+  });
+
+  it('says where an unresolved file sits and that it stays there', () => {
+    renderRow(
+      makeItem({
+        id: 'row-5',
+        status: 'needs_review',
+        file_path: '/ingest/Some Movie (2010)/extras/A12_t06.mkv',
+        file_name: 'A12_t06.mkv',
+        ingress_path: '/ingest',
+        proposed_path: null,
+        parsed_info: { review_reason: 'Two candidates within 5 points', ambiguous_match: true },
+      })
+    );
+
+    expect(screen.getByText('in Some Movie (2010)/extras')).toBeInTheDocument();
+    expect(screen.getByText('No destination yet, stays in place')).toBeInTheDocument();
+    expect(screen.getByText('Two candidates within 5 points')).toBeInTheDocument();
+  });
+
+  it('does not claim a file stays in place once it has a destination', () => {
+    renderRow(needsReview);
+
+    expect(screen.queryByText('No destination yet, stays in place')).not.toBeInTheDocument();
+  });
+
+  it('explains the confidence figure on hover', async () => {
+    renderRow(
+      makeItem({
+        id: 'row-6',
+        status: 'needs_review',
+        confidence_score: 71,
+        best_match: {
+          title: 'Heat',
+          year: 1995,
+          source: 'omdb',
+          media_id: 'tt0113277',
+          score_breakdown: [{ rule: 'title_exact', points: 60, note: 'same title' }],
+        },
+        match_candidates: [
+          { title: 'Heat', year: 1995, source: 'omdb', media_id: 'tt0113277', confidence_score: 71 },
+          { title: 'Heat', year: 1986, source: 'omdb', media_id: 'tt0093164', confidence_score: 58 },
+        ],
+        parsed_info: { media_type: 'movie', title: 'Heat', parse_quality: 80, parse_notes: ['year missing'] },
+      })
+    );
+
+    fireEvent.mouseOver(screen.getByText('71'));
+
+    await waitFor(() => expect(screen.getByText(/Best match: Heat \(1995\)/)).toBeInTheDocument());
+    expect(screen.getByText(/title exact \+60/)).toBeInTheDocument();
+    expect(screen.getByText('Other candidates')).toBeInTheDocument();
+    expect(screen.getByText(/\(1986\)/)).toBeInTheDocument();
+    expect(screen.getByText(/parse quality 80/)).toBeInTheDocument();
+    expect(screen.getByText('year missing')).toBeInTheDocument();
   });
 });

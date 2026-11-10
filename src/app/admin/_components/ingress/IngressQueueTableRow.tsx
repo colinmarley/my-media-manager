@@ -32,9 +32,12 @@ import {
   STATUS_COLORS,
   formatDuration,
   getQueueClassificationBadges,
+  getSourceFolderLabel,
+  isAwaitingDestination,
   isClassificationEditable,
   isQueueItemSelectable,
 } from '@/service/ingress/ingressQueueModel';
+import { IngressConfidenceWithExplanation } from './IngressMatchExplanation';
 
 type Props = {
   item: IngressQueueItem;
@@ -74,6 +77,11 @@ const IngressQueueTableRow: React.FC<Props> = ({
       <Typography variant="body2" noWrap title={item.file_path}>
         {item.file_name}
       </Typography>
+      {getSourceFolderLabel(item) && (
+        <Typography variant="caption" display="block" color="text.secondary" noWrap title={item.file_path}>
+          in {getSourceFolderLabel(item)}
+        </Typography>
+      )}
       {item.last_error && (
         <Typography variant="caption" color="error" noWrap title={item.last_error}>
           {item.last_error}
@@ -135,8 +143,35 @@ const IngressQueueTableRow: React.FC<Props> = ({
           → {item.proposed_path}
         </Typography>
       )}
+      {isAwaitingDestination(item) && (
+        <Typography
+          variant="caption"
+          display="block"
+          color="text.secondary"
+          noWrap
+          title="Nothing resolves a destination for this file yet. It stays in its source folder until it is matched."
+          sx={{ fontStyle: 'italic' }}
+        >
+          No destination yet, stays in place
+        </Typography>
+      )}
+      {item.parsed_info?.review_reason && (
+        <Typography
+          variant="caption"
+          display="block"
+          color={item.parsed_info.ambiguous_match ? 'warning.main' : 'text.secondary'}
+          noWrap
+          title={item.parsed_info.review_reason}
+        >
+          {item.parsed_info.review_reason}
+        </Typography>
+      )}
     </TableCell>
-    <TableCell>{item.confidence_score ?? '—'}</TableCell>
+    <TableCell>
+      <IngressConfidenceWithExplanation item={item}>
+        {item.confidence_score ?? '—'}
+      </IngressConfidenceWithExplanation>
+    </TableCell>
     <TableCell>
       <Box sx={{ display: 'flex', gap: 0.5 }}>
         {(item.status === 'failed' || item.status === 'needs_review') && (

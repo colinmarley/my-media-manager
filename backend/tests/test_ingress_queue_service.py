@@ -1,5 +1,6 @@
 import asyncio
 import os
+import shutil
 import time
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -289,7 +290,10 @@ def test_episode_proposed_path_uses_parsed_season_and_episode_when_match_lacks_t
 
     service._enrich_proposed_paths(items)
 
-    assert items[0]['proposed_path'] == "shows/What I Like About You (2002)/Season 02/What I Like About You (2002) S02E20.mkv"
+    from config.settings import settings as _settings
+    assert items[0]['proposed_path'] == (
+        f"{_settings.folder_tv_shows}/What I Like About You (2002)/Season 02/What I Like About You (2002) S02E20.mkv"
+    )
 
 
 def test_unknown_episode_keeps_original_filename_when_numbers_cannot_be_determined():
@@ -536,6 +540,523 @@ def test_manual_assignment_history_records_training_fields(tmp_path, monkeypatch
     assert history[0]['best_match']['title'] == 'Manual History'
     assert history[0]['proposed_path'].endswith('Manual History (2025).mkv')
 
+# ---------------------------------------------------------------------------
+# Honest confidence, ambiguity, durable dismiss, DB restore (2026-11 quick wins)
+# ---------------------------------------------------------------------------
+
+
+class _StubMatcher:
+    def __init__(self, result):
+        self.result = result
+        self.calls = []
+
+    def search_and_match(self, parsed_info):
+        self.calls.append(dict(parsed_info))
+        return self.result
+
+
+def _make_source_file(tmp_path, name='Some Movie (2010).mkv'):
+    source_file = tmp_path / 'ingest' / 'Some Movie (2010)' / name
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_bytes(b'x')
+    return source_file
+
+
+def test_no_match_leaves_confidence_empty_and_records_parse_quality(tmp_path):
+    matcher = _StubMatcher({'status': 'success', 'found': False, 'candidates': [], 'best_match': None})
+    service = IngressQueueService(auto_matcher_service=matcher, auto_assign_threshold=80)
+    item = service.add_manual_file(os.fspath(_make_source_file(tmp_path)))
+
+    processed = asyncio.run(service.process_next_item())
+
+    assert processed.id == item.id
+    assert processed.status == 'needs_review'
+    assert processed.confidence_score is None, 'parse quality must not masquerade as match confidence'
+    assert processed.parsed_info['parse_quality'] >= 80
+    assert processed.parsed_info['review_reason'].startswith('no metadata match')
+
+
+def test_ambiguous_match_is_held_for_review_even_above_threshold(tmp_path):
+    best = {
+        'source': 'omdb', 'title': 'The Office', 'year': 2005, 'media_type': 'series',
+        'confidence_score': 85, 'imdb_id': 'tt0386676',
+        'score_breakdown': [{'rule': 'ambiguous', 'points': 0, 'note': "ambiguous: 'The Office' (2001) scored 85"}],
+    }
+    matcher = _StubMatcher({'status': 'success', 'found': True, 'candidates': [best], 'best_match': best,
+                            'ambiguous': True, 'margin': 0})
+    orchestrator = _CapturingAssignmentOrchestrator()
+    service = IngressQueueService(auto_matcher_service=matcher, assignment_orchestrator=orchestrator,
+                                  auto_assign_threshold=80)
+    service.add_manual_file(os.fspath(_make_source_file(tmp_path, 'The Office S01E01.mkv')))
+
+    processed = asyncio.run(service.process_next_item())
+
+    assert processed.status == 'needs_review'
+    assert processed.confidence_score == 85
+    assert processed.parsed_info['ambiguous_match'] is True
+    assert processed.parsed_info['review_reason'].startswith('ambiguous match')
+    assert orchestrator.calls == []
+
+
+def test_confident_unambiguous_match_auto_assigns(tmp_path):
+    best = {
+        'source': 'omdb', 'title': 'Some Movie', 'year': 2010, 'media_type': 'movie',
+        'confidence_score': 80, 'imdb_id': 'tt0000001', 'score_breakdown': [],
+    }
+    matcher = _StubMatcher({'status': 'success', 'found': True, 'candidates': [best], 'best_match': best,
+                            'ambiguous': False, 'margin': 25})
+    orchestrator = _CapturingAssignmentOrchestrator()
+    service = IngressQueueService(auto_matcher_service=matcher, assignment_orchestrator=orchestrator,
+                                  auto_assign_threshold=80)
+    service.add_manual_file(os.fspath(_make_source_file(tmp_path)))
+
+    processed = asyncio.run(service.process_next_item())
+
+    assert processed.status == QUEUE_COMPLETED
+    assert 'review_reason' not in processed.parsed_info
+    assert len(orchestrator.calls) == 1
+    # proposal carries the imdb tag exactly as the organizer will name the folder
+    assert '[imdbid-tt0000001]' in orchestrator.calls[0]['queue_item']['proposed_path']
+
+
+def test_mark_failed_is_not_eligible_for_auto_retry(tmp_path):
+    service = IngressQueueService()
+    item = service.add_manual_file(os.fspath(_make_source_file(tmp_path)))
+
+    asyncio.run(service.mark_failed(item.id, 'Manually dismissed'))
+
+    assert item.status == 'failed'
+    assert item.attempts >= IngressQueueService.MANUAL_FAILURE_ATTEMPTS
+    assert item.last_attempt is not None
+
+
+class _FakeScalarResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return list(self._rows)
+
+
+class _FakeSession:
+    def __init__(self, rows):
+        self.rows = rows
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return False
+
+    async def execute(self, _query):
+        return _FakeScalarResult(self.rows)
+
+
+class _Row:
+    def __init__(self, **kw):
+        defaults = dict(
+            id='row', file_path='', file_name='', ingress_path=None, file_size=1, detected_at=None,
+            queued_at=None, status='needs_review', priority=5, attempts=1, last_attempt=None,
+            processed_at=None, last_error=None, confidence_score=None, assignment_id=None,
+            parsed_info={}, best_match={}, match_candidates=[], media_duration_ms=None,
+            proposed_path=None, created_at=None,
+        )
+        defaults.update(kw)
+        for k, v in defaults.items():
+            setattr(self, k, v)
+
+
+def test_restore_from_db_dedupes_by_path_and_skips_missing_files(tmp_path):
+    from datetime import datetime, timezone
+
+    present = _make_source_file(tmp_path)
+    missing = tmp_path / 'ingest' / 'Gone (2001)' / 'Gone (2001).mkv'
+    newer = datetime(2026, 11, 8, tzinfo=timezone.utc)
+    older = datetime(2026, 4, 18, tzinfo=timezone.utc)
+    rows = [
+        _Row(id='new', file_path=os.fspath(present), file_name=present.name, queued_at=newer,
+             status='processing', parsed_info={'classification_override': 'special_feature'}),
+        _Row(id='old', file_path=os.fspath(present), file_name=present.name, queued_at=older),
+        _Row(id='gone', file_path=os.fspath(missing), file_name=missing.name, queued_at=older),
+    ]
+
+    service = IngressQueueService(db_session_factory=lambda: _FakeSession(rows))
+    restored = asyncio.run(service.restore_from_db())
+
+    assert restored == 1
+    item = service.items_by_id['new']
+    assert service.path_to_item_id[os.fspath(present)] == 'new'
+    assert item.status == QUEUE_PENDING, 'interrupted processing rows go back to pending'
+    assert item.classification_override == 'special_feature'
+    assert item.queued_at == newer.timestamp()
+    assert 'old' not in service.items_by_id and 'gone' not in service.items_by_id
+
+
+# ---------------------------------------------------------------------------
+# Stored proposals; unresolved files stay in place (2026-11)
+# ---------------------------------------------------------------------------
+
+
+class _MovingAssignmentOrchestrator:
+    """Organizes like the real one: moves the file into the library and reports
+    the absolute destination."""
+
+    def __init__(self, library_root):
+        self.library_root = os.fspath(library_root)
+        self.calls = []
+
+    async def auto_assign(self, queue_item, force_organize=False):
+        self.calls.append({'queue_item': dict(queue_item), 'force_organize': force_organize})
+        destination = os.path.join(self.library_root, *queue_item['proposed_path'].split('/'))
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        shutil.move(queue_item['file_path'], destination)
+        return {
+            'assignment_id': f'assignment-{len(self.calls)}',
+            'organized': True,
+            'organization_result': {
+                'success': True,
+                'targetPath': os.path.dirname(destination),
+                'operations': [{'destination': destination}],
+            },
+        }
+
+
+_SOME_MOVIE = {'title': 'Some Movie', 'year': 2010, 'media_type': 'movie', 'confidence_score': 60}
+
+
+def _use_library(tmp_path, monkeypatch):
+    library_root = tmp_path / 'jellyfin'
+    monkeypatch.setattr('services.ingress_queue_service.settings.jellyfin_dest_base', os.fspath(library_root))
+    return library_root
+
+
+def _add_reviewed(service, tmp_path, folder, name, duration_ms, match=_SOME_MOVIE):
+    """Queue a file under <tmp>/ingest/<folder> as if it had been processed."""
+    source_file = tmp_path / 'ingest' / folder / name
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_bytes(b'x')
+    item = service.add_manual_file(os.fspath(source_file), ingress_path=os.fspath(tmp_path / 'ingest'))
+    item.best_match = dict(match) if match else None
+    # A processed item always carries the parsed title; an item without one
+    # counts as a companion file and is never the anchor of its folder.
+    item.parsed_info = {'title': match['title'] if match else os.path.splitext(name)[0]}
+    item.media_duration_ms = duration_ms
+    item.status = 'needs_review'
+    return item
+
+
+def test_unmatched_item_has_no_proposal_and_stays_in_place(tmp_path, monkeypatch):
+    library_root = _use_library(tmp_path, monkeypatch)
+    matcher = _StubMatcher({'status': 'success', 'found': False, 'candidates': [], 'best_match': None})
+    service = IngressQueueService(auto_matcher_service=matcher, auto_assign_threshold=80)
+    source_file = _make_source_file(tmp_path)
+    service.add_manual_file(os.fspath(source_file), ingress_path=os.fspath(tmp_path / 'ingest'))
+
+    processed = asyncio.run(service.process_next_item())
+
+    assert processed.status == 'needs_review'
+    assert processed.proposed_path is None
+    assert service.get_queue_items()[0]['proposed_path'] is None
+    assert source_file.exists(), 'an unresolved file is never moved'
+    assert not library_root.exists(), 'no _NeedsReview holding folder is created'
+
+
+def test_refresh_drops_a_needs_review_path_stored_by_an_older_version(tmp_path, monkeypatch):
+    _use_library(tmp_path, monkeypatch)
+    service = IngressQueueService()
+    item = _add_reviewed(service, tmp_path, 'Mystery Disc', 'A12_t06.mkv', None, match=None)
+    item.proposed_path = '_NeedsReview/A12_t06 - NEEDS REVIEW.mkv'
+
+    assert asyncio.run(service.refresh_proposals()) == 1
+    assert item.proposed_path is None
+
+
+def test_reading_the_queue_does_not_touch_the_filesystem(tmp_path, monkeypatch):
+    _use_library(tmp_path, monkeypatch)
+    service = IngressQueueService()
+    main = _add_reviewed(service, tmp_path, 'Some Movie (2010)', 'Some Movie (2010).mkv', 7_000_000)
+    extra = _add_reviewed(service, tmp_path, 'Some Movie (2010)/extras', 'C1_t01.mkv', 600_000, match=None)
+
+    asyncio.run(service.refresh_proposals())
+
+    def _no_filesystem(*args, **kwargs):
+        raise AssertionError('queue reads must not resolve proposals or touch the filesystem')
+
+    with monkeypatch.context() as scoped:
+        scoped.setattr(service, '_enrich_proposed_paths', _no_filesystem)
+        scoped.setattr(os, 'listdir', _no_filesystem)
+        scoped.setattr(os.path, 'isdir', _no_filesystem)
+        scoped.setattr(os.path, 'isfile', _no_filesystem)
+        scoped.setattr(os.path, 'exists', _no_filesystem)
+        views = {view['id']: view for view in service.get_queue_items()}
+        extra_view = service.get_item(extra.id)
+
+    assert views[main.id]['proposed_path'].endswith('Some Movie (2010)/Some Movie (2010).mkv')
+    assert extra_view['proposed_path'].endswith('Some Movie (2010)/Special Feature 1.mkv')
+    assert extra_view['special_feature_number'] == 1
+    # The companion file is shown with the match it inherits from its folder ...
+    assert extra_view['best_match']['title'] == 'Some Movie'
+    assert extra_view['best_match']['inferred_from_source_root'] is True
+    # ... while its own (empty) match is left alone until it is accepted.
+    assert extra.best_match is None
+
+
+def test_processing_a_longer_copy_renumbers_the_stored_sibling_proposal(tmp_path, monkeypatch):
+    _use_library(tmp_path, monkeypatch)
+    durations = {'copy-one.mkv': 600_000, 'copy-two.mkv': 7_000_000}
+    monkeypatch.setattr(
+        'services.ingress_queue_service._get_file_duration',
+        lambda path: durations.get(os.path.basename(path)),
+    )
+    matcher = _StubMatcher({'status': 'success', 'found': True, 'candidates': [_SOME_MOVIE],
+                            'best_match': _SOME_MOVIE, 'ambiguous': False, 'margin': 25})
+    service = IngressQueueService(auto_matcher_service=matcher, auto_assign_threshold=80)
+
+    def _queue(folder, name):
+        source_file = tmp_path / 'ingest' / folder / name
+        source_file.parent.mkdir(parents=True)
+        source_file.write_bytes(b'x')
+        return service.add_manual_file(os.fspath(source_file), ingress_path=os.fspath(tmp_path / 'ingest'))
+
+    short = _queue('Rip A', 'copy-one.mkv')
+    asyncio.run(service.process_next_item())
+    assert short.status == 'needs_review'
+    assert short.proposed_path.endswith('Some Movie (2010)/Some Movie (2010).mkv')
+
+    long = _queue('Rip B', 'copy-two.mkv')
+    asyncio.run(service.process_next_item())
+
+    assert long.proposed_path.endswith('Some Movie (2010)/Some Movie (2010).mkv')
+    assert short.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+    assert short.special_feature_number == 1
+
+    # Overriding the role of one item renumbers the item it is grouped with.
+    asyncio.run(service.update_classification(long.id, 'special_feature'))
+
+    assert long.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+    assert short.proposed_path.endswith('Some Movie (2010)/Some Movie (2010).mkv')
+    assert short.special_feature_number is None
+
+
+def test_accepting_the_main_feature_turns_the_sibling_into_a_version(tmp_path, monkeypatch):
+    library_root = _use_library(tmp_path, monkeypatch)
+    monkeypatch.setattr('services.ingress_queue_service._get_file_duration', lambda path: 7_000_000)
+    service = IngressQueueService(assignment_orchestrator=_MovingAssignmentOrchestrator(library_root))
+    main = _add_reviewed(service, tmp_path, 'Rip A', 'copy-one.mkv', 7_000_000)
+    other = _add_reviewed(service, tmp_path, 'Rip B', 'copy-two.mkv', 6_900_000)
+
+    asyncio.run(service.refresh_proposals())
+    assert other.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+
+    persisted = []
+
+    async def _record_persist(item):
+        persisted.append((item.id, item.proposed_path))
+
+    monkeypatch.setattr(service, '_persist_queue_item', _record_persist)
+
+    asyncio.run(service.mark_complete(main.id))
+
+    organized = library_root / 'Movies' / 'Some Movie (2010)' / 'Some Movie (2010).mkv'
+    assert organized.exists()
+    assert main.status == QUEUE_COMPLETED
+    assert main.proposed_path == os.fspath(organized)
+    # The main feature now exists in the library, so the near-identical copy is
+    # a version of it, and that is what gets stored on its row.
+    assert other.proposed_path.endswith('Some Movie (2010)/Some Movie (2010) - Version 2.mkv')
+    assert other.is_alternate_version is True
+    assert other.version_number == 2
+    assert other.special_feature_number is None
+    assert (other.id, other.proposed_path) in persisted
+
+
+def test_accept_resolves_the_role_again_within_its_group(tmp_path, monkeypatch):
+    _use_library(tmp_path, monkeypatch)
+    orchestrator = _CapturingAssignmentOrchestrator()
+    service = IngressQueueService(assignment_orchestrator=orchestrator)
+    long = _add_reviewed(service, tmp_path, '', 'copy-one.mkv', 7_000_000)
+    short = _add_reviewed(service, tmp_path, '', 'copy-two.mkv', 600_000)
+    asyncio.run(service.refresh_proposals())
+
+    # The stored proposal of the sibling must not hide it from the grouping:
+    # on its own the shorter file would be taken for the main feature.
+    asyncio.run(service.mark_complete(short.id))
+
+    captured = orchestrator.calls[-1]['queue_item']
+    assert captured['proposed_path'].endswith('Some Movie (2010)/Special Feature 1.mkv')
+    assert captured['special_feature_number'] == 1
+    assert long.proposed_path.endswith('Some Movie (2010)/Some Movie (2010).mkv')
+
+
+def test_accepting_an_unmatched_companion_uses_the_match_of_its_folder(tmp_path, monkeypatch):
+    _use_library(tmp_path, monkeypatch)
+    orchestrator = _CapturingAssignmentOrchestrator()
+    service = IngressQueueService(assignment_orchestrator=orchestrator)
+    _add_reviewed(service, tmp_path, 'Some Movie (2010)', 'Some Movie (2010).mkv', 7_000_000)
+    extra = _add_reviewed(service, tmp_path, 'Some Movie (2010)/extras', 'C1_t01.mkv', 600_000, match=None)
+
+    asyncio.run(service.mark_complete(extra.id))
+
+    captured = orchestrator.calls[-1]['queue_item']
+    assert captured['best_match']['title'] == 'Some Movie'
+    assert captured['best_match']['inferred_from_source_root'] is True
+    assert captured['proposed_path'].endswith('Some Movie (2010)/Special Feature 1.mkv')
+    assert captured['special_feature_number'] == 1
+
+
+def test_an_extra_keeps_its_inherited_proposal_after_the_main_feature_is_organized(tmp_path, monkeypatch):
+    library_root = _use_library(tmp_path, monkeypatch)
+    service = IngressQueueService(assignment_orchestrator=_MovingAssignmentOrchestrator(library_root))
+    main = _add_reviewed(service, tmp_path, 'Some Movie (2010)', 'Some Movie (2010).mkv', 7_000_000)
+    extra = _add_reviewed(service, tmp_path, 'Some Movie (2010)/extras', 'Making Of.mkv', 600_000, match=None)
+    extra.parsed_info = {'title': 'Some Movie', 'is_companion': True}
+    asyncio.run(service.refresh_proposals())
+    assert extra.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+
+    asyncio.run(service.mark_complete(main.id))
+
+    organized = library_root / 'Movies' / 'Some Movie (2010)' / 'Some Movie (2010).mkv'
+    assert main.status == QUEUE_COMPLETED
+    # The organized main feature is not rewritten ...
+    assert main.proposed_path == os.fspath(organized)
+    assert main.best_match == _SOME_MOVIE
+    # ... and the extra left in its folder still has somewhere to go.
+    assert extra.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+    assert extra.special_feature_number == 1
+    view = service.get_item(extra.id)
+    assert view['best_match']['title'] == 'Some Movie'
+    assert view['best_match']['inferred_from_source_root'] is True
+
+    # A later whole-queue refresh keeps it too.
+    asyncio.run(service.refresh_proposals())
+    assert extra.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+    assert main.proposed_path == os.fspath(organized)
+
+
+def test_an_extra_queued_after_the_main_feature_was_organized_inherits_its_match(tmp_path, monkeypatch):
+    library_root = _use_library(tmp_path, monkeypatch)
+    orchestrator = _MovingAssignmentOrchestrator(library_root)
+    service = IngressQueueService(assignment_orchestrator=orchestrator)
+    main = _add_reviewed(service, tmp_path, 'Some Movie (2010)', 'Some Movie (2010).mkv', 7_000_000, match=None)
+
+    # Assigned by hand with nothing else in the folder yet: organized at once.
+    asyncio.run(service.manual_assign_item(main.id, {'title': 'Some Movie', 'year': 2010, 'media_type': 'movie'}))
+    assert main.status == QUEUE_COMPLETED
+
+    extra = _add_reviewed(service, tmp_path, 'Some Movie (2010)/extras', 'Making Of.mkv', 600_000, match=None)
+    extra.parsed_info = {'title': 'Some Movie', 'is_companion': True}
+    asyncio.run(service.refresh_proposals())
+    assert extra.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+
+    # Accepting it organizes it next to the main feature, with the inherited match.
+    asyncio.run(service.mark_complete(extra.id))
+    captured = orchestrator.calls[-1]['queue_item']
+    assert captured['best_match']['title'] == 'Some Movie'
+    assert captured['best_match']['inferred_from_source_root'] is True
+    assert (library_root / 'Movies' / 'Some Movie (2010)' / 'Special Feature 1.mkv').exists()
+    assert extra.status == QUEUE_COMPLETED
+
+
+def test_an_organized_extra_is_never_the_anchor_and_is_not_renumbered(tmp_path, monkeypatch):
+    library_root = _use_library(tmp_path, monkeypatch)
+    service = IngressQueueService(assignment_orchestrator=_MovingAssignmentOrchestrator(library_root))
+    main = _add_reviewed(service, tmp_path, 'Some Movie (2010)', 'Some Movie (2010).mkv', 7_000_000)
+    first = _add_reviewed(service, tmp_path, 'Some Movie (2010)/extras', 'Making Of.mkv', 900_000, match=None)
+    second = _add_reviewed(service, tmp_path, 'Some Movie (2010)/extras', 'Trailer.mkv', 120_000, match=None)
+    for extra in (first, second):
+        extra.parsed_info = {'title': 'Some Movie', 'is_companion': True}
+
+    asyncio.run(service.mark_complete(main.id))
+    asyncio.run(service.mark_complete(first.id))
+
+    first_path = os.fspath(library_root / 'Movies' / 'Some Movie (2010)' / 'Special Feature 1.mkv')
+    assert first.status == QUEUE_COMPLETED
+    assert first.proposed_path == first_path
+    # The second extra takes the next free number; the organized one keeps its path.
+    assert second.proposed_path.endswith('Some Movie (2010)/Special Feature 2.mkv')
+    asyncio.run(service.refresh_proposals())
+    assert first.proposed_path == first_path
+    assert second.proposed_path.endswith('Some Movie (2010)/Special Feature 2.mkv')
+
+
+def test_an_ignored_extra_frees_its_slot_and_has_no_destination(tmp_path, monkeypatch):
+    library_root = _use_library(tmp_path, monkeypatch)
+    service = IngressQueueService(assignment_orchestrator=_MovingAssignmentOrchestrator(library_root))
+    _add_reviewed(service, tmp_path, 'Some Movie (2010)', 'Some Movie (2010).mkv', 7_000_000)
+    first = _add_reviewed(service, tmp_path, 'Some Movie (2010)/extras', 'Making Of.mkv', 900_000, match=None)
+    second = _add_reviewed(service, tmp_path, 'Some Movie (2010)/extras', 'Trailer.mkv', 120_000, match=None)
+    for extra in (first, second):
+        extra.parsed_info = {'title': 'Some Movie', 'is_companion': True}
+    asyncio.run(service.refresh_proposals())
+    assert first.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+    assert second.proposed_path.endswith('Some Movie (2010)/Special Feature 2.mkv')
+
+    asyncio.run(service.mark_ignored(first.id))
+
+    assert first.status == QUEUE_IGNORED
+    assert first.proposed_path is None
+    assert first.special_feature_number is None
+    assert second.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+    # A later whole-queue refresh does not hand the ignored file a destination again.
+    asyncio.run(service.refresh_proposals())
+    assert first.proposed_path is None
+    assert second.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+
+
+def test_an_ignored_main_feature_does_not_anchor_its_folder(tmp_path, monkeypatch):
+    library_root = _use_library(tmp_path, monkeypatch)
+    service = IngressQueueService(assignment_orchestrator=_MovingAssignmentOrchestrator(library_root))
+    main = _add_reviewed(service, tmp_path, 'Some Movie (2010)', 'Some Movie (2010).mkv', 7_000_000)
+    extra = _add_reviewed(service, tmp_path, 'Some Movie (2010)/extras', 'Making Of.mkv', 600_000, match=None)
+    extra.parsed_info = {'title': 'Some Movie', 'is_companion': True}
+    asyncio.run(service.refresh_proposals())
+    assert extra.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+
+    asyncio.run(service.mark_ignored(main.id))
+
+    assert extra.proposed_path is None
+    assert service.get_item(extra.id)['best_match'] in (None, {})
+
+
+def test_accept_merges_leftover_files_into_the_library_not_the_working_directory(tmp_path, monkeypatch):
+    library_root = _use_library(tmp_path, monkeypatch)
+    working_dir = tmp_path / 'cwd'
+    working_dir.mkdir()
+    monkeypatch.chdir(working_dir)
+
+    service = IngressQueueService(assignment_orchestrator=_MovingAssignmentOrchestrator(library_root))
+    item = _add_reviewed(service, tmp_path, 'Some Movie (2010)', 'Some Movie (2010).mkv', 7_000_000)
+    source_root = tmp_path / 'ingest' / 'Some Movie (2010)'
+    (source_root / 'Some Movie (2010).srt').write_text('subtitle', encoding='utf-8')
+
+    asyncio.run(service.mark_complete(item.id))
+
+    movie_folder = library_root / 'Movies' / 'Some Movie (2010)'
+    assert (movie_folder / 'Some Movie (2010).mkv').exists()
+    assert (movie_folder / 'Some Movie (2010).srt').exists()
+    assert not source_root.exists()
+    assert list(working_dir.iterdir()) == []
+
+
+def test_a_relative_proposal_is_never_a_target_for_leftover_files():
+    assert IngressQueueService._resolve_target_media_root('Movies/X (2020)/X (2020).mkv') is None
+    assert IngressQueueService._resolve_target_media_root(None) is None
+
+
+def test_mark_complete_without_an_orchestrator_completes_the_item(tmp_path):
+    service = IngressQueueService()
+    item = service.add_manual_file(os.fspath(_make_source_file(tmp_path)))
+    item.status = 'needs_review'
+    item.last_error = 'old error'
+
+    result = asyncio.run(service.mark_complete(item.id))
+
+    assert result.status == QUEUE_COMPLETED
+    assert result.last_error is None
+
 
 def test_mark_ignored_sets_terminal_status_and_records_history(tmp_path):
     source_file = tmp_path / 'ingest' / 'ignored-movie.mkv'
@@ -744,3 +1265,68 @@ def test_hydrate_item_is_a_noop_without_a_database_or_matching_row():
     offline = IngressQueueService()
     assert asyncio.run(offline.hydrate_item('backlog-retry')) is None
 
+
+class _CollidingSessionFactory:
+    """A database where another row already tracks the file: the insert hits the unique file_path index."""
+
+    def __init__(self, tracked_row):
+        self.tracked_row = tracked_row
+        self.added = []
+        self.commits = 0
+        self.rollbacks = 0
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+    async def get(self, model, primary_key):
+        return self.tracked_row if primary_key == self.tracked_row.id else None
+
+    def add(self, instance):
+        self.added.append(instance)
+
+    async def commit(self):
+        self.commits += 1
+        if self.added:
+            from sqlalchemy.exc import IntegrityError
+
+            raise IntegrityError('INSERT', {}, Exception('duplicate key value violates uq_ingress_queue_file_path'))
+
+    async def rollback(self):
+        self.rollbacks += 1
+        self.added.clear()
+
+    async def execute(self, _statement):
+        return SimpleNamespace(scalar_one_or_none=lambda: self.tracked_row)
+
+
+def test_persist_adopts_the_row_that_already_tracks_the_file(tmp_path):
+    source_file = _make_source_file(tmp_path)
+    tracked_row = _Row(id='tracked-row', file_path=os.fspath(source_file), file_name=source_file.name,
+                       status=QUEUE_COMPLETED)
+    factory = _CollidingSessionFactory(tracked_row)
+    service = IngressQueueService(db_session_factory=factory)
+    # No path index (it failed to load), so the re-detected file gets a fresh id.
+    item = IngressQueueItem(
+        id='fresh-id', file_path=os.fspath(source_file), file_name=source_file.name,
+        ingress_path=os.fspath(tmp_path / 'ingest'), file_size=1, detected_at=1.0, queued_at=2.0,
+        status=QUEUE_NEEDS_REVIEW, priority=5,
+    )
+    service.items_by_id[item.id] = item
+    service.path_to_item_id[item.file_path] = item.id
+    service.item_order.append(item.id)
+
+    asyncio.run(service._persist_queue_item(item))
+
+    assert factory.rollbacks == 1
+    assert item.id == 'tracked-row'
+    assert service.item_order == ['tracked-row']
+    assert service.items_by_id == {'tracked-row': item}
+    assert service.path_to_item_id[item.file_path] == 'tracked-row'
+    assert tracked_row.status == QUEUE_NEEDS_REVIEW, 'the adopted row takes the live state'
+    assert service.persisted_paths[item.file_path] == ('tracked-row', QUEUE_NEEDS_REVIEW)

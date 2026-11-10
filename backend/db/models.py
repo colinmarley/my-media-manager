@@ -479,7 +479,7 @@ class IngressQueueItem(Base):
     __tablename__ = "ingress_queue"
 
     id                = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
-    file_path         = Column(Text, nullable=False)
+    file_path         = Column(Text, nullable=False, unique=True)
     file_name         = Column(Text, nullable=False)
     ingress_path      = Column(Text)
     file_size         = Column(BigInteger)

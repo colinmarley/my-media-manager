@@ -24,6 +24,7 @@ import type {
   QueueGroupBy,
 } from '@/service/ingress/IngressAutomationService';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import { IngressConfidenceWithExplanation } from './IngressMatchExplanation';
 import { CLASSIFICATION_OPTIONS, STATUS_COLORS, isClassificationEditable, isQueueItemAssignable } from '@/service/ingress/ingressQueueModel';
 import {
   GROUP_ROW_HEIGHT,
@@ -321,7 +322,9 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
       </Box>
       <Box />
       <Typography variant="caption" color="text.secondary">
-        {item.confidence_score === undefined ? '—' : `${item.confidence_score}%`}
+        <IngressConfidenceWithExplanation item={item}>
+          {item.confidence_score == null ? '—' : `${item.confidence_score}%`}
+        </IngressConfidenceWithExplanation>
       </Typography>
       <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
         {isQueueItemAssignable(item) ? (

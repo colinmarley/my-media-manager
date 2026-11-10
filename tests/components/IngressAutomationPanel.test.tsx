@@ -4,6 +4,8 @@ import type { IngressQueueItem } from '@/service/ingress/IngressAutomationServic
 import {
   filterSelectableQueueItemIds,
   getQueueClassificationBadges,
+  getSourceFolderLabel,
+  isAwaitingDestination,
   isEpisodeMappingValid,
   runQueueActionsSequentially,
 } from '@/service/ingress/ingressQueueModel';
@@ -86,11 +88,61 @@ describe('getQueueClassificationBadges', () => {
         title: 'Alfred Hitchcock-A Legacy of Suspense',
         year: 2011,
       },
-      proposed_path: '_NeedsReview/A12_t06 - NEEDS REVIEW.mkv',
+      // Nothing resolved a destination: the file is left where it is.
+      proposed_path: null,
     };
 
     const labels = getQueueClassificationBadges(item).map((badge) => badge.label);
     expect(labels).toContain('Special Feature');
     expect(labels).not.toContain('Main Feature');
+  });
+});
+
+describe('getSourceFolderLabel', () => {
+  const base = { id: 'q-1', file_name: 'A12_t06.mkv', status: 'needs_review', attempts: 0, queued_at: 1 };
+
+  it('shows the folder relative to the ingress root', () => {
+    expect(
+      getSourceFolderLabel({
+        ...base,
+        ingress_path: '/ark/media/jellyfin/ingest/',
+        file_path: '/ark/media/jellyfin/ingest/Some Disc (2011)/extras/A12_t06.mkv',
+      })
+    ).toBe('Some Disc (2011)/extras');
+  });
+
+  it('names the ingress root for a file sitting directly in it', () => {
+    expect(
+      getSourceFolderLabel({
+        ...base,
+        ingress_path: '/ark/media/jellyfin/ingest',
+        file_path: '/ark/media/jellyfin/ingest/A12_t06.mkv',
+      })
+    ).toBe('ingest');
+  });
+
+  it('handles Windows separators and a missing ingress root', () => {
+    expect(
+      getSourceFolderLabel({
+        ...base,
+        ingress_path: 'D:\\ingest',
+        file_path: 'D:\\ingest\\Some Disc\\A12_t06.mkv',
+      })
+    ).toBe('Some Disc');
+    expect(getSourceFolderLabel({ ...base, file_path: '/elsewhere/disc/A12_t06.mkv' })).toBe('/elsewhere/disc');
+    expect(getSourceFolderLabel({ ...base, file_path: 'A12_t06.mkv' })).toBe('');
+  });
+});
+
+describe('isAwaitingDestination', () => {
+  const base = { id: 'q-1', file_path: '/ingest/a.mkv', file_name: 'a.mkv', attempts: 0, queued_at: 1 };
+
+  it('is true only for reviewed items without a proposed path', () => {
+    expect(isAwaitingDestination({ ...base, status: 'needs_review', proposed_path: null })).toBe(true);
+    expect(isAwaitingDestination({ ...base, status: 'failed' })).toBe(true);
+    expect(isAwaitingDestination({ ...base, status: 'pending' })).toBe(false);
+    expect(
+      isAwaitingDestination({ ...base, status: 'needs_review', proposed_path: 'Movies/A (2020)/A (2020).mkv' })
+    ).toBe(false);
   });
 });

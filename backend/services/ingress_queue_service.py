@@ -5,6 +5,7 @@ Maintains in-memory queue state for detected ingress files and exposes
 operations for processing, retrying, and tracking status transitions.
 """
 
+import asyncio
 import os
 import re
 import shutil
@@ -14,9 +15,10 @@ import uuid
 from collections import defaultdict
 from dataclasses import asdict, dataclass, fields as dataclass_fields
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from config.settings import settings
 from db.models import IngressProcessingHistory as DBIngressProcessingHistory
@@ -186,6 +188,17 @@ class IngressQueueService:
         self.persisted_paths: Dict[str, Tuple[str, str]] = {}
         self.processing_history: List[Dict[str, Any]] = []
 
+        # Match each stored proposal was resolved with, when it differs from the
+        # matcher's own result (a companion file inheriting its folder's match,
+        # an episode completed from the filename). Rebuilt by every refresh.
+        self._proposal_matches: Dict[str, Dict[str, Any]] = {}
+        # Items whose destination is being resolved and organized right now; a
+        # proposal refresh running in a worker thread must not touch them.
+        self._organizing_ids: Set[str] = set()
+        # One proposal refresh at a time, so an older snapshot can never be
+        # written over a newer one.
+        self._proposal_refresh_lock = threading.Lock()
+
     @staticmethod
     def _to_datetime(value: Optional[float]) -> Optional[datetime]:
         if value is None:
@@ -229,6 +242,9 @@ class IngressQueueService:
             "processed_at": item.processed_at,
             "recorded_at": time.time(),
         }
+        resolved_match = self._proposal_matches.get(item.id)
+        if resolved_match:
+            history_item["resolved_match"] = dict(resolved_match)
         if extra:
             history_item.update(extra)
         return history_item
@@ -404,6 +420,7 @@ class IngressQueueService:
             candidate.status = QUEUE_PROCESSING
             candidate.attempts += 1
             candidate.last_attempt = time.time()
+            stale_keys = self._item_proposal_keys(candidate)
 
         start_time = time.time()
         try:
@@ -457,13 +474,49 @@ class IngressQueueService:
                     parsed_info["year"] = parsed_info.get("year") or self.parser._extract_year(grandparent)
             match_result = self._run_matcher(parsed_info)
             best_match = match_result.get("best_match") if match_result else None
+            has_best_match = isinstance(best_match, dict) and bool(best_match)
+            ambiguous = bool(match_result.get("ambiguous")) if match_result else False
 
-            confidence_score = None
-            if best_match and isinstance(best_match, dict):
-                confidence_score = best_match.get("confidence_score")
+            # `confidence_score` is the *match* confidence only. How well the filename
+            # parsed is a different number and lives in parsed_info["parse_quality"];
+            # the two used to share this column, which made unmatched files look like
+            # 85% matches in the review UI.
+            parsed_info["parse_quality"] = self._calculate_confidence(parsed_info)
+            best_match_dict: Dict[str, Any] = dict(best_match) if has_best_match and best_match else {}
+            confidence_score: Optional[int] = None
+            if has_best_match:
+                confidence_score = best_match_dict.get("confidence_score")
+                if confidence_score is None:
+                    confidence_score = 0
 
-            if confidence_score is None:
-                confidence_score = self._calculate_confidence(parsed_info)
+            review_reason: Optional[str] = None
+            if not has_best_match:
+                status_value = (match_result or {}).get("status")
+                if status_value == "no_title":
+                    review_reason = "no title could be parsed from the filename or folders"
+                elif status_value in ("matcher_unavailable", "matcher_failed"):
+                    review_reason = f"metadata lookup unavailable ({status_value})"
+                else:
+                    review_reason = f"no metadata match for '{parsed_info.get('title') or ''}'"
+            elif ambiguous:
+                review_reason = "ambiguous match: " + (
+                    next(
+                        (e.get("note") for e in reversed(best_match_dict.get("score_breakdown") or [])
+                         if e.get("rule") == "ambiguous"),
+                        "runner-up candidate scored within the margin",
+                    )
+                    or ""
+                )
+            elif confidence_score is not None and confidence_score < self.auto_assign_threshold:
+                review_reason = f"confidence {confidence_score} below threshold {self.auto_assign_threshold}"
+            if review_reason:
+                parsed_info["review_reason"] = review_reason
+            else:
+                parsed_info.pop("review_reason", None)
+            if ambiguous:
+                parsed_info["ambiguous_match"] = True
+            else:
+                parsed_info.pop("ambiguous_match", None)
 
             with self.lock:
                 candidate.parsed_info = parsed_info
@@ -472,13 +525,17 @@ class IngressQueueService:
                 candidate.match_candidates = (
                     match_result.get("candidates", []) if match_result else []
                 )
-                has_best_match = isinstance(best_match, dict) and bool(best_match)
-                # proposed_path is computed dynamically in get_queue_items() so that
-                # main-feature vs special-feature designation can be resolved across
-                # all items matched to the same title.
+                # The proposal depends on every item grouped with this one (main
+                # feature versus special feature), so it is recomputed for the
+                # whole group below and stored. Drop the one from the last run.
+                candidate.proposed_path = None
+                self._proposal_matches.pop(candidate.id, None)
                 candidate.status = (
                     QUEUE_AUTO_ASSIGNED
-                    if has_best_match and confidence_score >= self.auto_assign_threshold
+                    if has_best_match
+                    and not ambiguous
+                    and confidence_score is not None
+                    and confidence_score >= self.auto_assign_threshold
                     else QUEUE_NEEDS_REVIEW
                 )
                 candidate.processed_at = time.time()
@@ -498,6 +555,10 @@ class IngressQueueService:
                 if assignment_result and assignment_result.get("organized"):
                     await self._finalize_source_folder(candidate)
 
+            await self._store_proposals_safely(
+                stale_keys | self._item_proposal_keys(candidate),
+                skip_persist={candidate.id},
+            )
             await self._persist_queue_item(candidate)
 
             event_name = "proposal_generated" if candidate.best_match else "item_processed"
@@ -516,6 +577,10 @@ class IngressQueueService:
                 candidate.last_error = str(exc)
                 candidate.processed_at = time.time()
 
+            await self._store_proposals_safely(
+                stale_keys | self._item_proposal_keys(candidate),
+                skip_persist={candidate.id},
+            )
             await self._persist_queue_item(candidate)
 
             await self._record_history_event(
@@ -573,7 +638,15 @@ class IngressQueueService:
 
             item.status = QUEUE_IGNORED
             item.processed_at = time.time()
+            # An ignored file has no destination, and it frees its numbered slot
+            # (Special Feature N, Version N) for the rest of its group.
+            stale_keys = self._item_proposal_keys(item)
+            item.proposed_path = None
+            for name, value in self._role_hints(None, None).items():
+                setattr(item, name, value)
+            self._proposal_matches.pop(item.id, None)
 
+        await self._store_proposals_safely(stale_keys, skip_persist={item.id})
         await self._persist_queue_item(item)
         await self._record_history_event(item, "item_ignored", dict(history_extra or {}))
         return item
@@ -692,7 +765,14 @@ class IngressQueueService:
                 parsed_info["classification_override"] = normalized
             item.parsed_info = parsed_info
 
-        self._prime_organization_hints_for_item(item)
+        if item.media_duration_ms is None and item.best_match:
+            item.media_duration_ms = _get_file_duration(item.file_path)
+        # An override changes this item's role and with it the numbering of
+        # every item it is grouped with.
+        await self._store_proposals(
+            self._item_proposal_keys(item),
+            skip_persist={item.id},
+        )
         await self._persist_queue_item(item)
         await self._record_history_event(
             item,
@@ -717,6 +797,7 @@ class IngressQueueService:
                 return None
             if item.status == QUEUE_PROCESSING:
                 raise QueueItemBusy(f"Queue item '{item_id}' is being processed; try again once it finishes")
+            stale_keys = self._item_proposal_keys(item)
             # Claim it for the organize below, so the auto-processor can't pick it up meanwhile. Every path
             # out of this method sets the final status (completed or failed).
             item.status = QUEUE_PROCESSING
@@ -745,13 +826,20 @@ class IngressQueueService:
             except Exception as exc:
                 organization_error = str(exc)
 
-            if assignment_result and assignment_result.get("organized"):
-                await self._finalize_source_folder(item)
-
             if assignment_id:
                 item.assignment_id = assignment_id
-            if assignment_result:
-                item.proposed_path = self._extract_organized_path(assignment_result)
+            # Record where the file actually went before cleaning up the source
+            # folder: the cleanup merges leftover files next to it.
+            organized_path = self._extract_organized_path(assignment_result) if assignment_result else None
+            if organized_path:
+                item.proposed_path = organized_path
+
+            if organized:
+                try:
+                    await self._finalize_source_folder(item)
+                except Exception as exc:
+                    # The file is organized; a cleanup error must not leave the item claimed.
+                    logger.warning("Source folder cleanup failed after organizing", item_id=item.id, error=str(exc))
 
         # Always settle the final status (this used to sit inside the orchestrator branch, so without an
         # orchestrator the item kept whatever status it had; now it would stay claimed as `processing`).
@@ -768,6 +856,10 @@ class IngressQueueService:
                 item.last_error = organization_error or "Failed to organize accepted file"
             item.processed_at = time.time()
 
+        await self._store_proposals_safely(
+            stale_keys | self._item_proposal_keys(item),
+            skip_persist={item.id},
+        )
         await self._persist_queue_item(item)
         await self._record_history_event(
             item,
@@ -780,8 +872,12 @@ class IngressQueueService:
         )
         return item
 
+    # Items a human dismissed must never be picked up by the automatic retry loop
+    # (which re-queues `failed` items with fewer than this many attempts).
+    MANUAL_FAILURE_ATTEMPTS = 3
+
     async def mark_failed(self, item_id: str, reason: str) -> Optional[IngressQueueItem]:
-        """Mark an item as failed with a reason."""
+        """Mark an item as failed with a reason. Durable: not subject to auto-retry."""
         await self.hydrate_item(item_id)
         with self.lock:
             item = self.items_by_id.get(item_id)
@@ -790,6 +886,8 @@ class IngressQueueService:
 
             item.status = QUEUE_FAILED
             item.last_error = reason
+            item.attempts = max(item.attempts, self.MANUAL_FAILURE_ATTEMPTS)
+            item.last_attempt = time.time()
             item.processed_at = time.time()
 
         await self._persist_queue_item(item)
@@ -815,6 +913,7 @@ class IngressQueueService:
             item = self.items_by_id.get(item_id)
             if item is None:
                 return None
+            stale_keys = self._item_proposal_keys(item)
 
         media_type = match_payload.get("media_type") or "movie"
         _valid_types = ("movie", "episode", "series", "documentary", "live_performance")
@@ -862,6 +961,7 @@ class IngressQueueService:
 
         with self.lock:
             item.best_match = best_match
+            self._proposal_matches.pop(item.id, None)
             item.parsed_info = parsed_info
             item.match_candidates = [best_match]
             item.confidence_score = 100
@@ -877,13 +977,14 @@ class IngressQueueService:
                 force_organize=organize_now,
             )
 
-        if assignment_result and assignment_result.get("organized"):
-            await self._finalize_source_folder(item)
-
         with self.lock:
             if assignment_result:
                 item.assignment_id = assignment_result.get("assignment_id")
-                item.proposed_path = self._extract_organized_path(assignment_result)
+                # Keep the proposal resolved for the assignment when nothing was
+                # moved yet; once the file is organized this is where it went.
+                item.proposed_path = (
+                    self._extract_organized_path(assignment_result) or item.proposed_path
+                )
                 if organize_now:
                     if assignment_result.get("organized"):
                         item.status = QUEUE_COMPLETED
@@ -897,6 +998,15 @@ class IngressQueueService:
                 item.status = QUEUE_FAILED
                 item.last_error = "Manual assignment failed"
 
+        # After the organized path is recorded: the cleanup merges leftover
+        # files next to it.
+        if assignment_result and assignment_result.get("organized"):
+            await self._finalize_source_folder(item)
+
+        await self._store_proposals_safely(
+            stale_keys | self._item_proposal_keys(item),
+            skip_persist={item.id},
+        )
         await self._persist_queue_item(item)
 
         await self._record_history_event(
@@ -911,7 +1021,7 @@ class IngressQueueService:
     def get_item(self, item_id: str) -> Optional[Dict[str, Any]]:
         with self.lock:
             item = self.items_by_id.get(item_id)
-            return item.to_dict() if item else None
+            return self._item_view(item) if item else None
 
     # ------------------------------------------------------------------
     # Proposed-path helpers
@@ -926,9 +1036,19 @@ class IngressQueueService:
 
     @staticmethod
     def _folder_title(best_match: Dict[str, Any]) -> str:
+        """Folder name exactly as FileOrganizationService will create it:
+        ``Title (Year) [imdbid-ttNNNNNNN]``."""
         title = IngressQueueService._sanitize_title(best_match.get("title") or "Unknown")
         year = best_match.get("year")
-        return f"{title} ({year})" if year else title
+        folder = f"{title} ({year})" if year else title
+        imdb_id = best_match.get("imdb_id")
+        if isinstance(imdb_id, str) and re.fullmatch(r"tt\d+", imdb_id.strip()):
+            folder = f"{folder} [imdbid-{imdb_id.strip()}]"
+        return folder
+
+    @staticmethod
+    def _shows_folder() -> str:
+        return settings.folder_tv_shows
 
     @staticmethod
     def _build_main_path(file_name: str, best_match: Dict[str, Any]) -> str:
@@ -936,6 +1056,7 @@ class IngressQueueService:
         ext = os.path.splitext(file_name)[1]
         folder = IngressQueueService._folder_title(best_match)
         media_type = best_match.get("media_type", "movie")
+        shows = IngressQueueService._shows_folder()
         if media_type in ("episode", "series"):
             season = best_match.get("season")
             episode = best_match.get("episode")
@@ -962,14 +1083,14 @@ class IngressQueueService:
                         ep_str = f"{ep_str}E{int(episode_end):03d}"
                 ep_title = best_match.get("episode_title") or ""
                 ep_label = f" {ep_title}" if ep_title else ""
-                return f"shows/{folder}/{season_str}/{folder} {ep_str}{ep_label}{ext}"
+                return f"{shows}/{folder}/{season_str}/{folder} {ep_str}{ep_label}{ext}"
             # Season-pack or unknown episode — keep original filename for manual ID
-            return f"shows/{folder}/{season_str}/{file_name}"
+            return f"{shows}/{folder}/{season_str}/{file_name}"
         if media_type == "documentary":
-            return f"Documentaries/{folder}/{folder}{ext}"
+            return f"{settings.folder_documentaries}/{folder}/{folder}{ext}"
         if media_type == "live_performance":
-            return f"Live Performances/{folder}/{folder}{ext}"
-        return f"Movies/{folder}/{folder}{ext}"
+            return f"{settings.folder_live_performances}/{folder}/{folder}{ext}"
+        return f"{settings.folder_movies}/{folder}/{folder}{ext}"
 
     @staticmethod
     def _build_version_path(file_name: str, best_match: Dict[str, Any], version_number: int) -> str:
@@ -978,9 +1099,9 @@ class IngressQueueService:
         folder = IngressQueueService._folder_title(best_match)
         media_type = best_match.get("media_type", "movie")
         subfolder = {
-            "documentary": "Documentaries",
-            "live_performance": "Live Performances",
-        }.get(media_type, "Movies")
+            "documentary": settings.folder_documentaries,
+            "live_performance": settings.folder_live_performances,
+        }.get(media_type, settings.folder_movies)
         return f"{subfolder}/{folder}/{folder} - Version {version_number}{ext}"
 
     @staticmethod
@@ -992,12 +1113,12 @@ class IngressQueueService:
         if media_type in ("episode", "series"):
             season = best_match.get("season")
             season_str = f"Season {int(season):02d}" if season is not None else "Season 00"
-            return f"shows/{folder}/{season_str}/{file_name}"
-        if media_type == "documentary":
-            return f"Documentaries/{folder}/Special Feature {number}{ext}"
-        if media_type == "live_performance":
-            return f"Live Performances/{folder}/Special Feature {number}{ext}"
-        return f"Movies/{folder}/Special Feature {number}{ext}"
+            return f"{IngressQueueService._shows_folder()}/{folder}/{season_str}/{file_name}"
+        subfolder = {
+            "documentary": settings.folder_documentaries,
+            "live_performance": settings.folder_live_performances,
+        }.get(media_type, settings.folder_movies)
+        return f"{subfolder}/{folder}/Special Feature {number}{ext}"
 
     def _enrich_proposed_paths(self, items: List[Dict[str, Any]]) -> None:
         """
@@ -1014,8 +1135,12 @@ class IngressQueueService:
         Episodes without a known episode number get sequential "Unknown Episode N"
         labels so they are never left without an organised path.
 
-        Any item still without a proposed path after all groups are resolved is
-        written to the _NeedsReview folder so nothing is left unprocessed.
+        An item that cannot be resolved keeps ``proposed_path`` None: it has no
+        destination, stays where it is in its source folder and waits for a
+        match. It is never renamed or moved into a holding folder.
+
+        This reads the destination folders on the NAS. Call it from a proposal
+        refresh or right before organizing, never from a read endpoint.
         """
         groups: Dict[Tuple[str, Any], List[int]] = defaultdict(list)
         source_root_groups: Dict[str, List[int]] = defaultdict(list)
@@ -1114,19 +1239,7 @@ class IngressQueueService:
             return highest + 1
 
         def _source_root_key(item: Dict[str, Any]) -> str:
-            file_path = item.get("file_path")
-            ingress_root = item.get("ingress_path")
-            if not file_path:
-                return os.path.abspath(ingress_root or ".")
-
-            file_path_abs = os.path.abspath(file_path)
-            ingress_root_abs = os.path.abspath(ingress_root or os.path.dirname(file_path_abs))
-            if self._is_within_path(file_path_abs, ingress_root_abs):
-                rel = os.path.relpath(file_path_abs, ingress_root_abs)
-                top_segment = rel.split(os.sep, 1)[0]
-                if top_segment and top_segment not in (".", ".."):
-                    return os.path.join(ingress_root_abs, top_segment)
-            return os.path.dirname(file_path_abs)
+            return self._source_root_for(item.get("file_path"), item.get("ingress_path"))
 
         def _looks_like_companion_item(item: Dict[str, Any]) -> bool:
             parsed_info = item.get("parsed_info") or {}
@@ -1144,17 +1257,6 @@ class IngressQueueService:
                 or bool(re.match(r"^[A-Za-z]\d+[_-]t\d+$", stem))
             )
 
-        def _fallback_title(item: Dict[str, Any], match: Dict[str, Any]) -> Optional[str]:
-            parsed_info = item.get("parsed_info") or {}
-            source_root = os.path.basename(_source_root_key(item))
-            return (
-                match.get("title")
-                or parsed_info.get("title")
-                or source_root
-                or os.path.basename(item.get("ingress_path") or "")
-                or None
-            )
-
         def _classification_override(item: Dict[str, Any]) -> Optional[str]:
             override = (
                 item.get("classification_override")
@@ -1165,24 +1267,29 @@ class IngressQueueService:
             normalized = str(override).strip().lower()
             return normalized if normalized in VALID_CLASSIFICATION_OVERRIDES else None
 
+        # Items that came in with a path: organized already, or being organized
+        # right now. Their path and match are never rewritten here.
+        resolved: Set[int] = set()
+
         for i, item in enumerate(items):
             if item.get("proposed_path"):
                 # Preserve already-resolved destination paths captured from
-                # successful organization operations.
+                # successful organization operations. A matched one still
+                # anchors the companion files waiting in its source folder.
+                resolved.add(i)
+                if isinstance(item.get("best_match"), dict) and item.get("best_match"):
+                    source_root = _source_root_key(item)
+                    if source_root:
+                        source_root_groups[source_root].append(i)
                 continue
 
             source_root = _source_root_key(item)
             if source_root:
                 source_root_groups[source_root].append(i)
 
-            match = item.get("best_match")
-            if match and isinstance(match, dict):
-                title = _fallback_title(item, match)
-                if title:
-                    key: Tuple[str, Any] = (title.lower(), match.get("year"))
-                    groups[key].append(i)
-                else:
-                    items[i]["proposed_path"] = None
+            title_key = self._proposal_title_key(item)
+            if title_key is not None:
+                groups[title_key].append(i)
             else:
                 items[i]["proposed_path"] = None
 
@@ -1336,7 +1443,7 @@ class IngressQueueService:
             _, next_special_number, _, _ = _movie_folder_state(anchor_match)
             companion_indices = [
                 i for i in source_indices
-                if i != anchor_idx and _looks_like_companion_item(items[i])
+                if i != anchor_idx and i not in resolved and _looks_like_companion_item(items[i])
             ]
 
             for offset, idx in enumerate(sorted(companion_indices, key=lambda i: items[i].get("media_duration_ms") or 0, reverse=True), start=0):
@@ -1364,18 +1471,6 @@ class IngressQueueService:
                     next_special_number + offset,
                 )
 
-        # ── Zero-unprocessed guarantee ────────────────────────────────────────
-        # Any item still without a proposed path is routed to _NeedsReview so
-        # nothing is ever left in an unprocessed state.
-        for item in items:
-            if item.get("proposed_path"):
-                continue
-            raw_name = item.get("file_name") or "unknown"
-            stem, ext = os.path.splitext(raw_name)
-            review_name = f"{stem} - NEEDS REVIEW{ext}"
-            item["proposed_path"] = os.path.join(settings.folder_needs_review, review_name)
-            item.setdefault("needs_review", True)
-
     @staticmethod
     def _extract_organized_path(assignment_result: Dict[str, Any]) -> Optional[str]:
         """Return the concrete destination path from an organization result."""
@@ -1395,16 +1490,273 @@ class IngressQueueService:
 
         return None
 
+    # ------------------------------------------------------------------
+    # Stored proposals
+    # ------------------------------------------------------------------
+    #
+    # A proposal is the proposed path plus the role it implies (main feature,
+    # Version N, Special Feature N, Unknown Episode N). It depends on the other
+    # queue items matched to the same title or sitting in the same source
+    # folder, and on what already exists in the destination folder. It is
+    # recomputed when one of those queue items changes, then stored on the item
+    # and its database row, so reading the queue never touches the filesystem.
+    # Changes made on the NAS outside the queue are picked up by the next
+    # refresh, and always right before a file is organized.
 
+    @staticmethod
+    def _source_root_for(file_path: Optional[str], ingress_path: Optional[str]) -> str:
+        """Top-level folder under the ingress root that a file arrived in."""
+        if not file_path:
+            return os.path.abspath(ingress_path or ".")
+
+        file_path_abs = os.path.abspath(file_path)
+        ingress_root_abs = os.path.abspath(ingress_path or os.path.dirname(file_path_abs))
+        if IngressQueueService._is_within_path(file_path_abs, ingress_root_abs):
+            rel = os.path.relpath(file_path_abs, ingress_root_abs)
+            top_segment = rel.split(os.sep, 1)[0]
+            if top_segment and top_segment not in (".", ".."):
+                return os.path.join(ingress_root_abs, top_segment)
+        return os.path.dirname(file_path_abs)
+
+    @classmethod
+    def _proposal_title_key(cls, item: Dict[str, Any]) -> Optional[Tuple[str, Any]]:
+        """Key shared by the items matched to the same title and year."""
+        match = item.get("best_match")
+        if not isinstance(match, dict) or not match:
+            return None
+        parsed_info = item.get("parsed_info") or {}
+        title = (
+            match.get("title")
+            or parsed_info.get("title")
+            or os.path.basename(cls._source_root_for(item.get("file_path"), item.get("ingress_path")))
+            or os.path.basename(item.get("ingress_path") or "")
+            or None
+        )
+        if not title:
+            return None
+        return (str(title).lower(), match.get("year"))
+
+    @classmethod
+    def _proposal_keys(cls, item: Dict[str, Any]) -> Set[Tuple[Any, ...]]:
+        """Groups an item's proposal is resolved in: its source folder and its title."""
+        keys: Set[Tuple[Any, ...]] = {
+            ("root", cls._source_root_for(item.get("file_path"), item.get("ingress_path")))
+        }
+        title_key = cls._proposal_title_key(item)
+        if title_key is not None:
+            keys.add(("title",) + title_key)
+        return keys
+
+    def _item_proposal_keys(self, item: IngressQueueItem) -> Set[Tuple[Any, ...]]:
+        return self._proposal_keys(
+            {
+                "file_path": item.file_path,
+                "ingress_path": item.ingress_path,
+                "best_match": item.best_match,
+                "parsed_info": item.parsed_info,
+            }
+        )
+
+    def _proposal_scope(self, keys: Iterable[Tuple[Any, ...]]) -> List[str]:
+        """Ids of every item whose proposal can depend on the given groups.
+
+        Items are linked when they share a title or a source folder, and links
+        are followed transitively. The caller holds the lock.
+        """
+        pending: Set[Tuple[Any, ...]] = set(keys)
+        if not pending:
+            return []
+
+        keys_by_id = {
+            item_id: self._item_proposal_keys(self.items_by_id[item_id])
+            for item_id in self.item_order
+        }
+        seen: Set[Tuple[Any, ...]] = set()
+        scope: Set[str] = set()
+        while pending:
+            seen |= pending
+            reached = [
+                item_id
+                for item_id, own_keys in keys_by_id.items()
+                if item_id not in scope and own_keys & pending
+            ]
+            scope.update(reached)
+            pending = set()
+            for item_id in reached:
+                pending |= keys_by_id[item_id] - seen
+        return [item_id for item_id in self.item_order if item_id in scope]
+
+    def _proposal_is_final(self, item: IngressQueueItem) -> bool:
+        """True when the stored path is where the file went (or is going right now)."""
+        return item.status == QUEUE_COMPLETED or item.id in self._organizing_ids
+
+    def _proposal_snapshot(
+        self,
+        item_ids: Iterable[str],
+        resolving: Optional[IngressQueueItem] = None,
+    ) -> List[Dict[str, Any]]:
+        """Item dicts to resolve proposals on. The caller holds the lock.
+
+        An open item has its path cleared so it is resolved again. An item whose
+        path is final keeps it and is never rewritten. It is included, when it
+        has a match, only so the companion files still waiting in its source
+        folder can inherit that match: organizing the main feature must not
+        strand its extras. ``resolving`` is the item the caller is about to
+        organize; its path is resolved again like an open one. An ignored item
+        is left out: it neither anchors its folder nor takes a numbered slot.
+        """
+        snapshot: List[Dict[str, Any]] = []
+        for item_id in item_ids:
+            item = self.items_by_id[item_id]
+            if item.status == QUEUE_IGNORED and item is not resolving:
+                continue
+            entry = item.to_dict()
+            if item is resolving or not self._proposal_is_final(item):
+                entry["proposed_path"] = None
+            elif not (entry.get("proposed_path") and isinstance(item.best_match, dict) and item.best_match):
+                continue
+            snapshot.append(entry)
+        return snapshot
+
+    @staticmethod
+    def _role_hints(
+        proposed_path: Optional[str],
+        match: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Organization hints implied by a proposed path."""
+        hints: Dict[str, Any] = {
+            "is_alternate_version": False,
+            "version_number": None,
+            "special_feature_number": None,
+            "unknown_episode_label": None,
+        }
+        if not proposed_path:
+            return hints
+
+        stem = os.path.splitext(os.path.basename(proposed_path))[0]
+        media_type = ((match or {}).get("media_type") or "movie").lower()
+
+        if media_type in ("movie", "documentary", "live_performance"):
+            version_match = re.search(r"\s+-\s+Version\s+(\d+)$", stem, re.IGNORECASE)
+            special_match = re.match(r"^Special Feature\s+(\d+)$", stem, re.IGNORECASE)
+            if version_match:
+                hints["is_alternate_version"] = True
+                hints["version_number"] = int(version_match.group(1))
+            elif special_match:
+                hints["special_feature_number"] = int(special_match.group(1))
+        elif media_type in ("episode", "series"):
+            if (match or {}).get("episode") is None or re.search(
+                r"Unknown Episode\s+\d+", stem, re.IGNORECASE
+            ):
+                hints["unknown_episode_label"] = stem
+        return hints
+
+    def _refresh_proposed_paths(
+        self,
+        keys: Optional[Iterable[Tuple[Any, ...]]] = None,
+    ) -> List[IngressQueueItem]:
+        """Recompute stored proposals; return the items whose proposed path changed.
+
+        ``keys`` limits the work to the items grouped with whatever just
+        changed; ``None`` recomputes the whole queue. This probes destination
+        folders on the NAS, so async callers run it in a worker thread.
+        """
+        with self._proposal_refresh_lock:
+            with self.lock:
+                scope = list(self.item_order) if keys is None else self._proposal_scope(keys)
+                snapshot = self._proposal_snapshot(scope)
+            if all(entry.get("proposed_path") for entry in snapshot):
+                # Nothing open to resolve (final items only, or nothing at all).
+                return []
+
+            self._enrich_proposed_paths(snapshot)
+
+            changed: List[IngressQueueItem] = []
+            with self.lock:
+                for entry in snapshot:
+                    item = self.items_by_id.get(entry.get("id"))
+                    if item is None or self._proposal_is_final(item):
+                        continue
+
+                    proposed_path = entry.get("proposed_path") or None
+                    resolved_match = entry.get("best_match")
+                    if not isinstance(resolved_match, dict) or not resolved_match:
+                        resolved_match = None
+
+                    if proposed_path and resolved_match and resolved_match != item.best_match:
+                        self._proposal_matches[item.id] = resolved_match
+                    else:
+                        self._proposal_matches.pop(item.id, None)
+
+                    hints = self._role_hints(proposed_path, resolved_match or item.best_match)
+                    for name, value in hints.items():
+                        setattr(item, name, value)
+
+                    if item.proposed_path != proposed_path:
+                        item.proposed_path = proposed_path
+                        changed.append(item)
+            return changed
+
+    async def _store_proposals(
+        self,
+        keys: Optional[Iterable[Tuple[Any, ...]]] = None,
+        skip_persist: Iterable[str] = (),
+    ) -> List[IngressQueueItem]:
+        """Refresh proposals off the event loop and persist the rows that changed."""
+        key_set = None if keys is None else set(keys)
+        changed = await asyncio.to_thread(self._refresh_proposed_paths, key_set)
+        skipped = set(skip_persist)
+        for item in changed:
+            if item.id not in skipped:
+                await self._persist_queue_item(item)
+        return changed
+
+    async def _store_proposals_safely(
+        self,
+        keys: Optional[Iterable[Tuple[Any, ...]]] = None,
+        skip_persist: Iterable[str] = (),
+    ) -> List[IngressQueueItem]:
+        """Like _store_proposals, but a refresh error never fails the caller.
+
+        The proposals are a derived view; the queue transition that triggered
+        the refresh must still be saved.
+        """
+        try:
+            return await self._store_proposals(keys, skip_persist)
+        except Exception as exc:
+            logger.warning("Failed to refresh stored ingress proposals", error=str(exc))
+            return []
+
+    async def refresh_proposals(self, item_ids: Optional[Iterable[str]] = None) -> int:
+        """Recompute stored proposals for the given items and everything grouped
+        with them (the whole queue when omitted). Returns how many changed."""
+        keys: Optional[Set[Tuple[Any, ...]]] = None
+        if item_ids is not None:
+            keys = set()
+            with self.lock:
+                for item_id in item_ids:
+                    item = self.items_by_id.get(item_id)
+                    if item is not None:
+                        keys |= self._item_proposal_keys(item)
+        changed = await self._store_proposals_safely(keys)
+        return len(changed)
+
+    def _item_view(self, item: IngressQueueItem) -> Dict[str, Any]:
+        """Item as the API returns it: the stored proposal together with the
+        match it was resolved with."""
+        view = item.to_dict()
+        resolved_match = self._proposal_matches.get(item.id)
+        if resolved_match:
+            view["best_match"] = dict(resolved_match)
+        return view
 
     def get_queue_items(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Queue items with their stored proposals. No filesystem access."""
         with self.lock:
             items = [self.items_by_id[item_id] for item_id in self.item_order]
             if status is not None:
                 items = [item for item in items if item.status == status]
-            result = [item.to_dict() for item in items]
-        self._enrich_proposed_paths(result)
-        return result
+            return [self._item_view(item) for item in items]
 
     def get_queue_status(self) -> Dict[str, Any]:
         with self.lock:
@@ -1475,6 +1827,7 @@ class IngressQueueService:
             self.item_order.clear()
             self.path_to_item_id.clear()
             self.processing_history.clear()
+            self._proposal_matches.clear()
             return count
 
     async def process_pending_items(self, max_items: int = 25) -> List[Dict[str, Any]]:
@@ -1486,7 +1839,7 @@ class IngressQueueService:
             processed = await self.process_next_item()
             if processed is None:
                 break
-            processed_items.append(processed.to_dict())
+            processed_items.append(self._item_view(processed))
 
         return processed_items
 
@@ -1542,72 +1895,48 @@ class IngressQueueService:
         item: IngressQueueItem,
         resolved_item: Dict[str, Any],
     ) -> None:
-        """Apply proposed-path-derived organization hints back onto the live queue item."""
-        item.proposed_path = resolved_item.get("proposed_path")
-        item.is_alternate_version = False
-        item.version_number = None
-        item.special_feature_number = None
-        item.unknown_episode_label = None
+        """Apply a freshly resolved proposal and its organization hints to the live queue item."""
+        item.proposed_path = resolved_item.get("proposed_path") or None
 
         resolved_match = resolved_item.get("best_match")
         if isinstance(resolved_match, dict) and resolved_match:
             item.best_match = resolved_match
+        # The live match now is the resolved one.
+        self._proposal_matches.pop(item.id, None)
 
-        proposed_path = item.proposed_path or ""
-        if not proposed_path:
-            return
-
-        stem = os.path.splitext(os.path.basename(proposed_path))[0]
         media_type = ((item.best_match or {}).get("media_type") or "movie").lower()
-
-        if media_type in ("movie", "documentary", "live_performance"):
-            version_match = re.search(r"\s+-\s+Version\s+(\d+)$", stem, re.IGNORECASE)
-            special_match = re.match(r"^Special Feature\s+(\d+)$", stem, re.IGNORECASE)
-            if version_match:
-                item.is_alternate_version = True
-                item.version_number = int(version_match.group(1))
-            elif special_match:
-                item.special_feature_number = int(special_match.group(1))
-            return
-
-        if media_type in ("episode", "series"):
+        if item.proposed_path and media_type in ("episode", "series"):
             parsed_info = item.parsed_info or {}
-            if (item.best_match or {}).get("season") is None and parsed_info.get("season") is not None:
-                item.best_match = dict(item.best_match or {})
-                item.best_match["season"] = parsed_info.get("season")
-            if (item.best_match or {}).get("episode") is None and parsed_info.get("episode") is not None:
-                item.best_match = dict(item.best_match or {})
-                item.best_match["episode"] = parsed_info.get("episode")
+            for field in ("season", "episode"):
+                if (item.best_match or {}).get(field) is None and parsed_info.get(field) is not None:
+                    item.best_match = dict(item.best_match or {})
+                    item.best_match[field] = parsed_info.get(field)
 
-            if (item.best_match or {}).get("episode") is None:
-                item.unknown_episode_label = stem
-            elif re.search(r"Unknown Episode\s+\d+", stem, re.IGNORECASE):
-                item.unknown_episode_label = stem
+        for name, value in self._role_hints(item.proposed_path, item.best_match).items():
+            setattr(item, name, value)
 
     def _prime_organization_hints_for_item(self, item: IngressQueueItem) -> None:
-        """Resolve main-feature versus duplicate/special-file hints for the given queue item."""
-        if not isinstance(item.best_match, dict) or not item.best_match:
-            item.proposed_path = None
-            item.is_alternate_version = False
-            item.version_number = None
-            item.special_feature_number = None
-            item.unknown_episode_label = None
-            return
+        """Resolve the item's destination and role from current disk state, right
+        before it is organized.
 
+        The stored proposal can be stale by then (files added or removed on the
+        NAS since the last refresh), so the item's whole group is resolved again
+        instead of trusting it. An item without a match of its own still gets
+        one here when it is a companion file of a matched item in its folder,
+        including one that was organized earlier.
+        """
         if item.media_duration_ms is None:
             item.media_duration_ms = _get_file_duration(item.file_path)
 
         with self.lock:
-            snapshot = [self.items_by_id[item_id].to_dict() for item_id in self.item_order]
-
-        for snapshot_item in snapshot:
-            if snapshot_item.get("id") != item.id:
-                continue
-            snapshot_item["best_match"] = dict(item.best_match or {})
-            snapshot_item["parsed_info"] = dict(item.parsed_info or {})
-            snapshot_item["media_duration_ms"] = item.media_duration_ms
-            snapshot_item["proposed_path"] = None
-            break
+            snapshot = self._proposal_snapshot(
+                self._proposal_scope(self._item_proposal_keys(item)),
+                resolving=item,
+            )
+        if all(entry.get("id") != item.id for entry in snapshot):
+            own_entry = item.to_dict()
+            own_entry["proposed_path"] = None
+            snapshot.append(own_entry)
 
         self._enrich_proposed_paths(snapshot)
 
@@ -1620,6 +1949,10 @@ class IngressQueueService:
         item: IngressQueueItem,
         force_organize: bool = False,
     ) -> Optional[Dict[str, Any]]:
+        # Until this returns the item's proposal belongs to this call: a refresh
+        # running in a worker thread must not rewrite it between resolving the
+        # destination and organizing the file.
+        self._organizing_ids.add(item.id)
         try:
             self._repair_missing_source_path(item)
             self._prime_organization_hints_for_item(item)
@@ -1635,46 +1968,185 @@ class IngressQueueService:
                 error=str(exc),
             )
             return None
+        finally:
+            self._organizing_ids.discard(item.id)
+
+    @staticmethod
+    def _to_timestamp(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+        try:
+            return value.timestamp()
+        except Exception:
+            return None
+
+    async def restore_from_db(self) -> int:
+        """Reload unfinished queue items from Postgres into memory.
+
+        The queue used to live only in memory and was written to the database as a
+        log, so every restart emptied the review queue and every re-scan inserted a
+        new row per file. Restoring on startup (newest row per path wins, files that
+        no longer exist are skipped) makes the database the source of truth.
+
+        ``load_persisted_paths`` indexes every row, completed ones included, so a
+        re-detected file finds its row. This loads the unfinished rows themselves:
+        proposals and source-folder cleanup look at the whole group in memory, so
+        the items of a group cannot be hydrated one at a time on demand. Ignored
+        rows are restored too, so an ignored file keeps holding its folder in
+        place after a restart exactly as it does before one.
+        """
+        if self.db_session_factory is None:
+            return 0
+
+        try:
+            async with self.db_session_factory() as session:
+                result = await session.execute(
+                    select(DBIngressQueueItem)
+                    .where(DBIngressQueueItem.status != QUEUE_COMPLETED)
+                    .order_by(DBIngressQueueItem.queued_at.desc(), DBIngressQueueItem.created_at.desc())
+                )
+                rows = list(result.scalars().all())
+        except Exception as exc:
+            logger.warning("Failed to load ingress queue from database", error=str(exc))
+            return 0
+
+        restored = 0
+        skipped_missing = 0
+        skipped_duplicate = 0
+        with self.lock:
+            for row in rows:
+                file_path = row.file_path
+                if not file_path:
+                    continue
+                if file_path in self.path_to_item_id:
+                    skipped_duplicate += 1
+                    continue
+                if not os.path.isfile(file_path):
+                    skipped_missing += 1
+                    continue
+
+                parsed_info = dict(row.parsed_info or {})
+                status = row.status or QUEUE_PENDING
+                if status == QUEUE_PROCESSING:
+                    status = QUEUE_PENDING  # interrupted mid-run; process again
+
+                item = IngressQueueItem(
+                    id=row.id,
+                    file_path=file_path,
+                    file_name=row.file_name or os.path.basename(file_path),
+                    ingress_path=row.ingress_path or self._infer_ingress_root(file_path),
+                    file_size=int(row.file_size or 0),
+                    detected_at=self._to_timestamp(row.detected_at) or time.time(),
+                    queued_at=self._to_timestamp(row.queued_at) or time.time(),
+                    status=status,
+                    priority=int(row.priority or 5),
+                    attempts=int(row.attempts or 0),
+                    last_attempt=self._to_timestamp(row.last_attempt),
+                    processed_at=self._to_timestamp(row.processed_at),
+                    last_error=row.last_error,
+                    confidence_score=row.confidence_score,
+                    assignment_id=row.assignment_id,
+                    parsed_info=parsed_info,
+                    best_match=dict(row.best_match or {}) or None,
+                    match_candidates=list(row.match_candidates or []),
+                    media_duration_ms=float(row.media_duration_ms) if row.media_duration_ms is not None else None,
+                    proposed_path=row.proposed_path,
+                    classification_override=parsed_info.get("classification_override"),
+                )
+                self.items_by_id[item.id] = item
+                self.path_to_item_id[file_path] = item.id
+                self.item_order.append(item.id)
+                restored += 1
+
+        logger.info(
+            "Ingress queue restored from database",
+            restored=restored,
+            skipped_missing_files=skipped_missing,
+            skipped_duplicate_rows=skipped_duplicate,
+        )
+        return restored
+
+    def _queue_row_payload(self, item: IngressQueueItem) -> Dict[str, Any]:
+        parsed_info = dict(item.parsed_info or {})
+        if item.classification_override:
+            parsed_info["classification_override"] = item.classification_override
+        else:
+            parsed_info.pop("classification_override", None)
+
+        return {
+            "id": item.id,
+            "file_path": item.file_path,
+            "file_name": item.file_name,
+            "ingress_path": item.ingress_path,
+            "file_size": item.file_size,
+            "detected_at": self._to_datetime(item.detected_at),
+            "queued_at": self._to_datetime(item.queued_at),
+            "status": item.status,
+            "priority": item.priority,
+            "attempts": item.attempts,
+            "last_attempt": self._to_datetime(item.last_attempt),
+            "processed_at": self._to_datetime(item.processed_at),
+            "last_error": item.last_error,
+            "confidence_score": item.confidence_score,
+            "assignment_id": item.assignment_id,
+            "parsed_info": parsed_info,
+            "best_match": dict(item.best_match or {}),
+            "match_candidates": list(item.match_candidates or []),
+            "media_duration_ms": item.media_duration_ms,
+            "proposed_path": item.proposed_path,
+        }
+
+    def _write_queue_row(self, session: Any, existing: Any, item: IngressQueueItem) -> None:
+        payload = self._queue_row_payload(item)
+        if existing is None:
+            session.add(DBIngressQueueItem(**payload))
+        else:
+            for key, value in payload.items():
+                setattr(existing, key, value)
+
+    def _adopt_row_id(self, item: IngressQueueItem, row_id: str) -> None:
+        """Re-key an in-memory item to the persisted row that already tracks its file."""
+        with self.lock:
+            old_id = item.id
+            if old_id == row_id:
+                return
+            self.items_by_id.pop(old_id, None)
+            item.id = row_id
+            self.items_by_id[row_id] = item
+            self.path_to_item_id[item.file_path] = row_id
+            self.item_order = [row_id if i == old_id else i for i in self.item_order]
+            if old_id in self._proposal_matches:
+                self._proposal_matches[row_id] = self._proposal_matches.pop(old_id)
+            if old_id in self._organizing_ids:
+                self._organizing_ids.discard(old_id)
+                self._organizing_ids.add(row_id)
 
     async def _persist_queue_item(self, item: IngressQueueItem) -> None:
         if self.db_session_factory is not None:
             try:
                 async with self.db_session_factory() as session:
                     existing = await session.get(DBIngressQueueItem, item.id)
-                    parsed_info = dict(item.parsed_info or {})
-                    if item.classification_override:
-                        parsed_info["classification_override"] = item.classification_override
-                    else:
-                        parsed_info.pop("classification_override", None)
-
-                    payload = {
-                        "id": item.id,
-                        "file_path": item.file_path,
-                        "file_name": item.file_name,
-                        "ingress_path": item.ingress_path,
-                        "file_size": item.file_size,
-                        "detected_at": self._to_datetime(item.detected_at),
-                        "queued_at": self._to_datetime(item.queued_at),
-                        "status": item.status,
-                        "priority": item.priority,
-                        "attempts": item.attempts,
-                        "last_attempt": self._to_datetime(item.last_attempt),
-                        "processed_at": self._to_datetime(item.processed_at),
-                        "last_error": item.last_error,
-                        "confidence_score": item.confidence_score,
-                        "assignment_id": item.assignment_id,
-                        "parsed_info": parsed_info,
-                        "best_match": dict(item.best_match or {}),
-                        "match_candidates": list(item.match_candidates or []),
-                        "media_duration_ms": item.media_duration_ms,
-                        "proposed_path": item.proposed_path,
-                    }
-                    if existing is None:
-                        session.add(DBIngressQueueItem(**payload))
-                    else:
-                        for key, value in payload.items():
-                            setattr(existing, key, value)
-                    await session.commit()
+                    try:
+                        self._write_queue_row(session, existing, item)
+                        await session.commit()
+                    except IntegrityError:
+                        # file_path is unique. The path index normally hands a re-detected file the
+                        # id of its row; when it could not (index not loaded, row written elsewhere)
+                        # the insert collides. Adopt the row that tracks this file instead of failing.
+                        await session.rollback()
+                        if existing is not None:
+                            raise
+                        by_path = await session.execute(
+                            select(DBIngressQueueItem).where(DBIngressQueueItem.file_path == item.file_path)
+                        )
+                        existing = by_path.scalar_one_or_none()
+                        if existing is None:
+                            raise
+                        self._adopt_row_id(item, str(existing.id))
+                        self._write_queue_row(session, existing, item)
+                        await session.commit()
                 self.persisted_paths[item.file_path] = (item.id, item.status)
             except Exception as exc:
                 logger.warning(
@@ -1709,16 +2181,7 @@ class IngressQueueService:
 
     def _resolve_source_root(self, item: IngressQueueItem) -> str:
         """Resolve the top-level source folder under ingress root for a queue item."""
-        file_path = os.path.abspath(item.file_path)
-        ingress_root = os.path.abspath(item.ingress_path or os.path.dirname(file_path))
-
-        if self._is_within_path(file_path, ingress_root):
-            rel = os.path.relpath(file_path, ingress_root)
-            top_segment = rel.split(os.sep, 1)[0]
-            if top_segment and top_segment not in (".", ".."):
-                return os.path.join(ingress_root, top_segment)
-
-        return os.path.dirname(file_path)
+        return self._source_root_for(item.file_path, item.ingress_path)
 
     @staticmethod
     def _infer_source_media_type(source_root: str) -> Optional[str]:
@@ -1854,8 +2317,13 @@ class IngressQueueService:
 
     @staticmethod
     def _resolve_target_media_root(proposed_path: Optional[str]) -> Optional[str]:
-        """Resolve the parent movie/show folder for passthrough files."""
-        if not proposed_path:
+        """Resolve the parent movie/show folder for passthrough files.
+
+        Only an absolute path, which is where a file was actually organized,
+        qualifies. A proposal is relative to the library root, and resolving it
+        here would point into the process working directory.
+        """
+        if not proposed_path or not os.path.isabs(proposed_path):
             return None
 
         candidate = os.path.abspath(proposed_path)

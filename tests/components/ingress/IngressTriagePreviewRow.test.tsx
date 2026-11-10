@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { IngressTriagePreviewRow } from '@/app/admin/_components/ingress/IngressTriageRows';
 import type { IngressQueueItem } from '@/service/ingress/IngressAutomationService';
@@ -53,5 +53,21 @@ describe('IngressTriagePreviewRow', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Assign item-1.mkv manually' }));
     expect(onAssign).toHaveBeenCalledWith(item);
+  });
+
+  it('explains the confidence figure on hover, including why the file is held and that it stays put', async () => {
+    renderRow({
+      item: {
+        ...item,
+        proposed_path: null,
+        parsed_info: { media_type: 'movie', title: 'Dune', review_reason: 'No match found' },
+      },
+    });
+
+    fireEvent.mouseOver(screen.getByText('61%'));
+
+    await waitFor(() => expect(screen.getByText('No match')).toBeInTheDocument());
+    expect(screen.getByText('Held for review: No match found')).toBeInTheDocument();
+    expect(screen.getByText('No destination yet, stays in place')).toBeInTheDocument();
   });
 });

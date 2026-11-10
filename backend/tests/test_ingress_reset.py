@@ -66,6 +66,7 @@ def _wire_app_state(app, *, queue_item=None, file_manager=None):
     queue_service.lock = threading.RLock()
     queue_service.items_by_id = {queue_item.id: queue_item} if queue_item else {}
     queue_service._persist_queue_item = AsyncMock()
+    queue_service.refresh_proposals = AsyncMock(return_value=0)
     app.state.ingress_queue_service = queue_service
     app.state.file_manager = file_manager or MagicMock()
     return queue_service
@@ -78,7 +79,7 @@ class TestResetSingleItemToEncoded:
 
         queue_item = _make_queue_item()
         file_manager = MagicMock()
-        _wire_app_state(app, queue_item=queue_item, file_manager=file_manager)
+        queue_service = _wire_app_state(app, queue_item=queue_item, file_manager=file_manager)
 
         assignment = _make_assignment()
         db = _make_db(assignment=assignment)
@@ -103,6 +104,10 @@ class TestResetSingleItemToEncoded:
             assert assignment.organization_status == "pending"
             db.commit.assert_awaited()
             assert queue_item.status == "needs_review"
+            # The file is back in the ingest tree, so its stored proposal is
+            # resolved again before the row is saved.
+            queue_service.refresh_proposals.assert_awaited_once_with([queue_item.id])
+            queue_service._persist_queue_item.assert_awaited()
         finally:
             app.dependency_overrides.clear()
 
@@ -178,7 +183,7 @@ class TestResetCompletedItemsToEncoded:
 
         queue_item = _make_queue_item(item_id="item-2", assignment_id="assign-2", status="completed")
         file_manager = MagicMock()
-        _wire_app_state(app, queue_item=queue_item, file_manager=file_manager)
+        queue_service = _wire_app_state(app, queue_item=queue_item, file_manager=file_manager)
 
         assignment = _make_assignment()
         db = _make_db(assignment=assignment)
@@ -196,6 +201,8 @@ class TestResetCompletedItemsToEncoded:
             assert body["data"]["itemsReset"] == 1
             assert body["data"]["itemsAttempted"] == 1
             assert assignment.organization_status == "pending"
+            # One refresh for the whole batch, not one per item.
+            queue_service.refresh_proposals.assert_awaited_once_with([queue_item.id])
         finally:
             app.dependency_overrides.clear()
 

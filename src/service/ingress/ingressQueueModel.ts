@@ -165,6 +165,34 @@ export function formatDuration(ms: number): string {
   return `${minutes}m ${String(seconds).padStart(2, '0')}s`;
 }
 
+/**
+ * Folder a queue item sits in, relative to the ingress root it was found under.
+ * A file without a destination is never moved, so this is where to find it.
+ */
+export function getSourceFolderLabel(item: IngressQueueItem): string {
+  const normalize = (value: string) => value.replace(/\\/g, '/').replace(/\/+$/, '');
+  const filePath = normalize(item.file_path || '');
+  const lastSlash = filePath.lastIndexOf('/');
+  if (lastSlash <= 0) {
+    return '';
+  }
+
+  const folder = filePath.slice(0, lastSlash);
+  const ingressRoot = normalize(item.ingress_path || '');
+  if (ingressRoot && folder.startsWith(`${ingressRoot}/`)) {
+    return folder.slice(ingressRoot.length + 1);
+  }
+  if (ingressRoot && folder === ingressRoot) {
+    return ingressRoot.slice(ingressRoot.lastIndexOf('/') + 1);
+  }
+  return folder;
+}
+
+/** True for an item that has been looked at and still has nowhere to go. */
+export function isAwaitingDestination(item: IngressQueueItem): boolean {
+  return !item.proposed_path && (item.status === 'needs_review' || item.status === 'failed');
+}
+
 const QUEUE_STATUS_PRIORITY: Record<string, number> = {
   needs_review: 0,
   pending: 1,

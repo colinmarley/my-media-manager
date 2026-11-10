@@ -180,20 +180,43 @@ The extracted `title`, `year`, `season`, `episode` are submitted to one or more 
 
 `/search/movie` or `/search/tv?query=<title>` — up to 10 results returned and scored.
 
+#### Identifier-first lookup
+
+If the parser found an IMDb or TMDB id (a `[imdbid-tt…]` / `[tmdbid-…]` tag on any
+folder in the chain, or a bare `tt1234567` in the filename), the matcher skips the
+title search and resolves the id directly (OMDb `i=`, falling back to TMDB
+`/find/{imdb_id}`). The single candidate is scored **100** with the breakdown rule
+`id_tag`. If the id cannot be resolved, the normal search below runs.
+
 #### Confidence scoring (0–100)
 
-| Factor | Points |
-|---|---|
-| Title fuzzy similarity × 50 | 0–50 |
-| Exact year match | +20 |
-| Year off by 1 | +10 |
-| Year off by 2 | +5 |
-| Parsed `season` present + candidate is series type | +15 |
-| Parsed `episode` also present | +10 |
-| Source = internal library with IMDb ID | +20 |
-| Source = internal library without IMDb ID | +5 |
-| Existing files associated with this library entry | +15 |
-| Existing episode-level files for this season/episode | +10 |
+Every candidate carries a `score_breakdown` list (`rule`, `points`, `note`) and a
+human-readable `match_reason`; the review UI shows both in the confidence tooltip.
+Weights are chosen so that an exact title **plus** an exact year reaches the default
+threshold of 80 and an exact title alone does not.
+
+| Factor | Rule | Points |
+|---|---|---|
+| Title fuzzy similarity × 55 | `title_similarity` | 0–55 |
+| Exact year match | `year_exact` | +25 |
+| Year off by 1 | `year_off_by_one` | +15 |
+| Year off by 2 | `year_off_by_two` | +5 |
+| Episode file + candidate is a series | `series_kind` | +15 |
+| Parsed `episode` present | `episode_number` | +10 |
+| Source = internal library with IMDb ID (not yet implemented) | `library_entry` | +20 |
+| Source = internal library without IMDb ID (not yet implemented) | `library_entry` | +5 |
+
+Examples: movie with exact title and year = 80; movie with exact title and no year = 55;
+episode with exact show title and S/E but no year = 80; same with a year = 100.
+
+**Ambiguity.** When the runner-up candidate scores within `ambiguity_margin` (default
+10) of the best one, the result is flagged `ambiguous` and the best match gets an
+`ambiguous` breakdown entry naming the runner-up. Two series both called "The Office"
+with identical scores are the canonical case.
+
+**Parse quality is a separate number.** `parsed_info.parse_quality` (0–100) describes
+how well the filename parsed and is recorded for every item. It is *not* written to
+`confidence_score`; that column is `NULL` when there is no match.
 
 ---
 
@@ -201,8 +224,21 @@ The extracted `title`, `year`, `season`, `episode` are submitted to one or more 
 
 | Condition | Outcome |
 |---|---|
-| `confidence_score >= auto_assign_threshold` (default 80) AND a `best_match` exists | Status → `auto_assigned`; `AssignmentOrchestrator.auto_assign()` runs |
-| Below threshold or no match | Status → `needs_review`; queued for manual review |
+| `best_match` exists AND `confidence_score >= auto_assign_threshold` (default 80) AND not `ambiguous` | Status → `auto_assigned`; `AssignmentOrchestrator.auto_assign()` runs |
+| Ambiguous match (runner-up within the margin) | Status → `needs_review`; `parsed_info.review_reason` = "ambiguous match: …" |
+| Below threshold | Status → `needs_review`; `parsed_info.review_reason` = "confidence N below threshold T" |
+| No match | Status → `needs_review`; `confidence_score` = `NULL`; `parsed_info.review_reason` = "no metadata match for '…'" |
+
+`review_reason` is shown under the match in the queue table so the reason an item is
+waiting is visible without opening it.
+
+#### Queue persistence
+
+The queue is restored from `ingress_queue` on startup (newest row per `file_path`
+wins; files that no longer exist are skipped; `processing` rows return to `pending`).
+`ingress_queue.file_path` is unique (migration `7a8b9c0d1e2f` removed the historical
+duplicates). Dismissing an item (`mark_failed`) sets `attempts` to 3 so the automatic
+retry loop never resurrects it.
 
 ---
 
@@ -221,7 +257,7 @@ Within each group of items sharing the same best-match title + year:
 | `classification_override = "alternate_version"` | Forces `alternate_version` |
 | `classification_override = "main_feature"` | Forces `main_feature` |
 
-Companion files from the same source folder that don't have their own match inherit the anchor title's match and are classified as special features.
+Companion files from the same source folder that don't have their own match inherit the anchor title's match and are classified as special features. The anchor can be a file that was already organized: its own path is final and is not changed, but the extras still waiting in its folder keep (or get) their `Special Feature N` proposal.
 
 **TV Episodes:**
 
@@ -234,6 +270,36 @@ Companion files from the same source folder that don't have their own match inhe
 | Season 0 (TV special) | `Specials/` folder (Jellyfin convention) |
 | Episode unknown | `Show - Unknown Episode N.ext` |
 | `classification_override = "special_feature"` | Placed in season folder with original filename |
+
+**No destination:** an item that nothing resolves (no match, or a media type without a
+library folder) keeps `proposed_path = NULL`. The file is not renamed or moved; it stays
+in its source folder and the review panel shows that folder and "No destination yet,
+stays in place".
+
+**Stored proposals.** The proposal (proposed path plus the role it implies:
+`is_alternate_version`, `version_number`, `special_feature_number`,
+`unknown_episode_label`) is stored on the queue item and in `ingress_queue.proposed_path`.
+`GET /queue/items` returns the stored value and does no filesystem access. Proposals are
+relative to the library root with forward slashes until the file is organized; after
+that the column holds the absolute organized path.
+
+A proposal is recomputed for the item and for every item grouped with it (same matched
+title and year, or same top-level source folder, followed transitively) when:
+
+| Trigger | Where |
+|---|---|
+| Item processed (parse + match) | `process_next_item` |
+| Classification override changed | `update_classification` |
+| Item accepted or manually assigned | `mark_complete`, `manual_assign_item` |
+| Item reset to encoded (single or bulk) | `refresh_proposals(item_ids)` from the reset endpoints |
+| Backend startup | `refresh_proposals()` for the whole queue, in the background |
+
+Right before a file is organized the role is resolved once more against the destination
+folder on disk, so the stored value is a preview and the accept step is authoritative.
+Files added to or removed from the library outside the queue only show up in stored
+proposals at the next trigger. A companion file without its own match is returned with
+the match it inherits from its folder (`best_match.inferred_from_source_root = true`);
+that inherited match is only written to the row when the item is accepted.
 
 ---
 
@@ -250,7 +316,7 @@ Target paths follow Jellyfin folder conventions:
 | TV special (S00) | `{library_root}/Shows/{Series (YYYY)}/Specials/{Series} S00Exx.ext` |
 | Documentary | `{library_root}/Documentaries/{Title}/…` |
 | Live performance | `{library_root}/Live Performances/{Title}/…` |
-| Unresolvable | `{library_root}/_NeedsReview/{stem} - NEEDS REVIEW.ext` |
+| Unresolvable | Not moved. `organize_assignment` returns `success: false`, `needsReview: true`, `targetPath: null` and the file stays in its source folder |
 
 An NFO sidecar file is written alongside each successfully moved file for Jellyfin metadata scraping. On success, `movies.jellyfin_info` / `series.jellyfin_info` is updated in PostgreSQL.
 

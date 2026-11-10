@@ -787,6 +787,9 @@ async def reset_ingress_item_to_encoded(
         queue_item.last_error = None if len(failures) == 0 else "; ".join(failures)
         queue_item.processed_at = None
 
+    # The file is back in its source folder: the stored path is where it had been
+    # organized to, so resolve a fresh proposal for it and its group.
+    await queue_service.refresh_proposals([queue_item.id])
     await queue_service._persist_queue_item(queue_item)
 
     return {
@@ -830,6 +833,7 @@ async def reset_completed_items_to_encoded(req: Request, db: AsyncSession = Depe
 
     items_reset = 0
     files_attempted = 0
+    reset_item_ids: List[str] = []
     files_reset = 0
     errors: List[str] = []
 
@@ -865,11 +869,16 @@ async def reset_completed_items_to_encoded(req: Request, db: AsyncSession = Depe
             queue_item.processed_at = None
 
         await queue_service._persist_queue_item(queue_item)
+        reset_item_ids.append(queue_item.id)
 
         if len(failures) == 0:
             items_reset += 1
         else:
             errors.extend(failures)
+
+    # One refresh for the whole batch: the files are back in their source folders.
+    if reset_item_ids:
+        await queue_service.refresh_proposals(reset_item_ids)
 
     return {
         "success": len(errors) == 0,

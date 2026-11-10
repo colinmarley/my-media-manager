@@ -122,9 +122,12 @@ class AssignmentOrchestrator:
             "targetFolder": None,
             "organizationHistory": [],
             "resolvedMedia": resolved_media,
-            # Alternate version fields (set externally when a duplicate is detected)
+            # Role fields resolved by IngressQueueService._enrich_proposed_paths. The
+            # organizer must honor these so the executed filename matches the proposal.
             "isAlternateVersion": queue_item.get("is_alternate_version", False),
             "versionNumber": queue_item.get("version_number"),
+            "specialFeatureNumber": queue_item.get("special_feature_number"),
+            "proposedPath": queue_item.get("proposed_path"),
             "createdAt": datetime.utcnow().isoformat(),
             "updatedAt": datetime.utcnow().isoformat(),
         }
