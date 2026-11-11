@@ -32,6 +32,7 @@ from services.disc_track_mapper import (
     is_track_stem,
 )
 from services.filename_parser import FilenameParser
+from services import storage_paths
 from services.path_builder import ROLE_MAIN, ROLE_SPECIAL, ROLE_VERSION, PathBuilder
 from utils.logging import logger
 
@@ -293,7 +294,7 @@ class IngressQueueService:
             return os.path.abspath(explicit_ingress_path)
 
         normalized_path = os.path.abspath(file_path)
-        candidates = [os.path.abspath(path) for path in settings.ingress_default_paths if path]
+        candidates = [os.path.abspath(path) for path in storage_paths.ingest_roots() if path]
         matches = [path for path in candidates if IngressQueueService._is_within_path(normalized_path, path)]
         if matches:
             return max(matches, key=len)
@@ -1153,7 +1154,7 @@ class IngressQueueService:
                 return movie_folder_state_cache[cache_key]
 
             subfolder = _subfolder_for(media_type)
-            dest_dir = os.path.join(settings.jellyfin_dest_base, subfolder, folder)
+            dest_dir = os.path.join(storage_paths.library_root(), subfolder, folder)
             main_exists = False
             main_duration_ms: Optional[float] = None
             highest_special_number = 0
@@ -1209,7 +1210,7 @@ class IngressQueueService:
                 unknown_episode_state_cache[cache_key] = val + 1
                 return val
             dest_dir = os.path.join(
-                settings.jellyfin_dest_base, settings.folder_tv_shows, folder, season_str
+                storage_paths.library_root(), settings.folder_tv_shows, folder, season_str
             )
             highest = 0
             if os.path.isdir(dest_dir):
@@ -2161,7 +2162,7 @@ class IngressQueueService:
         proposed = item.proposed_path
         if not proposed or os.path.isabs(proposed):
             return
-        library_root = settings.jellyfin_dest_base
+        library_root = storage_paths.library_root()
         absolute = PathBuilder.absolute(library_root, proposed)
         if not os.path.exists(absolute):
             return
@@ -2557,7 +2558,7 @@ class IngressQueueService:
         except ValueError:
             rel_path = os.path.basename(current_path)
 
-        unprocessed_root = os.path.join(settings.jellyfin_dest_base, settings.folder_unprocessed)
+        unprocessed_root = os.path.join(storage_paths.library_root(), settings.folder_unprocessed)
         if not os.path.isdir(unprocessed_root):
             return
 

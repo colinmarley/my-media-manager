@@ -19,6 +19,7 @@ from config.settings import settings
 from db.database import get_db
 from db.models import MediaAssignment, MediaFile, Movie, Series
 from services.ingest_operations import IngestUndoService, OperationLog, UndoError
+from services import storage_paths
 from services.ingress_queue_service import QueueItemBusy
 from services.ingress_triage_service import (
     QUEUE_GROUP_BY,
@@ -285,7 +286,7 @@ async def start_ingress_watcher(payload: StartWatcherRequest, req: Request):
     queue_service = req.app.state.ingress_queue_service
 
     try:
-        ingress_paths = payload.ingressPaths or settings.ingress_default_paths
+        ingress_paths = payload.ingressPaths or storage_paths.ingest_roots()
         recursive = (
             payload.recursive
             if payload.recursive is not None
@@ -976,7 +977,7 @@ async def get_ingress_health(req: Request):
     import socket
 
     runtime_config: Dict[str, Any] = req.app.state.ingress_runtime_config
-    ingress_paths = runtime_config.get("defaultIngressPaths") or settings.ingress_default_paths
+    ingress_paths = runtime_config.get("defaultIngressPaths") or storage_paths.ingest_roots()
 
     path_checks = []
     for path in ingress_paths:
@@ -987,7 +988,7 @@ async def get_ingress_health(req: Request):
             "readable": os.access(path, os.R_OK) if exists else False,
         })
 
-    dest_base = settings.jellyfin_dest_base
+    dest_base = storage_paths.library_root()
     dest_exists = os.path.exists(dest_base)
 
     # NAS connectivity check (TCP port 445 / CIFS)
@@ -1000,14 +1001,9 @@ async def get_ingress_health(req: Request):
         except OSError:
             nas_reachable = False
 
-    # Check each typed destination subfolder
-    typed_folders = [
-        settings.folder_movies,
-        settings.folder_tv_shows,
-        settings.folder_documentaries,
-        settings.folder_live_performances,
-        settings.folder_needs_review,
-    ]
+    # Check each typed destination subfolder (the four category folders; the
+    # library has no needs-review holding folder any more).
+    typed_folders = storage_paths.category_folders()
     subfolder_checks = []
     for folder in typed_folders:
         folder_path = os.path.join(dest_base, folder)
@@ -1101,47 +1097,71 @@ async def get_ingress_config(req: Request):
     }
 
 
+def normalize_config_overrides(overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep the known, non-null runtime-config keys; clean the path values."""
+    known = set(UpdateConfigRequest.model_fields)
+    cleaned = {key: value for key, value in (overrides or {}).items() if key in known and value is not None}
+    if storage_paths.LIBRARY_ROOT_KEY in cleaned:
+        cleaned[storage_paths.LIBRARY_ROOT_KEY] = storage_paths.clean_root(cleaned[storage_paths.LIBRARY_ROOT_KEY])
+        if not cleaned[storage_paths.LIBRARY_ROOT_KEY]:
+            cleaned.pop(storage_paths.LIBRARY_ROOT_KEY)
+    if storage_paths.INGEST_ROOTS_KEY in cleaned:
+        roots = [storage_paths.clean_root(path) for path in cleaned[storage_paths.INGEST_ROOTS_KEY] or []]
+        roots = [path for path in roots if path]
+        if roots:
+            cleaned[storage_paths.INGEST_ROOTS_KEY] = roots
+        else:
+            cleaned.pop(storage_paths.INGEST_ROOTS_KEY)
+    return cleaned
+
+
+def apply_runtime_config(app_state: Any, overrides: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply persisted runtime-config overrides to the running services.
+
+    Paths go to the storage-path resolver, which every service asks at call
+    time, so a new library or ingest root applies everywhere. Returns the
+    runtime config dict served by ``GET /config``.
+    """
+    cleaned = normalize_config_overrides(overrides)
+    storage_paths.set_overrides(cleaned)
+
+    runtime_config: Dict[str, Any] = app_state.ingress_runtime_config
+    runtime_config.update(cleaned)
+    runtime_config[storage_paths.LIBRARY_ROOT_KEY] = storage_paths.library_root()
+    runtime_config[storage_paths.INGEST_ROOTS_KEY] = storage_paths.ingest_roots()
+
+    queue_service = getattr(app_state, "ingress_queue_service", None)
+    if "autoAssignThreshold" in cleaned and queue_service is not None:
+        queue_service.auto_assign_threshold = cleaned["autoAssignThreshold"]
+
+    auto_matcher_service = getattr(app_state, "auto_matcher_service", None)
+    if (
+        "defaultMetadataSource" in cleaned
+        and auto_matcher_service is not None
+        and hasattr(auto_matcher_service, "set_metadata_source")
+    ):
+        auto_matcher_service.set_metadata_source(cleaned["defaultMetadataSource"])
+
+    return runtime_config
+
+
 @router.put("/config")
-async def update_ingress_config(payload: UpdateConfigRequest, req: Request):
-    """Update the in-memory runtime ingress config."""
-    runtime_config: Dict[str, Any] = req.app.state.ingress_runtime_config
-    queue_service = req.app.state.ingress_queue_service
-    auto_matcher_service = getattr(req.app.state, "auto_matcher_service", None)
+async def update_ingress_config(
+    payload: UpdateConfigRequest,
+    req: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the runtime ingress config and persist it to app_config.
 
-    if payload.autoAssignThreshold is not None:
-        runtime_config["autoAssignThreshold"] = payload.autoAssignThreshold
-        if queue_service:
-            queue_service.auto_assign_threshold = payload.autoAssignThreshold
-
-    if payload.autoOrganizeEnabled is not None:
-        runtime_config["autoOrganizeEnabled"] = payload.autoOrganizeEnabled
-
-    if payload.autoProcessEnabled is not None:
-        runtime_config["autoProcessEnabled"] = payload.autoProcessEnabled
-
-    if payload.defaultIngressPaths is not None:
-        runtime_config["defaultIngressPaths"] = payload.defaultIngressPaths
-
-    if payload.jellyfinDestBase is not None:
-        runtime_config["jellyfinDestBase"] = payload.jellyfinDestBase
-        file_org_service = getattr(req.app.state, "file_organization_service", None)
-        if file_org_service is not None:
-            file_org_service.jellyfin_dest_base = payload.jellyfinDestBase.rstrip("/")
-
-    if payload.defaultMetadataSource is not None:
-        runtime_config["defaultMetadataSource"] = payload.defaultMetadataSource
-        if auto_matcher_service and hasattr(auto_matcher_service, "set_metadata_source"):
-            auto_matcher_service.set_metadata_source(payload.defaultMetadataSource)
-
-    if payload.fileStabilityWaitSeconds is not None:
-        runtime_config["fileStabilityWaitSeconds"] = payload.fileStabilityWaitSeconds
-
-    if payload.debounceSeconds is not None:
-        runtime_config["debounceSeconds"] = payload.debounceSeconds
-
-    if payload.autoProcessIntervalSeconds is not None:
-        runtime_config["autoProcessIntervalSeconds"] = payload.autoProcessIntervalSeconds
-
+    Only the fields sent are stored (merged over earlier saves); a field never
+    saved keeps following settings/env. The library and ingest roots apply to
+    every service through services.storage_paths.
+    """
+    updates = normalize_config_overrides(payload.model_dump(exclude_none=True))
+    persisted = normalize_config_overrides(await storage_paths.load_persisted_config(db))
+    persisted.update(updates)
+    await storage_paths.save_persisted_config(db, persisted)
+    runtime_config = apply_runtime_config(req.app.state, persisted)
 
     return {
         "success": True,
