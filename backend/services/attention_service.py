@@ -464,7 +464,8 @@ def build_needs_review(inputs: AttentionInputs) -> List[Dict[str, Any]]:
             add(f.id, _Reason(
                 "flagged",
                 f"Check {f.file_name}",
-                f"Flagged for review{': ' + note if note else ''}. Clear the flag once it has been looked at.",
+                (f"Flagged for review: {note.strip()}" + ("" if note.strip()[-1:] in ".!?" else ".") if note
+                 else "Flagged for review.") + " Clear the flag once it has been looked at.",
                 "medium",
                 f"flagged|{note or ''}",
                 dismissible=False,
