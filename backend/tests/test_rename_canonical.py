@@ -23,8 +23,12 @@ def library(tmp_path):
 
 
 @pytest.fixture()
-def app():
+def app(monkeypatch):
     from main import app as fastapi_app
+    from services.filesystem_manager import FileSystemManager
+
+    # Another test may have left a stand-in file manager on app.state.
+    monkeypatch.setattr(fastapi_app.state, "file_manager", FileSystemManager(), raising=False)
     yield fastapi_app
     fastapi_app.dependency_overrides.clear()
 
@@ -194,6 +198,16 @@ async def test_refusals(app, library, fields, status, code):
         resp = await ac.post(URL.format("f1"))
     assert resp.status_code == status, resp.text
     assert resp.json()["detail"]["code"] == code
+
+
+async def test_move_that_does_not_land_is_a_failure(app, library):
+    session, main, _ = _movie_setup(library)
+    app.state.file_manager = MagicMock()  # reports success, moves nothing
+    async with _client(app, session) as ac:
+        resp = await ac.post(URL.format("f1"), params={"dryRun": "false"})
+    assert resp.status_code == 500 and resp.json()["detail"]["code"] == "RENAME_FAILED"
+    [op] = session.all_of(IngestOperation)
+    assert op.status == "failed" and main.relative_path == "Movies/Inception (2010)/inception.mkv"
 
 
 async def test_unknown_file_and_auth(app, library):

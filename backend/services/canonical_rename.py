@@ -182,8 +182,10 @@ def _move(file_manager: Any, src: str, dst: str) -> None:
         temporary = f"{src}.mmm-renaming"
         _check(file_manager.move_file(src, temporary))
         _check(file_manager.move_file(temporary, dst))
-        return
-    _check(file_manager.move_file(src, dst))
+    else:
+        _check(file_manager.move_file(src, dst))
+    if not os.path.isfile(dst):
+        raise RuntimeError(f"file did not arrive at {dst}")
 
 
 def _check(result: Any) -> None:
