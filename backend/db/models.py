@@ -360,8 +360,37 @@ class MediaFile(Base):
     organization_status = Column(Text)
     tags                = Column(ARRAY(Text), default=[])
     notes               = Column(Text)
+    # Inventory (migration 9c0d1e2f3a4b). Written only through
+    # services/media_file_index.py and the inventory scan.
+    # Title links; documentaries and live performances are rows in `movies`.
+    movie_id            = Column(Text, ForeignKey("movies.id", ondelete="SET NULL"), index=True)
+    series_id           = Column(Text, ForeignKey("series.id", ondelete="SET NULL"))
+    role                = Column(Text)     # main / version / extra / episode / other
+    season_number       = Column(Integer)
+    episode_number      = Column(Integer)
+    episode_end_number  = Column(Integer)
+    location            = Column(Text, index=True)  # ingest / library / other
+    # Technical metadata from a probe (full track lists stay in the JSONB columns above).
+    container           = Column(Text)
+    video_codec         = Column(Text)
+    resolution_category = Column(Text)
+    width               = Column(Integer)
+    height              = Column(Integer)
+    hdr_format          = Column(Text)
+    audio_codec         = Column(Text)
+    audio_channels      = Column(Integer)
+    duration_ms         = Column(BigInteger)
+    bitrate             = Column(BigInteger)
+    probed_at           = Column(DateTime(timezone=True))
+    probe_error         = Column(Text)
+    missing_since       = Column(DateTime(timezone=True))
     created_at          = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at          = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        sa.Index("ix_media_files_series_episode", "series_id", "season_number", "episode_number"),
+        sa.Index("ix_media_files_is_available", "is_available"),
+    )
 
 
 class MediaAssignment(Base):
