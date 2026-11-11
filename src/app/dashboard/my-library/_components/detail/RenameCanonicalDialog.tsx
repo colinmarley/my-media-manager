@@ -44,6 +44,7 @@ const RenameCanonicalDialog = ({ open, files, onClose, onApplied, onUnavailable 
   const notify = useNotify();
   const [preview, setPreview] = useState<Preview>({ kind: 'loading' });
   const [applying, setApplying] = useState(false);
+  const [progress, setProgress] = useState(0);
 
   useEffect(() => {
     if (!open || files.length === 0) return;
@@ -80,8 +81,16 @@ const RenameCanonicalDialog = ({ open, files, onClose, onApplied, onUnavailable 
 
   const apply = async () => {
     setApplying(true);
+    setProgress(0);
     try {
-      const { succeeded, failed } = await forEachFile(applicable.map((row) => row.file.id), (id) => renameToCanonical(id, false));
+      // Sequential, so the button can count: "Renaming 2 of 5…".
+      const { succeeded, failed } = await forEachFile(applicable.map((row) => row.file.id), async (id) => {
+        try {
+          return await renameToCanonical(id, false);
+        } finally {
+          setProgress((done) => done + 1);
+        }
+      });
       if (failed.length === 0) {
         notify(`Renamed ${succeeded.length} file${succeeded.length === 1 ? '' : 's'} to the canonical name.`, 'success');
       } else {
@@ -145,7 +154,9 @@ const RenameCanonicalDialog = ({ open, files, onClose, onApplied, onUnavailable 
         <Button onClick={onClose} disabled={applying}>{preview.kind === 'ready' ? 'Cancel' : 'Close'}</Button>
         {preview.kind === 'ready' && (
           <Button variant="contained" onClick={apply} disabled={applying || applicable.length === 0}>
-            {applying ? 'Renaming…' : `Apply ${applicable.length} rename${applicable.length === 1 ? '' : 's'}`}
+            {applying
+              ? applicable.length > 1 ? `Renaming ${Math.min(progress + 1, applicable.length)} of ${applicable.length}…` : 'Renaming…'
+              : `Apply ${applicable.length} rename${applicable.length === 1 ? '' : 's'}`}
           </Button>
         )}
       </DialogActions>
