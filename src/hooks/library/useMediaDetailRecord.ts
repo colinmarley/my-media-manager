@@ -1,15 +1,8 @@
-import { useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import useDiscs from '@/hooks/catalog/useDiscs';
-import useMediaDiscsAndTapes from '@/hooks/catalog/useMediaDiscsAndTapes';
-import useMovies from '@/hooks/catalog/useMovies';
-import useSeries from '@/hooks/catalog/useSeries';
 import {
-  getDiscIdsForMedia,
   getExternalIds,
   getFolderPath,
-  getMediaId,
-  getMediaType,
   getNfoMetadata,
   getProcessingSummary,
   LibraryMedia,
@@ -24,121 +17,125 @@ import {
   LegacyOmdbData,
   SeriesEpisodeOption,
 } from '@/service/library/mediaDetailModel';
+import {
+  EMPTY_FILE_GROUPS,
+  EMPTY_FILE_SUMMARY,
+  flattenFileGroups,
+  getMediaDetail,
+  isEndpointUnavailable,
+} from '@/service/library/MediaFilesService';
+import { loadLegacyMediaDetail } from '@/service/library/legacyMediaDetail';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
 import { CatalogTape } from '@/types/catalog/Tape.type';
+import { MediaDetailResponse } from '@/types/library/MediaFile.type';
 
 interface Params {
   mediaTypeFromRoute?: string;
   mediaIdFromRoute: string;
 }
 
+/** `detail`: one GET .../detail. `legacy`: the backend has no /detail, so the catalogs were searched. */
+export type MediaDetailSource = 'detail' | 'legacy';
+
 /**
- * Loads the catalog record for one library title and everything derived from it:
- * computed library state, NFO metadata, associated discs/tapes, processing summary,
- * the effective (series root) folder path and the poster source URL.
+ * Loads one library title with `GET /api/catalog/media/{type}/{id}/detail` — the catalog record,
+ * its discs and tapes and its file inventory in one request — and derives what the page shows
+ * from it: computed library state, NFO metadata, the processing summary, the effective (show
+ * root) folder path, episode options and the poster source.
+ *
+ * A 404 / 405 from /detail is either "no such title" or "this backend predates /detail"; both
+ * fall back to the old client-side search over the whole catalog, which settles which it was.
+ * `refetch` reloads in place (the page keeps rendering) after every mutation.
  */
 const useMediaDetailRecord = ({ mediaTypeFromRoute, mediaIdFromRoute }: Params) => {
-  const { movies, loading: moviesLoading, error: moviesError } = useMovies();
-  const { series, loading: seriesLoading, error: seriesError } = useSeries();
-  const { discs, loading: discsLoading } = useDiscs();
+  const [detail, setDetail] = useState<MediaDetailResponse | null>(null);
+  const [source, setSource] = useState<MediaDetailSource>('detail');
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef(0);
 
-  const loading = moviesLoading || seriesLoading || discsLoading;
-  const error = moviesError || seriesError;
+  const load = useCallback(async (mode: 'initial' | 'refresh') => {
+    const request = ++requestRef.current;
+    const current = () => request === requestRef.current;
+    if (!mediaTypeFromRoute || !mediaIdFromRoute) {
+      setDetail(null);
+      setLoading(false);
+      return;
+    }
+    if (mode === 'initial') setLoading(true);
+    else setRefreshing(true);
+    setError(null);
 
-  const discMap = useMemo(() => {
-    return new Map(discs.map((disc) => [disc.id, disc]));
-  }, [discs]);
+    try {
+      let next: MediaDetailResponse | null;
+      let nextSource: MediaDetailSource = 'detail';
+      try {
+        next = await getMediaDetail(mediaTypeFromRoute, mediaIdFromRoute);
+      } catch (err) {
+        if (!isEndpointUnavailable(err)) throw err;
+        nextSource = 'legacy';
+        next = await loadLegacyMediaDetail(mediaTypeFromRoute, mediaIdFromRoute);
+      }
+      if (!current()) return;
+      setDetail(next);
+      setSource(nextSource);
+    } catch (err) {
+      if (!current()) return;
+      setError(err instanceof Error ? err.message : 'Failed to load this title.');
+    } finally {
+      if (current()) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, [mediaTypeFromRoute, mediaIdFromRoute]);
 
-  const matchedMedia = useMemo(() => {
-    const allMedia: LibraryMedia[] = [...movies, ...series];
+  useEffect(() => {
+    void load('initial');
+  }, [load]);
 
-    return allMedia.find((entry) => {
-      const entryId = getMediaId(entry);
-      const entryType = getMediaType(entry);
-      const entryRecord = entry as unknown as Record<string, unknown>;
-      const externalIds = (entryRecord.externalIds as Record<string, unknown> | undefined) || {};
-      const externalImdbId = typeof externalIds.imdbId === 'string' ? externalIds.imdbId : undefined;
-      const legacyImdbId = typeof entryRecord.imdbID === 'string' ? entryRecord.imdbID : undefined;
-      const directImdbId = typeof entryRecord.imdbId === 'string' ? entryRecord.imdbId : undefined;
-      const routeMatchesImdb =
-        mediaIdFromRoute === externalImdbId ||
-        mediaIdFromRoute === legacyImdbId ||
-        mediaIdFromRoute === directImdbId;
+  const refetch = useCallback(() => load('refresh'), [load]);
 
-      return entryType === mediaTypeFromRoute && (entryId === mediaIdFromRoute || routeMatchesImdb);
-    }) || null;
-  }, [movies, series, mediaIdFromRoute, mediaTypeFromRoute]);
-
-  const resolvedMediaId = matchedMedia ? getMediaId(matchedMedia) : undefined;
-  const reverseLookupMediaType = mediaTypeFromRoute === 'movie' || mediaTypeFromRoute === 'series'
-    ? mediaTypeFromRoute
-    : undefined;
-  const {
-    discs: linkedDiscs,
-    tapes: linkedTapes,
-    loading: mediaLinksLoading,
-  } = useMediaDiscsAndTapes(reverseLookupMediaType, resolvedMediaId);
+  const matchedMedia = (detail?.record ?? null) as LibraryMedia | null;
+  const associatedDiscs = useMemo(() => (detail?.discs ?? []) as CatalogDisc[], [detail]);
+  const associatedTapes = useMemo(() => (detail?.tapes ?? []) as CatalogTape[], [detail]);
+  const files = detail?.files ?? EMPTY_FILE_GROUPS;
+  const summary = detail?.summary ?? EMPTY_FILE_SUMMARY;
+  const allFiles = useMemo(() => flattenFileGroups(detail?.files), [detail]);
 
   const computed = useMemo(() => {
     if (!matchedMedia) {
       return null;
     }
-
+    const discMap = new Map(associatedDiscs.map((disc) => [disc.id, disc]));
     return toComputedMedia(matchedMedia, discMap);
-  }, [matchedMedia, discMap]);
+  }, [matchedMedia, associatedDiscs]);
 
-  const nfoMetadata = useMemo(() => {
-    if (!matchedMedia) {
-      return null;
-    }
-
-    return getNfoMetadata(matchedMedia);
-  }, [matchedMedia]);
-
-  const associatedDiscs = useMemo(() => {
-    if (!matchedMedia) {
-      return [];
-    }
-
-    // Forward lookup: discs referenced by the movie's legacy
-    // releases[].discIds (pre-dates disc_media_links, kept for old
-    // Firebase-migrated data).
-    const discIds = getDiscIdsForMedia(matchedMedia);
-    const forwardDiscs = discIds
-      .map((discId) => discMap.get(discId))
-      .filter((disc): disc is NonNullable<typeof disc> => Boolean(disc));
-
-    // Reverse lookup: server-computed via disc_media_links + the legacy
-    // disc.raw_data.mediaId scalar (GET /api/catalog/media/{type}/{id}/discs).
-    const byId = new Map(forwardDiscs.map((disc) => [disc.id, disc]));
-    for (const disc of linkedDiscs) byId.set(disc.id, disc);
-
-    return Array.from(byId.values());
-  }, [matchedMedia, discMap, linkedDiscs]);
-
-  const associatedTapes: CatalogTape[] = linkedTapes;
+  const nfoMetadata = useMemo(() => (matchedMedia ? getNfoMetadata(matchedMedia) : null), [matchedMedia]);
 
   const processingSummary: LibraryProcessingSummary | null = useMemo(() => {
     if (!matchedMedia || !computed) {
       return null;
     }
-
     return getProcessingSummary(matchedMedia, computed.fileCount);
   }, [matchedMedia, computed]);
 
   const legacyOmdbData: LegacyOmdbData | undefined = useMemo(() => getLegacyOmdbData(matchedMedia), [matchedMedia]);
 
-  const currentPosterSource = useMemo(() => getPosterSourceFromMedia(matchedMedia, legacyOmdbData), [matchedMedia, legacyOmdbData]);
+  const currentPosterSource = useMemo(
+    () => getPosterSourceFromMedia(matchedMedia, legacyOmdbData),
+    [matchedMedia, legacyOmdbData],
+  );
 
   const externalIds = matchedMedia ? getExternalIds(matchedMedia) : null;
   const folderPath = matchedMedia ? getFolderPath(matchedMedia) : null;
-  const isSeries = computed?.mediaType === 'series';
+  const isSeries = detail ? detail.catalogType === 'series' || computed?.mediaType === 'series' : false;
 
   const effectiveFolderPath = useMemo(() => {
     if (!folderPath) {
       return folderPath;
     }
-
     return getEffectiveFolderPath(folderPath, isSeries);
   }, [folderPath, isSeries]);
 
@@ -146,19 +143,28 @@ const useMediaDetailRecord = ({ mediaTypeFromRoute, mediaIdFromRoute }: Params) 
     if (!isSeries || !matchedMedia) {
       return [];
     }
-
     return getSeriesEpisodeOptions(matchedMedia);
   }, [isSeries, matchedMedia]);
 
   return {
     loading,
+    refreshing,
     error,
+    refetch,
+    source,
+    detail,
     matchedMedia,
     computed,
     nfoMetadata,
     associatedDiscs,
     associatedTapes,
-    mediaLinksLoading,
+    /** Kept for callers of the old shape; the links arrive with the record now. */
+    mediaLinksLoading: false,
+    files,
+    allFiles,
+    summary,
+    catalogType: detail?.catalogType ?? null,
+    detailMediaType: detail?.mediaType ?? null,
     processingSummary,
     externalIds,
     folderPath,
@@ -169,5 +175,7 @@ const useMediaDetailRecord = ({ mediaTypeFromRoute, mediaIdFromRoute }: Params) 
     currentPosterSource,
   };
 };
+
+export type MediaDetailRecord = ReturnType<typeof useMediaDetailRecord>;
 
 export default useMediaDetailRecord;
