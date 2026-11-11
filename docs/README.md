@@ -78,7 +78,7 @@ PostgreSQL  (movies / series tables)
 |---|---|
 | Catalog API (backend) | `backend/api/catalog.py` |
 | ORM models | `backend/db/models.py` |
-| DB migrations | `backend/db/init/*.sql` |
+| DB migrations | `backend/alembic/versions/` (applied by the backend entrypoint) |
 | Metadata import service | `src/service/library/LibraryMetadataImportService.ts` |
 | Catalog hooks (frontend) | `src/hooks/catalog/` |
 | Catalog type definitions | `src/types/catalog/` |
@@ -131,13 +131,13 @@ Blu-ray and DVD releases are modelled as `Release` → `Disc` → `VideoFile` ch
 
 ## Database Migrations
 
-Schema changes are managed with Alembic (`backend/alembic/versions/`), not
-hand-written SQL — `backend/db/init/*.sql` is seed data run by Postgres on
-first container start, not the migration mechanism.
+Schema changes are managed with Alembic (`backend/alembic/versions/`). The
+backend container's entrypoint runs `alembic upgrade head` on every start and
+refuses to start the API if it fails.
 
 ```bash
 cd backend && source venv/bin/activate
-export DATABASE_URL=postgresql+asyncpg://media_user:changeme_strong_password@localhost:5432/media_manager
+export DATABASE_URL=postgresql+asyncpg://<user>:<password>@127.0.0.1:5432/media_manager
 alembic upgrade head                              # apply pending migrations
 alembic check                                      # verify no schema drift
 alembic revision --autogenerate -m "description"   # after changing db/models.py

@@ -786,7 +786,7 @@ curl http://localhost:8082/api/library/scan/status/abc-123-def-456
 ### Running the Server
 ```bash
 cd backend
-python start.py
+uvicorn main:app --reload --host 0.0.0.0 --port 8082
 ```
 
 ### Interactive API Documentation

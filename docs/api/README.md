@@ -15,7 +15,7 @@ Comprehensive documentation for the Media Library Management Backend API.
 ### Start the Backend Server
 ```bash
 cd backend
-python start.py
+uvicorn main:app --reload --host 0.0.0.0 --port 8082
 ```
 
 The API will be available at `http://localhost:8082`
@@ -152,7 +152,7 @@ FastAPI provides built-in interactive API documentation:
 
 3. **Start the Server**
    ```bash
-   python start.py
+   uvicorn main:app --reload --host 0.0.0.0 --port 8082
    ```
 
 ### Basic Usage Examples
@@ -276,8 +276,7 @@ backend/
 ├── utils/                # Utilities
 │   ├── exceptions.py
 │   └── logging.py
-├── main.py               # FastAPI application
-└── start.py              # Startup script
+└── main.py               # FastAPI application
 ```
 
 ### Testing
