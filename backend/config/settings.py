@@ -174,13 +174,13 @@ class LibrarySettings(BaseSettings):
     # Local vision model for the mobile "Scan cover" add-flow step, on LocalAI's
     # OpenAI-compatible API. Default is the docker0 bridge gateway, i.e. the
     # host's LocalAI as seen from inside the backend container on ai-workstation.
-    localai_url: str = "http://172.17.0.1:8080"  # MEDIA_LIBRARY_LOCALAI_URL
+    localai_url: str = "http://localhost:8080"  # MEDIA_LIBRARY_LOCALAI_URL (compose: LOCALAI_URL)
     localai_api_key: str = ""  # MEDIA_LIBRARY_LOCALAI_API_KEY (LocalAI requires it)
     localai_vision_model: str = "qwen2.5vl-7b"  # MEDIA_LIBRARY_LOCALAI_VISION_MODEL
 
     # disc-ripper-service, for the mobile app's read-only rip status view.
     # Default reaches the host's port 8083 from inside the backend container.
-    disc_ripper_url: str = "http://172.17.0.1:8083"  # MEDIA_LIBRARY_DISC_RIPPER_URL
+    disc_ripper_url: str = "http://localhost:8083"  # MEDIA_LIBRARY_DISC_RIPPER_URL (compose: DISC_RIPPER_URL)
 
 
     # Tape ingest

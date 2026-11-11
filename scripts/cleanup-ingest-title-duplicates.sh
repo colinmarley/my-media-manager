@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INGEST="${INGEST_DIR:-/ark/media/jellyfin/ingest}"
+INGEST="${INGEST_DIR:-/ark/media/ingest}"
 
 if [[ ! -d "$INGEST" ]]; then
   echo "Ingest directory not found: $INGEST"

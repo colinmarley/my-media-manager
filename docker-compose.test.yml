@@ -23,15 +23,13 @@ services:
       POSTGRES_USER: media_user
       POSTGRES_PASSWORD: test_password
     ports:
-      # Port 5433 avoids clashing with a dev/prod Postgres on 5432.
-      - "5433:5432"
+      # Loopback only. Default 55433 avoids the prod/dev Postgres on 5432 and
+      # other projects' Postgres on 5433; override with TEST_DB_PORT (pytest
+      # reads the same variable in backend/tests/conftest.py).
+      - "127.0.0.1:${TEST_DB_PORT:-55433}:5432"
     tmpfs:
       # In-memory storage — fast and automatically discarded on container stop.
       - /var/lib/postgresql/data
-    volumes:
-      # Run the same schema-init scripts used in production so the test DB
-      # always has an identical schema.
-      - ./backend/db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U media_user -d media_manager_test"]
       interval: 3s

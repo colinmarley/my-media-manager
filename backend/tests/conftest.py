@@ -19,9 +19,11 @@ import os
 # .env files, so this always wins.
 # ---------------------------------------------------------------------------
 
+# Port matches docker-compose.test.yml (TEST_DB_PORT, default 55433).
+_TEST_DB_PORT = os.environ.get("TEST_DB_PORT", "55433")
 os.environ.setdefault(
     "DATABASE_URL",
-    "postgresql+asyncpg://media_user:test_password@localhost:5433/media_manager_test",
+    f"postgresql+asyncpg://media_user:test_password@localhost:{_TEST_DB_PORT}/media_manager_test",
 )
 
 # Use a throwaway secret key — session tokens issued during tests must never
