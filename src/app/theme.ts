@@ -1,87 +1,145 @@
-import { createTheme } from '@mui/material/styles';
+import { alpha, createTheme, type TypographyVariantsOptions } from '@mui/material/styles';
+import {
+  accent,
+  borders,
+  fontFamilies,
+  radii,
+  spacingUnit,
+  status,
+  surfaces,
+  text,
+  typeScale,
+} from '@/theme/tokens';
+
+function typeVariants(): TypographyVariantsOptions {
+  const variants: Record<string, object> = {};
+  for (const [name, [size, line, weight]] of Object.entries(typeScale)) {
+    variants[name] = {
+      fontSize: `${size / 16}rem`,
+      lineHeight: `${line}px`,
+      fontWeight: weight,
+      letterSpacing: size >= 18 ? '-0.01em' : 0,
+    };
+  }
+  return {
+    fontFamily: fontFamilies.sans,
+    fontSize: 14,
+    ...variants,
+    button: { ...variants.button, textTransform: 'none' },
+    overline: { ...variants.overline, letterSpacing: '0.04em', textTransform: 'none' },
+  };
+}
 
 const theme = createTheme({
+  spacing: spacingUnit,
+  shape: { borderRadius: radii.sm },
   palette: {
-    mode: 'dark', // Default mode
-    background: {
-      default: '#121212', // Dark background
-      paper: '#1e1e1e', // Slightly lighter background for paper
-    },
-    primary: {
-      main: '#3d5afe', // Indigo color for primary buttons
-      contrastText: '#ffffff', // White text for contrast
-    },
-    secondary: {
-      main: '#03a9f4', // Bright blue for secondary buttons
-      contrastText: '#ffffff', // White text for contrast
-    },
-  },
-  typography: {
-    fontFamily: 'Roboto, Arial, sans-serif', // Default Material-UI font
-    h1: {
-      fontSize: '32px',
-      lineHeight: '40px',
-      fontWeight: 700,
-      letterSpacing: '-0.02em',
-      textAlign: 'center',
-      color: '#ffffff',
-    },
-    body1: {
-      fontSize: '14px',
-      lineHeight: '24px',
-      letterSpacing: '-0.01em',
-      color: '#e0e0e0', // Light gray for body text
-    },
-    button: {
-      fontSize: '16px',
-      fontWeight: 600,
-      lineHeight: '20px',
-      textTransform: 'uppercase', // Make button text uppercase
+    mode: 'dark',
+    background: { default: surfaces.canvas, paper: surfaces.paper },
+    primary: { main: accent.main, light: accent.light, dark: accent.dark, contrastText: accent.contrastText },
+    secondary: { main: text.secondary, contrastText: surfaces.canvas },
+    success: { main: status.success.fg },
+    warning: { main: status.warning.fg },
+    error: { main: status.error.fg },
+    info: { main: status.info.fg },
+    text: { primary: text.primary, secondary: text.secondary, disabled: text.disabled },
+    divider: borders.subtle,
+    action: {
+      hover: alpha(text.primary, 0.05),
+      selected: accent.tint,
+      focus: alpha(accent.main, 0.24),
     },
   },
+  typography: typeVariants(),
   components: {
+    MuiCssBaseline: {
+      styleOverrides: {
+        body: { backgroundColor: surfaces.canvas, color: text.primary },
+        'code, pre, kbd': { fontFamily: fontFamilies.mono },
+      },
+    },
+    MuiPaper: {
+      defaultProps: { elevation: 0 },
+      styleOverrides: {
+        root: { backgroundImage: 'none' },
+        outlined: { borderColor: borders.default },
+      },
+    },
+    MuiCard: {
+      defaultProps: { variant: 'outlined' },
+      styleOverrides: { root: { borderRadius: radii.md, borderColor: borders.default } },
+    },
+    MuiCardContent: {
+      styleOverrides: { root: { padding: 16, '&:last-child': { paddingBottom: 16 } } },
+    },
     MuiButton: {
+      defaultProps: { disableElevation: true },
+      styleOverrides: {
+        root: { borderRadius: radii.sm, minHeight: 32, paddingInline: 12 },
+        sizeSmall: { minHeight: 28, paddingInline: 10 },
+        sizeLarge: { minHeight: 40, paddingInline: 16 },
+        outlined: { borderColor: borders.strong },
+      },
+    },
+    MuiIconButton: {
+      styleOverrides: { root: { borderRadius: radii.sm } },
+    },
+    MuiButtonBase: {
       styleOverrides: {
         root: {
-          borderRadius: '8px', // Slightly rounded corners
-          height: '48px',
-          padding: '0 24px',
-          transition: 'background 0.3s, color 0.3s, box-shadow 0.3s',
-          textTransform: 'none', // Disable uppercase text
-          boxShadow: '0px 4px 6px rgba(0, 0, 0, 0.3)', // Subtle shadow for buttons
-          '&:hover': {
-            boxShadow: '0px 6px 10px rgba(0, 0, 0, 0.5)', // Stronger shadow on hover
-          },
-        },
-        containedPrimary: {
-          backgroundColor: '#3d5afe', // Indigo color
-          color: '#ffffff', // White text
-          '&:hover': {
-            backgroundColor: '#304ffe', // Darker indigo on hover
-          },
-        },
-        containedSecondary: {
-          backgroundColor: '#03a9f4', // Bright blue
-          color: '#ffffff', // White text
-          '&:hover': {
-            backgroundColor: '#0288d1', // Darker blue on hover
-          },
-        },
-        outlinedPrimary: {
-          borderColor: '#3d5afe', // Indigo border
-          color: '#3d5afe', // Indigo text
-          '&:hover': {
-            backgroundColor: 'rgba(61, 90, 254, 0.1)', // Light indigo background on hover
-          },
-        },
-        outlinedSecondary: {
-          borderColor: '#03a9f4', // Blue border
-          color: '#03a9f4', // Blue text
-          '&:hover': {
-            backgroundColor: 'rgba(3, 169, 244, 0.1)', // Light blue background on hover
-          },
+          '&.Mui-focusVisible': { outline: `2px solid ${accent.main}`, outlineOffset: 2 },
         },
       },
+    },
+    MuiTextField: { defaultProps: { size: 'small' } },
+    MuiFormControl: { defaultProps: { size: 'small' } },
+    MuiSelect: { defaultProps: { size: 'small' } },
+    MuiOutlinedInput: {
+      styleOverrides: {
+        root: {
+          backgroundColor: surfaces.raised,
+          '& .MuiOutlinedInput-notchedOutline': { borderColor: borders.default },
+          '&:hover .MuiOutlinedInput-notchedOutline': { borderColor: borders.strong },
+        },
+      },
+    },
+    MuiChip: {
+      styleOverrides: { root: { borderRadius: radii.sm, fontWeight: 500 } },
+    },
+    MuiTabs: {
+      styleOverrides: {
+        root: { minHeight: 40, borderBottom: `1px solid ${borders.subtle}` },
+        indicator: { height: 2 },
+      },
+    },
+    MuiTab: {
+      styleOverrides: {
+        root: { minHeight: 40, paddingInline: 12, minWidth: 0, fontWeight: 500, textTransform: 'none' },
+      },
+    },
+    MuiTableCell: {
+      styleOverrides: {
+        root: { borderColor: borders.subtle },
+        head: { color: text.secondary, fontWeight: 600, fontSize: '0.8125rem' },
+        sizeSmall: { paddingBlock: 6 },
+      },
+    },
+    MuiDialog: {
+      styleOverrides: { paper: { borderRadius: radii.lg, border: `1px solid ${borders.default}` } },
+    },
+    MuiMenu: {
+      styleOverrides: { paper: { border: `1px solid ${borders.default}` } },
+    },
+    MuiTooltip: {
+      styleOverrides: {
+        tooltip: { backgroundColor: surfaces.selected, color: text.primary, fontSize: '0.75rem', border: `1px solid ${borders.strong}` },
+      },
+    },
+    MuiAlert: {
+      styleOverrides: { root: { borderRadius: radii.md } },
+    },
+    MuiLinearProgress: {
+      styleOverrides: { root: { borderRadius: 2 } },
     },
   },
 });

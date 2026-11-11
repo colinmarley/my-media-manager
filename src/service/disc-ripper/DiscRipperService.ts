@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { formatBytes as formatBytesShared } from '@/utils/format';
 import type {
   DiscInfoResponse,
   JobAnalysis,
@@ -27,9 +28,7 @@ function formatDuration(seconds: number): string {
 }
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return '—';
-  const gb = bytes / 1_073_741_824;
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1_048_576).toFixed(0)} MB`;
+  return formatBytesShared(bytes, { precision: 'video' });
 }
 
 export const DiscRipperService = {

@@ -9,13 +9,14 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  Alert, Box, Button, CircularProgress, IconButton, List, ListItem, ListItemText, Paper, Stack, Typography,
+  Alert, Button, CircularProgress, IconButton, List, ListItem, ListItemText, Paper, Typography,
 } from '@mui/material';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { useConfirm, useNotify } from '@/context/NotificationContext';
 import { deleteWishlistItem, listWishlist } from '@/service/catalog/WishlistService';
 import { WishlistItem } from '@/types/catalog/Wishlist.type';
 import WishlistAddDialog from './_components/WishlistAddDialog';
+import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
 
 function describeItem(item: WishlistItem): string {
   return [item.format, item.year, item.barcode, item.imdbId].filter(Boolean).join(' · ');
@@ -60,14 +61,12 @@ export default function WishlistPage() {
   };
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-        <Typography variant="h4">Wishlist</Typography>
-        <Button variant="contained" onClick={() => setAddOpen(true)}>Add</Button>
-      </Stack>
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        Titles you want but don&apos;t own yet, oldest first.
-      </Typography>
+    <PageContainer>
+      <PageHeader
+        title="Wishlist"
+        subtitle="Titles you want but don't own yet, oldest first."
+        actions={<Button variant="contained" onClick={() => setAddOpen(true)}>Add</Button>}
+      />
 
       {loading && <CircularProgress />}
       {!loading && loadError && (
@@ -109,6 +108,6 @@ export default function WishlistPage() {
           notify(`Added "${item.title}" to your wishlist`, 'success');
         }}
       />
-    </Box>
+    </PageContainer>
   );
 }

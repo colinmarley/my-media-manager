@@ -11,7 +11,7 @@ test.beforeEach(async ({ page }) => {
 
 test('physical media page loads with Discs/Tapes tabs', async ({ page }) => {
   await page.goto('/dashboard/physical-media');
-  await expect(page.getByRole('heading', { name: 'Physical Media' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Discs & Tapes' })).toBeVisible();
   await expect(page.getByRole('tab', { name: /Discs/ })).toBeVisible();
   await expect(page.getByRole('tab', { name: /Tapes/ })).toBeVisible();
 });
@@ -21,9 +21,13 @@ test('my library page loads', async ({ page }) => {
   await expect(page).toHaveURL(/my-library/);
 });
 
-test('admin page loads with Extras Review tab available', async ({ page }) => {
+test('admin page loads with the record tabs and Extras Review in the sidebar', async ({ page }) => {
   await page.goto('/admin');
-  await expect(page.getByRole('tab', { name: 'Extras Review' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Movies' })).toBeVisible();
+  const extras = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Extras Review' });
+  await expect(extras).toHaveAttribute('href', '/admin?view=ExtrasReview');
+  await extras.click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Extras Review' })).toBeVisible();
 });
 
 test('disc ripper page loads through the Scan Disc step', async ({ page }) => {

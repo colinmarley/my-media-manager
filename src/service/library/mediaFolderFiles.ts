@@ -1,3 +1,5 @@
+import { formatBytes } from '@/utils/format';
+
 /**
  * Destination-folder browsing helpers shared by the library media details screen.
  *
@@ -14,11 +16,7 @@ const SIDECAR_FILE_EXTENSION = /\.(nfo|srt|vtt|ass|ssa|sub|idx|jpg|jpeg|png|webp
 const SEASON_FOLDER_NAME = /^Season\s+\d+$/i;
 
 export function formatFileSize(bytes: number): string {
-  if (bytes === 0) return '';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0, v = bytes;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return `${v.toFixed(1)} ${units[i]}`;
+  return formatBytes(bytes, { empty: '' });
 }
 
 export function isVideoFileName(name: string): boolean {

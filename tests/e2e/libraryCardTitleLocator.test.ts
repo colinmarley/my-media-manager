@@ -18,7 +18,8 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '../..');
 const LIBRARY_PAGE = path.join(ROOT, 'src/app/dashboard/my-library/page.tsx');
-const SHELL = path.join(ROOT, 'src/app/layout.tsx');
+// The app shell's nav hrefs live in its config, not in the root layout.
+const SHELL = path.join(ROOT, 'src/components/shell/navConfig.ts');
 
 const librarySource = readFileSync(LIBRARY_PAGE, 'utf-8');
 

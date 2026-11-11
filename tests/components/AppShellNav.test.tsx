@@ -1,91 +1,91 @@
 /**
- * QA probe for the app shell (issue #16 AC2: "A `/dashboard/stats` page with
- * summary tiles and simple charts (MUI or a light chart library already in
- * use), linked from the nav").
+ * QA probe for the app shell: renders the real root layout and checks that
+ * the pages users look for are linked from the permanent sidebar.
  *
- * The stats page test renders the page component in isolation, so nothing in
- * the suite proved the link exists in the drawer users actually click. This
- * renders the real root layout, opens the drawer and asserts the Stats link
- * points at /dashboard/stats.
+ * Issue #16 AC2 ("A `/dashboard/stats` page ... linked from the nav")
+ *   -> app shell navigation (QA probe) > links to the stats page from the sidebar
+ * Issue #39 (wishlist linked from the nav)
+ *   -> app shell navigation (QA probe) > links to the wishlist page from the sidebar
  *
- * Issue #16 acceptance criteria -> the test here:
- *
- *   AC2 "... linked from the nav."
- *     -> tests/components/AppShellNav.test.tsx::app shell navigation (QA probe) > links to the stats page from the drawer
- *        (the tiles-and-charts half of AC2 is traced in
- *         tests/components/CatalogStatsPage.test.tsx::StatsPage > AC2 the page
- *         renders the summary tiles and the simple charts the criterion asks for)
- *
- *   AC1 (GET /api/catalog/stats) -> backend/tests/test_catalog_stats.py::test_ac1_endpoint_returns_every_breakdown_the_criterion_names
- *   AC3 (mocked-DB endpoint test, page render test)
- *     -> backend/tests/test_catalog_stats.py::test_ac3_the_endpoint_unit_tests_build_no_real_session
- *     -> tests/components/CatalogStatsPage.test.tsx::StatsPage > AC3 the render test needs no backend: one mocked service call draws the whole page
+ * Below `md` the sidebar becomes a temporary drawer behind "Open navigation";
+ * that path is covered in tests/components/AppShell.test.tsx.
  */
 
 import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
+let mockPathname = '/dashboard';
+
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/dashboard',
+  usePathname: () => mockPathname,
+  useSearchParams: () => new URLSearchParams(),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
 }));
 
 vi.mock('next/link', () => ({
-  default: ({ href, children, ...rest }: any) => (
-    <a href={typeof href === 'string' ? href : href.pathname} {...rest}>
+  default: React.forwardRef<HTMLAnchorElement, any>(({ href, children, ...rest }, ref) => (
+    <a ref={ref} href={typeof href === 'string' ? href : href.pathname} {...rest}>
       {children}
     </a>
-  ),
+  )),
 }));
+
+vi.mock('@/theme/fonts', () => ({ fontVariables: '' }));
 
 vi.mock('@/store/useAuthenticationStore', () => ({
   default: () => ({ authenticated: false, checkSession: vi.fn(), logout: vi.fn() }),
 }));
 
+vi.mock('@/service/disc-ripper/DiscRipperService', () => ({
+  DiscRipperService: { listJobs: () => Promise.resolve([]) },
+}));
+
 import RootLayout from '@/app/layout';
+
+function setDesktop(matches: boolean) {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: (query: string) => ({
+      matches,
+      media: query,
+      onchange: null,
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }),
+  });
+}
 
 describe('app shell navigation (QA probe)', () => {
   beforeEach(() => {
-    Object.defineProperty(window, 'matchMedia', {
-      writable: true,
-      configurable: true,
-      value: (query: string) => ({
-        matches: true,
-        media: query,
-        onchange: null,
-        addListener: vi.fn(),
-        removeListener: vi.fn(),
-        addEventListener: vi.fn(),
-        removeEventListener: vi.fn(),
-        dispatchEvent: vi.fn(),
-      }),
-    });
+    mockPathname = '/dashboard';
+    setDesktop(true);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
   });
 
-  it('links to the stats page from the drawer', () => {
+  it('links to the stats page from the sidebar', () => {
     render(<RootLayout>{null}</RootLayout>);
-
-    act(() => {
-      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-    });
-
-    const stats = screen.getByRole('link', { name: /Stats/i });
-    expect(stats).toHaveAttribute('href', '/dashboard/stats');
+    const nav = screen.getByRole('navigation', { name: 'Main' });
+    expect(within(nav).getByRole('link', { name: /^Stats$/ })).toHaveAttribute('href', '/dashboard/stats');
   });
 
-  it('links to the wishlist page from the drawer (issue #39)', () => {
+  it('links to the wishlist page from the sidebar (issue #39)', () => {
     render(<RootLayout>{null}</RootLayout>);
+    const nav = screen.getByRole('navigation', { name: 'Main' });
+    expect(within(nav).getByRole('link', { name: /^Wishlist$/ })).toHaveAttribute('href', '/dashboard/wishlist');
+  });
 
-    act(() => {
-      fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
-    });
-
-    const wishlist = screen.getByRole('link', { name: /Wishlist/i });
-    expect(wishlist).toHaveAttribute('href', '/dashboard/wishlist');
+  it('renders the page without the shell on the login page', () => {
+    mockPathname = '/login';
+    render(<RootLayout><p>login form</p></RootLayout>);
+    expect(screen.getByText('login form')).toBeInTheDocument();
+    expect(screen.queryByRole('navigation', { name: 'Main' })).not.toBeInTheDocument();
   });
 });

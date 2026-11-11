@@ -11,9 +11,8 @@ export async function login(page: Page) {
   const password = process.env.E2E_PASSWORD ?? 'C0d!ngC@rdsC0ff33';
   await page.goto('/login');
   await page.getByLabel('Passphrase').fill(password);
-  // Scoped to the form: the app shell also renders a "Sign In" nav link on
-  // every page (including /login itself), which getByRole('button', ...)
-  // alone matches ambiguously.
+  // Scoped to the form so a "Sign In" control elsewhere on the page can never
+  // match ambiguously (the app shell is hidden on /login today).
   await page.locator('form').getByRole('button', { name: /sign in/i }).click();
   await expect(
     page,
