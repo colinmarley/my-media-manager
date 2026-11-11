@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import {
   NotificationProvider,
@@ -25,7 +25,26 @@ const ConfirmButton: React.FC<{ onResult: (result: boolean) => void }> = ({ onRe
   );
 };
 
+const UndoButton: React.FC<{ onUndo: () => void }> = ({ onUndo }) => {
+  const notifyFn = useNotify();
+  return <button onClick={() => notifyFn('Dismissed.', 'success', { action: { label: 'Undo', onClick: onUndo } })}>dismiss</button>;
+};
+
 describe('NotificationProvider', () => {
+  it('renders an action button in the toast and runs it', async () => {
+    const onUndo = vi.fn();
+    render(
+      <NotificationProvider>
+        <UndoButton onUndo={onUndo} />
+      </NotificationProvider>
+    );
+    fireEvent.click(screen.getByText('dismiss'));
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Dismissed.');
+    fireEvent.click(screen.getByRole('button', { name: 'Undo' }));
+    expect(onUndo).toHaveBeenCalledTimes(1);
+  });
+
   it('shows a snackbar alert with the right severity from useNotify()', async () => {
     render(
       <NotificationProvider>
