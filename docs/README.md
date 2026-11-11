@@ -9,6 +9,7 @@ Folder layout: `architecture/` — current-state technical references;
 ## Table of Contents
 
 ### Architecture (current state)
+- **[Storage and Hosts](./architecture/STORAGE_AND_HOSTS.md)** — What runs where, NAS layout, path rules, inventory scan, Jellyfin path mapping
 - **[Database Tables Reference](./architecture/DATABASE_TABLES_REFERENCE.md)** — Full schema reference
 - **[Naming Conventions](./architecture/NAMING_CONVENTIONS.md)** — Full rip→ingest→Jellyfin naming pipeline, including disc-ripper-service and the extras taxonomy
 - **[Jellyfin Media Organization](./architecture/JELLYFIN_MEDIA_ORGANIZATION.md)** — Folder naming conventions and Jellyfin layout
@@ -18,6 +19,7 @@ Folder layout: `architecture/` — current-state technical references;
 
 ### Guides
 - **[Testing](./guides/TESTING.md)** — Isolated test environments, how to run tests
+- **[Beelink Migration Runbook](./guides/MIGRATION_BEELINK_RUNBOOK.md)** — Moving the stack from ai-workstation to the beelink, with checks and rollback
 - **[Poster Cache](./guides/POSTER_CACHE.md)** — How poster images are downloaded, cached, and served
 - **[Ingress Assignment Reference](./guides/INGRESS_ASSIGNMENT_REFERENCE.md)** — Auto-matching and confidence scoring
 - **[Grafana Dashboard](./grafana/README.md)** — Importing the media-manager metrics dashboard, plus the proposed Home Dashboard tile

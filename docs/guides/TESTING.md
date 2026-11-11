@@ -8,11 +8,15 @@ The project uses **three isolated environments**, each with its own database and
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Environment   │  Database              │  Port  │  How started     │
 ├────────────────┼────────────────────────┼────────┼──────────────────┤
-│  test          │  media_manager_test    │  5433  │  make test-*     │
+│  test          │  media_manager_test    │  55433 │  make test-*     │
 │  dev           │  media_manager         │  5432  │  make dev-db     │
 │  production    │  media_manager (Docker)│  5432  │  make docker-up  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
+
+The test port is `TEST_DB_PORT` (default `55433`, loopback only); `5433` is taken
+by another project's Postgres on the deploy host. The dev/prod Postgres is
+published on `127.0.0.1` only.
 
 **The production database is only ever used when the stack runs via Docker.**  
 Running `pytest` or `npm test` locally can never touch production data.
@@ -25,7 +29,7 @@ Running `pytest` or `npm test` locally can never touch production data.
 
 1. `docker-compose.yml` injects `DATABASE_URL` directly as a container environment variable, pointing to the Postgres service inside the Docker network. This only has effect when Docker starts the backend.
 
-2. Outside Docker, `backend/tests/conftest.py` is the **first** thing pytest loads. It calls `os.environ.setdefault("DATABASE_URL", "...localhost:5433/media_manager_test")` before any application module is imported. pydantic-settings gives env vars higher priority than `.env` files, so the test value always wins.
+2. Outside Docker, `backend/tests/conftest.py` is the **first** thing pytest loads. It calls `os.environ.setdefault("DATABASE_URL", "...localhost:55433/media_manager_test")` before any application module is imported. pydantic-settings gives env vars higher priority than `.env` files, so the test value always wins.
 
 3. The **current unit tests** mock `get_db` entirely — no real database connection is made. The `DATABASE_URL` guard in `conftest.py` is a safety net for future integration tests.
 
@@ -77,7 +81,7 @@ make test
 Integration tests exercise real SQL queries. Start the test database first:
 
 ```bash
-# Start isolated test Postgres (port 5433, in-memory)
+# Start isolated test Postgres (127.0.0.1:55433 or $TEST_DB_PORT, in-memory)
 make test-db-up
 
 # Run the full backend test suite
@@ -136,13 +140,13 @@ QA usually runs on a machine that is not the app host, and the app is only reach
 
 ```bash
 # on the QA machine — no remote shell, local 3010 -> app host's 3010
-ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:3010:127.0.0.1:3010 <user>@192.168.0.227
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:3010:127.0.0.1:3010 <user>@192.168.0.239
 
 # in a second shell, run the suite through the tunnel
 BASE_URL=http://127.0.0.1:3010 E2E_PASSWORD='the-app-passphrase' npm run test:e2e:smoke
 ```
 
-- `192.168.0.227` is the box running `docker-compose.yml` — the same host `docs/api/endpoints.md` scrapes metrics from. Keep both sides of `-L` on `3010` unless `FRONTEND_PORT` is overridden.
+- `192.168.0.239` (beelink) is the box running `docker-compose.yml` — the same host `docs/api/endpoints.md` scrapes metrics from (see `docs/architecture/STORAGE_AND_HOSTS.md`). Keep both sides of `-L` on `3010` unless `FRONTEND_PORT` is overridden.
 - Bind the forward to `127.0.0.1` as shown, so the tunnel does not listen on the QA machine's LAN interface.
 - Keep the tunnel up for the whole run; a dropped tunnel shows up as navigation failures, never as a pass.
 
@@ -187,9 +191,9 @@ make docker-up    # starts postgres + backend containers
 make docker-down  # stops them
 ```
 
-`docker-compose.yml` sets `DATABASE_URL` directly in the `backend` service's `environment` block, pointing to the `postgres` service inside the Docker network. No `.env` file is read or needed in production. The backend never connects to `localhost:5433` (the test port) or any environment file.
+`docker-compose.yml` builds `DATABASE_URL` from the `POSTGRES_*` values in the root `.env` and sets it in the `backend` service's `environment` block, pointing to the `postgres` service inside the Docker network. The backend never connects to the test port.
 
-**Never run `make docker-up` with a `backend/.env` that contains a different `DATABASE_URL`** — Docker's explicit `environment:` key always wins, so the `.env` file has no effect inside the container. The concern is moot, but worth understanding.
+A `DATABASE_URL` in `backend/.env` or the root `.env` has no effect inside the container — Docker's explicit `environment:` key always wins over `env_file`.
 
 ---
 
@@ -202,7 +206,7 @@ import pytest
 
 @pytest.mark.integration
 async def test_list_movies_from_db(app):
-    # This test will connect to localhost:5433/media_manager_test
+    # This test will connect to localhost:55433/media_manager_test
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         resp = await ac.get("/api/catalog/movies")
     assert resp.status_code == 200
@@ -238,7 +242,7 @@ markers =
 
 | Variable | Test value (`conftest.py`) | Dev value (`.env`) | Prod value (`docker-compose.yml`) |
 |---|---|---|---|
-| `DATABASE_URL` | `...localhost:5433/media_manager_test` | `...localhost:5432/media_manager` | `...postgres:5432/media_manager` |
+| `DATABASE_URL` | `...localhost:55433/media_manager_test` | `...localhost:5432/media_manager` | `...postgres:5432/media_manager` |
 | `MEDIA_LIBRARY_SESSION_SECRET_KEY` | `test-only-secret-key` | your chosen secret | set in `.env` or secrets manager |
 
 The hostname `postgres` in the production URL is the Docker Compose service name, not `localhost`. This is the key reason the backend container cannot accidentally reach any database that is not defined in `docker-compose.yml`.
@@ -252,7 +256,7 @@ In a CI pipeline (GitHub Actions, etc.), override `DATABASE_URL` via a workflow 
 ```yaml
 # .github/workflows/test.yml (example)
 env:
-  DATABASE_URL: postgresql+asyncpg://media_user:test_password@localhost:5433/media_manager_test
+  DATABASE_URL: postgresql+asyncpg://media_user:test_password@localhost:55433/media_manager_test
 
 services:
   postgres:
@@ -262,5 +266,5 @@ services:
       POSTGRES_USER: media_user
       POSTGRES_PASSWORD: test_password
     ports:
-      - 5433:5432
+      - 55433:5432
 ```

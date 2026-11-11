@@ -56,19 +56,21 @@ cd ..
 ### 2. Configure environment variables
 
 ```bash
-cp .env.example .env.local          # frontend
-cp backend/.env.example backend/.env  # backend
+cp .env.local.example .env.local      # frontend (npm run dev)
+cp backend/.env.example backend/.env  # backend (uvicorn outside Docker)
+cp .env.example .env                  # docker compose (dev-db / deploy)
 ```
 
-Edit both files and fill in your API keys (OMDB, TMDB) and a strong `SESSION_SECRET_KEY`.
+Fill in your API keys (OMDB, TMDB) and, in `.env`, a `POSTGRES_PASSWORD`.
+`.env`, `.env.local` and `backend/.env` are gitignored; never commit real values.
 
 ### OMDb API key locations
 
 Update your OMDb key in these places depending on which side of the app is using it:
 
-- Backend: [backend/.env](backend/.env) using `MEDIA_LIBRARY_OMDB_API_KEY`
-- Frontend: [.env.local](.env.local) using `NEXT_PUBLIC_OMDB_API_KEY`
-- Example template: [backend/.env.example](backend/.env.example)
+- Backend: `backend/.env` (local) or the root `.env` (Docker) using `MEDIA_LIBRARY_OMDB_API_KEY`
+- Frontend: `.env.local` (local) or the root `.env` (Docker build arg) using `NEXT_PUBLIC_OMDB_API_KEY`
+- Example templates: [backend/.env.example](backend/.env.example), [.env.example](.env.example)
 
 ### OMDb request limits
 
@@ -77,34 +79,36 @@ Update your OMDb key in these places depending on which side of the app is using
 
 If you change either key, restart the affected service so the new environment variable is loaded.
 
-### 2.1 Linux NAS Mount Example (/ark)
+### 2.1 Linux NAS mount (/ark/media)
 
-If you use the TrueNAS SMB layout from this repo's defaults, mount shares under `/ark` and use `/ark/media/jellyfin` as destination:
+The app only tracks media; the files live on the NAS share, mounted at
+`/ark/media` on the Docker host (and at the same path in every container). Use an
+fstab entry with systemd automount so the share comes back on its own after a
+NAS or network blip. Layout and path rules:
+[docs/architecture/STORAGE_AND_HOSTS.md](docs/architecture/STORAGE_AND_HOSTS.md).
 
 ```bash
 sudo apt install -y cifs-utils
-sudo mkdir -p /ark/{media,backups,documents,images,projects,staging,vaults}
+sudo mkdir -p /ark/media
 
-# credentials file
-sudo mkdir -p /etc/samba
-sudo tee /etc/samba/truenas-credentials >/dev/null <<'EOF'
-username=YOUR_TRUENAS_USER
-password=YOUR_TRUENAS_PASSWORD
-domain=WORKGROUP
-EOF
-sudo chmod 600 /etc/samba/truenas-credentials
+# credentials file (root-only)
+sudo tee /etc/samba/nas-media.cred >/dev/null <<'CRED'
+username=YOUR_NAS_USER
+password=YOUR_NAS_PASSWORD
+CRED
+sudo chmod 600 /etc/samba/nas-media.cred
 
-# one-time mount test
-sudo mount -t cifs //192.168.0.175/media /ark/media \
-   -o credentials=/etc/samba/truenas-credentials,uid=$(id -u),gid=$(id -g),vers=3.0
-
-# ensure destination folder exists
-sudo mkdir -p /ark/media/jellyfin
+# /etc/fstab — mounted on first access, retried if the NAS is down at boot
+echo '//<nas-ip>/media /ark/media cifs credentials=/etc/samba/nas-media.cred,uid=1000,gid=1000,vers=3.0,iocharset=utf8,_netdev,nofail,x-systemd.automount,x-systemd.mount-timeout=30 0 0' \
+  | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload && sudo systemctl restart remote-fs.target
+ls /ark/media && findmnt /ark/media      # triggers and shows the mount
 ```
 
-Backend environment values for this layout:
+Container paths for this layout (defaults in `.env.example`):
 
 ```dotenv
+MEDIA_ROOT=/ark/media
 JELLYFIN_DEST_BASE=/ark/media/jellyfin
 MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH=/ark/media
 MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS=["/ark/media/ingest"]
@@ -112,11 +116,12 @@ MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS=["/ark/media/ingest"]
 
 ### 3. Start the development database
 
-The dev database runs on **port 5432** and its data persists across restarts.
+The dev database runs on **127.0.0.1:5432** (`POSTGRES_HOST_PORT`) and its data
+persists across restarts. It needs the root `.env` (`cp .env.example .env`).
 
 ```bash
 make dev-db
-# or: docker compose up postgres -d
+# or: docker compose up postgres -d --wait
 ```
 
 ### 4. Set the app password (first time only)
@@ -160,12 +165,20 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Production (Docker)
 
-The full production stack (backend + database) is defined in `docker-compose.yml` and started with:
+The full production stack (Postgres + backend + frontend) is defined in
+`docker-compose.yml`. Every secret and host-specific value comes from the
+gitignored root `.env` (template: `.env.example`); the backend entrypoint applies
+Alembic migrations before the API starts.
 
 ```bash
+cp .env.example .env && $EDITOR .env
+docker compose config >/dev/null   # fails with a message if a required var is missing
 make docker-up
-# or: docker compose up -d
+# or: docker compose up -d --build
 ```
+
+Which host runs what, and how to move the stack: [docs/architecture/STORAGE_AND_HOSTS.md](docs/architecture/STORAGE_AND_HOSTS.md),
+[docs/guides/MIGRATION_BEELINK_RUNBOOK.md](docs/guides/MIGRATION_BEELINK_RUNBOOK.md).
 
 ```bash
 make docker-down
@@ -183,7 +196,7 @@ This project uses three fully isolated environments. Tests and local development
 ```
 Environment │ Database            │ Port │ Started by
 ────────────┼─────────────────────┼──────┼──────────────────
-test        │ media_manager_test  │ 5433 │ make test-*
+test        │ media_manager_test  │ 55433│ make test-*  (TEST_DB_PORT)
 dev         │ media_manager       │ 5432 │ make dev-db
 production  │ media_manager       │ 5432 │ make docker-up
 ```
@@ -213,14 +226,14 @@ cd backend && source venv/bin/activate && python -m pytest tests/ -v
 
 ### Run backend integration tests (requires test database)
 
-Integration tests exercise real SQL queries against an isolated throwaway database on **port 5433**. The database lives in RAM (`tmpfs`) and is wiped automatically when the container stops.
+Integration tests exercise real SQL queries against an isolated throwaway database on **127.0.0.1:55433** (`TEST_DB_PORT`). The database lives in RAM (`tmpfs`) and is wiped automatically when the container stops.
 
 ```bash
 # Start the test database, run tests, and stop + wipe in one step:
 make test-integration
 
 # Or manually:
-make test-db-up        # start test Postgres on port 5433
+make test-db-up        # start test Postgres on 127.0.0.1:55433
 make test-backend      # run the suite
 make test-db-down      # stop and wipe
 ```
@@ -229,9 +242,9 @@ make test-db-down      # stop and wipe
 
 1. **Docker sets the URL.** `docker-compose.yml` injects `DATABASE_URL=...postgres:5432/media_manager` directly into the backend container. `postgres` is a Docker-internal hostname that is unreachable outside the container network.
 
-2. **`conftest.py` sets the test URL.** Before any application module is imported, `backend/tests/conftest.py` calls `os.environ.setdefault("DATABASE_URL", "...localhost:5433/media_manager_test")`. Because pydantic-settings gives environment variables higher priority than `.env` files, the test database URL always wins when running pytest.
+2. **`conftest.py` sets the test URL.** Before any application module is imported, `backend/tests/conftest.py` calls `os.environ.setdefault("DATABASE_URL", "...localhost:55433/media_manager_test")`. Because pydantic-settings gives environment variables higher priority than `.env` files, the test database URL always wins when running pytest.
 
-3. **Different port, different database name.** The test database uses port `5433` and database name `media_manager_test`. There is no configuration that points the test suite at port `5432` or `media_manager`.
+3. **Different port, different database name.** The test database uses port `55433` (override: `TEST_DB_PORT`) and database name `media_manager_test`. There is no configuration that points the test suite at port `5432` or `media_manager`.
 
 For the full testing workflow, see [docs/guides/TESTING.md](docs/guides/TESTING.md).
 
