@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from config.settings import settings
+from services import storage_paths
 from utils.logging import logger
 
 
@@ -137,12 +138,17 @@ class TapeIngestService:
         return None
 
     def build_home_video_path(self, meta: Dict, dest: str) -> Tuple[str, str]:
+        """Home videos go under the home-videos root, outside the Jellyfin library.
+
+        ``dest`` (the job's destination base) is not used for them; the
+        argument is kept so callers need not change.
+        """
         date_part = meta.get("date", "")
         if meta.get("date_end"):
             date_part = f"{date_part}_to_{meta['date_end']}"
         title_slug = _slugify(meta.get("title", "untitled"))
         folder_name = f"{date_part}_{title_slug}" if date_part else title_slug
-        return os.path.join(dest, "Home Videos", folder_name), f"{folder_name}.mp4"
+        return os.path.join(storage_paths.home_videos_root(), folder_name), f"{folder_name}.mp4"
 
     def build_movie_path(self, meta: Dict, dest: str) -> Tuple[str, str]:
         name = f"{meta['title']} ({meta['year']})"
@@ -166,7 +172,12 @@ class TapeIngestService:
         title = _slugify(meta.get("title", "")) or category.rstrip("s")
         return os.path.join(dest, "Extras", category, target_type, target_folder), f"{title}.mp4"
 
-    def _resolve_destination(self, item: Dict, dest: str) -> Tuple[str, str]:
+    def _resolve_destination(self, item: Dict, dest: str) -> Optional[Tuple[str, str]]:
+        """(folder, file name) for an item; ("", "") for skip; None when unclassified.
+
+        An unclassified file (or one missing its metadata) has no destination and
+        is left where it is; it used to be copied into a _NeedsReview folder.
+        """
         ct = item.get("content_type", "unclassified")
         if ct == "home_video" and item.get("home_video_metadata"):
             return self.build_home_video_path(item["home_video_metadata"], dest)
@@ -180,7 +191,7 @@ class TapeIngestService:
             return self.build_promo_path(item["promo_metadata"], dest, "Commercials")
         if ct == "skip":
             return "", ""
-        return os.path.join(dest, "_NeedsReview"), item["file_name"]
+        return None
 
     def start_process_job(self, request: Dict) -> str:
         task_id = str(uuid4())
@@ -222,9 +233,15 @@ class TapeIngestService:
             status = job["items"][i]
             if item.get("content_type") == "skip":
                 continue
+            resolved = self._resolve_destination(item, dest)
+            if resolved is None:
+                status["status"] = "skipped"
+                status["error"] = "unclassified: left in place"
+                job["skipped"] += 1
+                continue
             status["status"] = "processing"
             try:
-                folder, filename = self._resolve_destination(item, dest)
+                folder, filename = resolved
                 dest_path = os.path.join(folder, filename)
                 status["target_path"] = dest_path
                 os.makedirs(folder, exist_ok=True)

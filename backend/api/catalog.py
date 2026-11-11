@@ -11,7 +11,7 @@ import os
 import re
 import shutil
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete, or_, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -22,8 +22,53 @@ from db.models import Movie, Series, Disc, DiscSet, DiscMediaLink, Tape, TapeMed
 from api.mobile_auth import require_any_auth
 from services.catalog_stats import RECENT_DAYS_DEFAULT, build_catalog_stats
 from config.settings import settings
+from services import storage_paths
+from utils.logging import logger
 
 router = APIRouter(prefix="/api/catalog", tags=["Catalog"])
+
+
+async def _move_folder_to_ingest(folder_path: str, record_id: str, kind: str, req: Request) -> str:
+    """Move an organized library folder into the first ingest root, held for review.
+
+    The folder keeps its name (and with it the ``[imdbid-...]`` tag), so the
+    auto-processor would match it straight back into the library. Every video
+    in it is therefore queued with a hold (``IngressQueueService.
+    hold_files_for_review``): matched, proposal pre-filled, but left at
+    ``needs_review`` until a person assigns or ignores it.
+    """
+    library_root = os.path.realpath(storage_paths.library_root())
+    real_src = os.path.realpath(folder_path)
+    if not real_src.startswith(library_root + os.sep):
+        raise HTTPException(status_code=403, detail="Folder is outside the media destination.")
+    ingest_root = storage_paths.primary_ingest_root()
+    if not ingest_root:
+        raise HTTPException(status_code=409, detail="No ingest folder is configured to move the files to.")
+
+    os.makedirs(ingest_root, exist_ok=True)
+    dest = os.path.join(ingest_root, os.path.basename(real_src))
+    if os.path.exists(dest):
+        dest = dest + f"__{record_id[:8]}"
+    shutil.move(real_src, dest)
+
+    queue_service = getattr(req.app.state, "ingress_queue_service", None)
+    if queue_service is None:
+        logger.warning("No ingress queue to hold removed files for review", folder=dest)
+        return dest
+    file_paths = [
+        os.path.join(root, name)
+        for root, _dirs, names in os.walk(dest)
+        for name in sorted(names)
+    ]
+    try:
+        await queue_service.hold_files_for_review(
+            file_paths,
+            reason=f"removed from library ({kind} {record_id})",
+            ingress_path=ingest_root,
+        )
+    except Exception:
+        logger.error("Could not queue removed files for review", folder=dest, exc_info=True)
+    return dest
 
 
 # ---------------------------------------------------------------------------
@@ -332,8 +377,8 @@ async def patch_movie_folder_path(movie_id: str, body: dict[str, Any], db: Async
 
 
 @router.post("/movies/{movie_id}/remove-to-review", dependencies=[Depends(require_any_auth)])
-async def remove_movie_to_review(movie_id: str, db: AsyncSession = Depends(get_db)) -> dict:
-    """Move the movie's folder to _NeedsReview, then delete the catalog record."""
+async def remove_movie_to_review(movie_id: str, req: Request, db: AsyncSession = Depends(get_db)) -> dict:
+    """Move the movie's folder into the ingest root (held for review), then delete the catalog record."""
     result = await db.execute(select(Movie).where(Movie.id == movie_id))
     row = result.scalar_one_or_none()
     if not row:
@@ -344,17 +389,7 @@ async def remove_movie_to_review(movie_id: str, db: AsyncSession = Depends(get_d
 
     move_result = None
     if folder_path and os.path.isdir(folder_path):
-        dest_base = os.path.realpath(settings.jellyfin_dest_base)
-        real_src = os.path.realpath(folder_path)
-        if not real_src.startswith(dest_base + os.sep):
-            raise HTTPException(status_code=403, detail="Folder is outside the media destination.")
-        review_dir = os.path.join(dest_base, settings.folder_needs_review)
-        os.makedirs(review_dir, exist_ok=True)
-        dest = os.path.join(review_dir, os.path.basename(real_src))
-        if os.path.exists(dest):
-            dest = dest + f"__{movie_id[:8]}"
-        shutil.move(real_src, dest)
-        move_result = dest
+        move_result = await _move_folder_to_ingest(folder_path, movie_id, "movie", req)
 
     await db.execute(delete(Movie).where(Movie.id == movie_id))
     await db.commit()
@@ -497,8 +532,8 @@ async def patch_series_folder_path(series_id: str, body: dict[str, Any], db: Asy
 
 
 @router.post("/series/{series_id}/remove-to-review", dependencies=[Depends(require_any_auth)])
-async def remove_series_to_review(series_id: str, db: AsyncSession = Depends(get_db)) -> dict:
-    """Move the series' folder to _NeedsReview, then delete the catalog record."""
+async def remove_series_to_review(series_id: str, req: Request, db: AsyncSession = Depends(get_db)) -> dict:
+    """Move the series' folder into the ingest root (held for review), then delete the catalog record."""
     result = await db.execute(select(Series).where(Series.id == series_id))
     row = result.scalar_one_or_none()
     if not row:
@@ -509,17 +544,7 @@ async def remove_series_to_review(series_id: str, db: AsyncSession = Depends(get
 
     move_result = None
     if folder_path and os.path.isdir(folder_path):
-        dest_base = os.path.realpath(settings.jellyfin_dest_base)
-        real_src = os.path.realpath(folder_path)
-        if not real_src.startswith(dest_base + os.sep):
-            raise HTTPException(status_code=403, detail="Folder is outside the media destination.")
-        review_dir = os.path.join(dest_base, settings.folder_needs_review)
-        os.makedirs(review_dir, exist_ok=True)
-        dest = os.path.join(review_dir, os.path.basename(real_src))
-        if os.path.exists(dest):
-            dest = dest + f"__{series_id[:8]}"
-        shutil.move(real_src, dest)
-        move_result = dest
+        move_result = await _move_folder_to_ingest(folder_path, series_id, "series", req)
 
     await db.execute(delete(Series).where(Series.id == series_id))
     await db.commit()

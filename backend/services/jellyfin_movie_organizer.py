@@ -17,13 +17,11 @@ def _load_settings_values() -> Dict[str, object]:
         from config.settings import settings  # pylint: disable=import-outside-toplevel
 
         return {
-            "jellyfin_dest_base": settings.jellyfin_dest_base,
             "folder_movies": settings.folder_movies,
             "movie_version_duration_threshold": float(settings.movie_version_duration_threshold),
         }
     except Exception:
         return {
-            "jellyfin_dest_base": "/ark/media/jellyfin",
             "folder_movies": "Movies",
             "movie_version_duration_threshold": 0.85,
         }
@@ -65,9 +63,15 @@ class JellyfinMovieOrganizer:
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
         settings_values = _load_settings_values()
-        self.jellyfin_dest_base = str(settings_values["jellyfin_dest_base"])
         self.folder_movies = str(settings_values["folder_movies"])
         self.movie_version_duration_threshold = float(settings_values["movie_version_duration_threshold"])
+
+    @property
+    def jellyfin_dest_base(self) -> str:
+        """Library root, resolved on every use (see services.storage_paths)."""
+        from services.storage_paths import library_root  # pylint: disable=import-outside-toplevel
+
+        return library_root()
 
     def list_supported_categories(self) -> List[str]:
         return [

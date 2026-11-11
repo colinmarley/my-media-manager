@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from config.settings import settings
+from services import storage_paths
 from services.jellyfin_movie_organizer import JellyfinMovieOrganizer
 from services.jellyfin_show_organizer import JellyfinShowOrganizer
 from services.path_builder import PathBuilder
@@ -160,7 +161,7 @@ async def browse_directory(request: BrowseRequest):
 @router.get("/dest-folder")
 async def get_dest_folder_info():
     """Return the configured media destination base path and category folder names."""
-    dest = settings.jellyfin_dest_base
+    dest = storage_paths.library_root()
     exists = os.path.exists(dest)
     return {
         "success": True,
@@ -188,7 +189,7 @@ async def browse_dest_folder(request: DestBrowseRequest):
 
     The requested path must be inside the configured jellyfin_dest_base.
     """
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     try:
         requested = os.path.realpath(request.path)
     except Exception:
@@ -237,7 +238,7 @@ async def browse_dest_folder(request: DestBrowseRequest):
 @router.get("/dest-folder/stream")
 async def stream_dest_file(path: str, range_header: Optional[str] = Header(default=None, alias="Range")):
     """Stream a file under jellyfin_dest_base with HTTP range support for video seeking."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     try:
         requested = os.path.realpath(path)
     except Exception:
@@ -337,7 +338,7 @@ async def read_nfo_from_folder(request: NfoRequest):
     The folder must be inside the configured jellyfin_dest_base.
     Returns the NFO contents as a JSON object, or null if no .nfo is found.
     """
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     try:
         requested = os.path.realpath(request.folderPath)
     except Exception:
@@ -717,7 +718,7 @@ async def reassign_folder(request: ReassignFolderRequest):
     - movie.nfo is overwritten with the new metadata
     - The folder is moved into the correct category subfolder if its current parent differs
     """
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     current_path = _check_in_dest(request.currentFolderPath, dest_base)
 
     if not os.path.isdir(current_path):
@@ -832,7 +833,7 @@ async def reassign_file(request: ReassignFileRequest):
     - Moves the file into it, renaming it to match the folder
     - Writes a movie.nfo if one doesn't already exist
     """
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     file_path = _check_in_dest(request.filePath, dest_base)
 
     if not os.path.isfile(file_path):
@@ -938,7 +939,7 @@ async def reassign_file(request: ReassignFileRequest):
 @router.post("/dest-folder/assign-episode")
 async def assign_episode_file(request: AssignEpisodeFileRequest):
     """Move a file into the correct series season folder and optionally rename it to an episode."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     file_path = _check_in_dest(request.filePath, dest_base)
     series_root = _check_in_dest(request.seriesFolderPath, dest_base)
 
@@ -1018,7 +1019,7 @@ async def assign_episode_file(request: AssignEpisodeFileRequest):
 @router.post("/dest-folder/organize-shows/preview-folder")
 async def preview_show_folder_organization(request: ShowOrganizationPreviewFolderRequest):
     """Preview proposed organization changes for a specific processed show folder."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     folder_path = _check_in_dest(request.folderPath, dest_base)
 
     if not os.path.isdir(folder_path):
@@ -1039,7 +1040,7 @@ async def preview_show_folder_organization(request: ShowOrganizationPreviewFolde
 @router.post("/dest-folder/organize-shows/preview-all")
 async def preview_all_show_organization(request: ShowOrganizationPreviewAllRequest):
     """Preview proposed organization changes for all processed show folders."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     shows_root = request.showsRoot
     if shows_root:
         shows_root = _check_in_dest(shows_root, dest_base)
@@ -1056,7 +1057,7 @@ async def preview_all_show_organization(request: ShowOrganizationPreviewAllReque
 @router.post("/dest-folder/organize-shows/apply-folder")
 async def apply_show_folder_organization(request: ShowOrganizationApplyFolderRequest):
     """Apply organization changes to a specific show folder, honoring optional overrides."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     folder_path = _check_in_dest(request.folderPath, dest_base)
 
     if not os.path.isdir(folder_path):
@@ -1077,7 +1078,7 @@ async def apply_show_folder_organization(request: ShowOrganizationApplyFolderReq
 @router.post("/dest-folder/organize-shows/apply-all")
 async def apply_all_show_organization(request: ShowOrganizationApplyAllRequest):
     """Apply organization changes to all show folders under the Shows root."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     shows_root = request.showsRoot
     if shows_root:
         shows_root = _check_in_dest(shows_root, dest_base)
@@ -1097,7 +1098,7 @@ async def apply_all_show_organization(request: ShowOrganizationApplyAllRequest):
 @router.post("/dest-folder/organize-movies/preview-folder")
 async def preview_movie_folder_organization(request: MovieOrganizationPreviewFolderRequest):
     """Preview proposed organization changes for a specific processed movie folder."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     folder_path = _check_in_dest(request.folderPath, dest_base)
 
     if not os.path.isdir(folder_path):
@@ -1118,7 +1119,7 @@ async def preview_movie_folder_organization(request: MovieOrganizationPreviewFol
 @router.post("/dest-folder/organize-movies/preview-all")
 async def preview_all_movie_organization(request: MovieOrganizationPreviewAllRequest):
     """Preview proposed organization changes for all processed movie folders."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     movies_root = request.moviesRoot
     if movies_root:
         movies_root = _check_in_dest(movies_root, dest_base)
@@ -1135,7 +1136,7 @@ async def preview_all_movie_organization(request: MovieOrganizationPreviewAllReq
 @router.post("/dest-folder/organize-movies/apply-folder")
 async def apply_movie_folder_organization(request: MovieOrganizationApplyFolderRequest):
     """Apply organization changes to a specific movie folder, honoring optional overrides."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     folder_path = _check_in_dest(request.folderPath, dest_base)
 
     if not os.path.isdir(folder_path):
@@ -1156,7 +1157,7 @@ async def apply_movie_folder_organization(request: MovieOrganizationApplyFolderR
 @router.post("/dest-folder/organize-movies/apply-all")
 async def apply_all_movie_organization(request: MovieOrganizationApplyAllRequest):
     """Apply organization changes to all movie folders under the Movies root."""
-    dest_base = os.path.realpath(settings.jellyfin_dest_base)
+    dest_base = os.path.realpath(storage_paths.library_root())
     movies_root = request.moviesRoot
     if movies_root:
         movies_root = _check_in_dest(movies_root, dest_base)

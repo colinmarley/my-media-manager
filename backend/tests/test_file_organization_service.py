@@ -37,3 +37,22 @@ def test_unresolvable_media_type_leaves_the_file_in_place(tmp_path):
     assert source_file.exists()
     assert not library_root.exists()
     assert filesystem_manager.mock_calls == []
+
+
+def test_library_root_is_resolved_at_call_time_unless_pinned(monkeypatch):
+    from config.settings import settings
+    from services import storage_paths
+
+    monkeypatch.setattr(settings, 'jellyfin_dest_base', '/env/library')
+    storage_paths.clear_overrides()
+    service = FileOrganizationService()
+    assert service.jellyfin_dest_base == '/env/library'
+
+    storage_paths.set_overrides({'jellyfinDestBase': '/saved/library'})
+    try:
+        assert service.jellyfin_dest_base == '/saved/library'
+        assert FileOrganizationService(jellyfin_dest_base='/pinned/').jellyfin_dest_base == '/pinned'
+        service.jellyfin_dest_base = None
+        assert service.jellyfin_dest_base == '/saved/library'
+    finally:
+        storage_paths.clear_overrides()

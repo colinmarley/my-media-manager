@@ -15,12 +15,10 @@ def _load_settings_values() -> Dict[str, object]:
         from config.settings import settings  # pylint: disable=import-outside-toplevel
 
         return {
-            "jellyfin_dest_base": settings.jellyfin_dest_base,
             "folder_tv_shows": settings.folder_tv_shows,
         }
     except Exception:
         return {
-            "jellyfin_dest_base": "/ark/media/jellyfin",
             "folder_tv_shows": "TV Shows",
         }
 
@@ -59,8 +57,14 @@ class JellyfinShowOrganizer:
     def __init__(self, dry_run: bool = True):
         self.dry_run = dry_run
         settings_values = _load_settings_values()
-        self.jellyfin_dest_base = str(settings_values["jellyfin_dest_base"])
         self.folder_tv_shows = str(settings_values["folder_tv_shows"])
+
+    @property
+    def jellyfin_dest_base(self) -> str:
+        """Library root, resolved on every use (see services.storage_paths)."""
+        from services.storage_paths import library_root  # pylint: disable=import-outside-toplevel
+
+        return library_root()
 
     def list_supported_categories(self) -> List[str]:
         return [

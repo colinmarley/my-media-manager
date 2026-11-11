@@ -14,7 +14,6 @@ import uuid
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 from xml.sax.saxutils import escape
-from config.settings import settings
 from services.ingest_operations import (
     OP_MKDIR,
     OP_MOVE,
@@ -22,6 +21,7 @@ from services.ingest_operations import (
     OperationLog,
     OperationRecorder,
 )
+from services import storage_paths
 from services.path_builder import PathBuilder
 from utils.logging import logger
 
@@ -31,7 +31,6 @@ class FileOrganizationService:
 
     # Base path constants
     ENCODED_SOURCE_PATH = "/data/media/encoded"
-    DEFAULT_JELLYFIN_DEST_BASE = "/ark/media/jellyfin"
     VIDEO_EXTENSIONS = {
         ".mkv", ".mp4", ".avi", ".mov", ".wmv", ".m4v", ".flv",
         ".webm", ".m2ts", ".mts", ".ts", ".mpg", ".mpeg", ".iso", ".strm",
@@ -51,11 +50,19 @@ class FileOrganizationService:
         self.operation_log = operation_log or (
             OperationLog(db_session_factory) if db_session_factory else None
         )
-        self.jellyfin_dest_base = (
-            jellyfin_dest_base
-            or settings.jellyfin_dest_base
-            or self.DEFAULT_JELLYFIN_DEST_BASE
-        ).rstrip("/")
+        # An explicit root pins this instance (tests, scripts); otherwise the
+        # library root is resolved on every use, so a config change applies.
+        self._jellyfin_dest_base: Optional[str] = (
+            jellyfin_dest_base.rstrip("/") if jellyfin_dest_base else None
+        )
+
+    @property
+    def jellyfin_dest_base(self) -> str:
+        return self._jellyfin_dest_base or storage_paths.library_root()
+
+    @jellyfin_dest_base.setter
+    def jellyfin_dest_base(self, value: Optional[str]) -> None:
+        self._jellyfin_dest_base = value.rstrip("/") if value else None
 
     async def organize_assignment(
         self,

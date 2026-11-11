@@ -67,6 +67,8 @@ from services.library_scanner import LibraryScanner
 from services.library_compliance_service import LibraryComplianceService
 from services.task_manager import AsyncTaskManager
 from services.retention_service import run_retention_loop
+from services import storage_paths
+from api.ingress_operations import apply_runtime_config, normalize_config_overrides
 from utils.logging import logger
 
 # Global service instances - initialized during application startup
@@ -102,7 +104,7 @@ async def run_ingress_auto_processor(app: FastAPI):
                     and getattr(app.state, "_watcher_should_run", False)
                     and not watcher_service.is_running
                 ):
-                    paths = getattr(app.state, "_watcher_paths", settings.ingress_default_paths)
+                    paths = getattr(app.state, "_watcher_paths", None) or storage_paths.ingest_roots()
                     try:
                         watcher_service.start_watching(paths)
                         logger.warning("Ingress watcher restarted after unexpected stop", paths=paths)
@@ -136,6 +138,25 @@ async def run_ingress_auto_processor(app: FastAPI):
         except Exception as exc:
             logger.error("Ingress auto processor loop failed", error=str(exc))
             await asyncio.sleep(interval_seconds)
+
+def bootstrap_library_folders(library_root: str) -> list:
+    """Create the four category folders under the library root; returns their paths.
+
+    Only Movies, TV Shows, Documentaries and Live Performances (by their
+    configured names). Holding folders (_NeedsReview), "Series", "Home Videos"
+    and "ingest" are not created inside the library any more.
+    """
+    created = []
+    for folder in storage_paths.category_folders():
+        folder_path = os.path.join(library_root, folder)
+        try:
+            os.makedirs(folder_path, exist_ok=True)
+            created.append(folder_path)
+            logger.debug("Ensured media folder exists", path=folder_path)
+        except OSError as exc:
+            logger.warning("Could not create media folder", path=folder_path, error=str(exc))
+    return created
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -204,14 +225,27 @@ async def lifespan(app: FastAPI):
             else:
                 logger.debug("App password already set; skipping auto-seed")
 
+    # Runtime ingress config saved by PUT /api/ingress/config (library and
+    # ingest roots among it). Loaded before anything resolves a path, so the
+    # saved roots apply from the first request; unsaved keys follow settings.
+    persisted_ingress_config: dict = {}
+    try:
+        async with AsyncSessionLocal() as config_db:
+            persisted_ingress_config = normalize_config_overrides(
+                await storage_paths.load_persisted_config(config_db)
+            )
+    except Exception as exc:
+        logger.warning("Could not load the persisted ingress config; using settings", error=str(exc))
+    storage_paths.set_overrides(persisted_ingress_config)
+
     auto_matcher_service = AutoMatcherService(
         omdb_api_key=settings.omdb_api_key,
         tmdb_api_key=settings.tmdb_api_key,
         metadata_source="library_then_omdb",
     )
+    # No pinned root: the organizer asks storage_paths on every use.
     file_organization_service = FileOrganizationService(
         filesystem_manager=file_manager,
-        jellyfin_dest_base=settings.jellyfin_dest_base,
         db_session_factory=AsyncSessionLocal,
     )
     assignment_orchestrator = AssignmentOrchestrator(
@@ -250,14 +284,14 @@ async def lifespan(app: FastAPI):
     app.state.ingress_proposal_refresh_task = ingress_proposal_refresh_task
 
     ingress_runtime_config: dict = {
-        "defaultIngressPaths": settings.ingress_default_paths,
+        "defaultIngressPaths": storage_paths.ingest_roots(),
         "autoProcessEnabled": settings.ingress_auto_process_enabled,
         "autoProcessIntervalSeconds": settings.ingress_auto_process_interval_seconds,
         "autoAssignThreshold": settings.ingress_auto_assign_threshold,
         "autoOrganizeEnabled": settings.ingress_auto_organize_enabled,
         "fileStabilityWaitSeconds": settings.ingress_file_stability_wait_seconds,
         "debounceSeconds": settings.ingress_debounce_seconds,
-        "jellyfinDestBase": settings.jellyfin_dest_base,
+        "jellyfinDestBase": storage_paths.library_root(),
         "defaultMetadataSource": "library_then_omdb",
     }
 
@@ -268,29 +302,11 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("Ingress path does not exist - watcher will fail to start", path=ingress_path)
 
-    dest_base = settings.jellyfin_dest_base
+    dest_base = storage_paths.library_root()
     if os.path.exists(dest_base):
         logger.info("Destination mount accessible", path=dest_base)
-
-        # Bootstrap typed destination folders so Jellyfin and the watcher
-        # never encounter a missing directory on first run.
-        bootstrap_folders = [
-            settings.folder_movies,
-            settings.folder_tv_shows,
-            "Series",
-            "Home Videos",
-            settings.folder_documentaries,
-            settings.folder_live_performances,
-            settings.folder_needs_review,
-            "ingest",
-        ]
-        for folder in bootstrap_folders:
-            folder_path = os.path.join(dest_base, folder)
-            try:
-                os.makedirs(folder_path, exist_ok=True)
-                logger.debug("Ensured media folder exists", path=folder_path)
-            except OSError as exc:
-                logger.warning("Could not create media folder", path=folder_path, error=str(exc))
+        # Only the four category folders; no holding or ingest folders inside the library.
+        bootstrap_library_folders(dest_base)
     else:
         logger.warning("Destination mount not found - file organization will fail", path=dest_base)
 
@@ -301,33 +317,34 @@ async def lifespan(app: FastAPI):
 
     # Ensure ingress paths exist before the watcher tries to start them.
     # Runs independently of dest_base existence to handle first-run and mount timing.
-    for ingress_path in settings.ingress_default_paths:
+    ingest_roots = storage_paths.ingest_roots()
+    for ingress_path in ingest_roots:
         try:
             os.makedirs(ingress_path, exist_ok=True)
             logger.debug("Ensured ingress path exists", path=ingress_path)
         except OSError as exc:
             logger.warning("Could not create ingress path", path=ingress_path, error=str(exc))
 
-    if settings.ingress_auto_start_watcher and settings.ingress_default_paths:
+    if settings.ingress_auto_start_watcher and ingest_roots:
         try:
-            file_watcher_service.start_watching(settings.ingress_default_paths)
+            file_watcher_service.start_watching(ingest_roots)
             logger.info(
                 "Ingress watcher auto-started",
-                paths=settings.ingress_default_paths,
+                paths=ingest_roots,
             )
             app.state._watcher_should_run = True
-            app.state._watcher_paths = settings.ingress_default_paths
+            app.state._watcher_paths = ingest_roots
         except Exception as exc:
             logger.warning(
                 "Ingress watcher auto-start failed",
-                paths=settings.ingress_default_paths,
+                paths=ingest_roots,
                 error=str(exc),
             )
             app.state._watcher_should_run = False
-            app.state._watcher_paths = settings.ingress_default_paths
+            app.state._watcher_paths = ingest_roots
     else:
         app.state._watcher_should_run = False
-        app.state._watcher_paths = settings.ingress_default_paths
+        app.state._watcher_paths = ingest_roots
 
     # Store services in app state for dependency injection in routes
     app.state.file_manager = file_manager
@@ -341,6 +358,8 @@ async def lifespan(app: FastAPI):
     app.state.file_organization_service = file_organization_service
     app.state.assignment_orchestrator = assignment_orchestrator
     app.state.ingress_runtime_config = ingress_runtime_config
+    # Saved threshold / metadata source / paths onto the live services.
+    apply_runtime_config(app.state, persisted_ingress_config)
 
     if settings.ingress_auto_process_enabled:
         ingress_auto_processor_task = asyncio.create_task(
