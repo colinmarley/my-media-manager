@@ -439,7 +439,7 @@ All endpoints return standardized responses:
 ### Running the Server
 ```bash
 cd backend
-python start.py
+uvicorn main:app --reload --host 0.0.0.0 --port 8082
 ```
 
 ### Testing

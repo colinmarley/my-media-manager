@@ -20,7 +20,7 @@ _build_dest_name()          ──────►    ingest watcher detects file
 (job_manager.py)                       (FileWatcherService)
         │                                       │
         │ writes to shared                      ▼
-        │ /ark/media/jellyfin/ingest    IngressQueueService
+        │ /ark/media/ingest             IngressQueueService
         │ bind mount                    parses filename, matches
         │                               TMDB/OMDB, scores confidence
         ▼                                       │

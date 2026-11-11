@@ -35,7 +35,8 @@ export default function MonitorStep({ jobs, serviceError, onRefresh, onViewResul
 
   const streamLog = useCallback((jobId: string) => {
     if (liveLog[jobId]) return;
-    const url = `${process.env.NEXT_PUBLIC_DISC_RIPPER_URL ?? 'http://localhost:8083'}/jobs/${jobId}/log`;
+    // SSE log stream, relayed unbuffered by the /api/disc-ripper proxy.
+    const url = DiscRipperService.logStreamUrl(jobId);
     const es = new EventSource(url);
     const lines: string[] = [];
     es.onmessage = (e) => {

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 JELLYFIN_BASE="${JELLYFIN_BASE:-/ark/media/jellyfin}"
-INGEST_DIR="${INGEST_DIR:-$JELLYFIN_BASE/ingest}"
+INGEST_DIR="${INGEST_DIR:-/ark/media/ingest}"
 CONFIRM="${1:-}"
 
 SOURCE_DIRS=(

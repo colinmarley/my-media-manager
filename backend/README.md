@@ -23,9 +23,7 @@ pip install -r requirements-dev.txt
 # Copy and fill in environment variables
 cp .env.example .env
 
-python start.py               # listens on :8082
-# or with auto-reload:
-uvicorn main:app --reload --host 0.0.0.0 --port 8082
+uvicorn main:app --reload --host 0.0.0.0 --port 8082   # listens on :8082
 ```
 
 Interactive API docs: <http://localhost:8082/docs>
@@ -39,7 +37,6 @@ app → rip here → track what's ripped → locate a disc physically), see
 ```
 backend/
 ├── main.py                     # App factory, lifespan, router registration
-├── start.py                    # Convenience entry-point (uvicorn wrapper)
 ├── api/
 │   ├── auth.py                 # Login, logout, session dependency
 │   ├── catalog.py              # CRUD + reassignment for movies/series/discs
@@ -175,23 +172,29 @@ tmdb_data        JSONB       -- Full TMDB detail response
 
 ### Database migrations
 
-Migrations are plain SQL files placed in `db/init/`. They use `IF NOT EXISTS` / `IF EXISTS` guards so they are safe to re-run. Docker applies them automatically on first container start (alphabetical order).
-
-To apply a migration to an already-running instance:
+Schema changes are Alembic revisions in `alembic/versions/`. The Docker image's
+entrypoint (`docker-entrypoint.sh`) runs `alembic upgrade head` before uvicorn
+starts and exits if it fails; `MIGRATE_ON_START=false` skips it. Outside Docker:
 
 ```bash
-docker compose exec -T postgres psql -U media_user -d media_manager \
-  -f /dev/stdin < backend/db/init/002_add_rating_columns.sql
+export DATABASE_URL=postgresql+asyncpg://<user>:<password>@127.0.0.1:5432/media_manager
+alembic upgrade head
 ```
+
+The baseline revision alters an existing schema, so a brand-new database must
+be restored from a dump (see `docs/guides/MIGRATION_BEELINK_RUNBOOK.md`), not
+built from Alembic alone.
 
 ## Environment Variables
 
-See `.env.example` for the full list. Key variables:
+See `.env.example` (and the root `.env.example` for the Docker deploy) for the full list. Key variables:
 
 | Variable | Description |
 |---|---|
 | `DATABASE_URL` | `postgresql+asyncpg://user:pass@host:5432/db` |
-| `SESSION_SECRET_KEY` | Strong random string for cookie signing |
+| `SESSION_SECRET_KEY` | Read by settings but unused today (sessions are DB-stored tokens) |
+| `MEDIA_LIBRARY_DISC_RIPPER_URL` | disc-ripper-service base URL (compose: `DISC_RIPPER_URL`) |
+| `MEDIA_LIBRARY_LOCALAI_URL` | LocalAI base URL (compose: `LOCALAI_URL`) |
 | `MEDIA_LIBRARY_OMDB_API_KEY` | From https://www.omdbapi.com |
 | `MEDIA_LIBRARY_TMDB_API_KEY` | From https://www.themoviedb.org |
 | `JELLYFIN_DEST_BASE` | Destination root for organized media (e.g. `/ark/media/jellyfin`) |
@@ -210,11 +213,11 @@ cd backend
 source venv/bin/activate
 python -m pytest tests/ -v
 
-# Integration tests (requires test DB on port 5433)
+# Integration tests (requires the test DB on 127.0.0.1:${TEST_DB_PORT:-55433})
 # See the root README Testing section
 ```
 
-Tests use the database URL `postgresql+asyncpg://media_user:changeme@localhost:5433/media_manager_test` set by `conftest.py` before any application modules are imported, so the production database is never touched.
+Tests use the database URL `postgresql+asyncpg://media_user:test_password@localhost:${TEST_DB_PORT:-55433}/media_manager_test` set by `conftest.py` before any application modules are imported, so the production database is never touched.
 
 ## Movie Folder Reorganization Utility
 

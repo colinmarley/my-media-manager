@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
+# Pre-flight check for the host running docker-compose.yml.
+# Layout reference: docs/architecture/STORAGE_AND_HOSTS.md
 
 set -euo pipefail
 
-PROJECT_ROOT="/data/code/my-media-manager"
-MEDIA_ROOT="/ark/media"
-JELLYFIN_ROOT="/ark/media/jellyfin"
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+MEDIA_ROOT="${MEDIA_ROOT:-/ark/media}"
+JELLYFIN_ROOT="$MEDIA_ROOT/jellyfin"
+INGEST_ROOT="$MEDIA_ROOT/ingest"
 EXPECTED_DIRS=(
   "Movies"
   "TV Shows"
-  "Series"
-  "Home Videos"
   "Documentaries"
   "Live Performances"
-  "ingest"
-  "_NeedsReview"
 )
 
 fail() {
@@ -41,7 +40,7 @@ docker_state="$(systemctl is-active docker 2>/dev/null || true)"
 pass "docker service is active"
 
 mountpoint -q "$MEDIA_ROOT" || fail "$MEDIA_ROOT is not a mounted filesystem"
-mount | rg -q "//192\.168\.0\.175/media on ${MEDIA_ROOT} type cifs" || fail "$MEDIA_ROOT is not mounted from the expected TrueNAS CIFS share"
+mount | rg -q "/media on ${MEDIA_ROOT} type cifs" || fail "$MEDIA_ROOT is not a CIFS mount of the NAS media share"
 pass "TrueNAS media share is mounted on $MEDIA_ROOT"
 
 [[ -d "$JELLYFIN_ROOT" ]] || fail "$JELLYFIN_ROOT does not exist"
@@ -57,9 +56,10 @@ pass "required jellyfin directories exist and are writable"
 owner_group="$(stat -c '%U:%G %a' "$JELLYFIN_ROOT")"
 info "effective ownership/mode for jellyfin root: $owner_group"
 
-probe_file="$JELLYFIN_ROOT/ingest/.startup-health-check.tmp"
+[[ -d "$INGEST_ROOT" && -w "$INGEST_ROOT" ]] || fail "ingest root missing or not writable: $INGEST_ROOT"
+probe_file="$INGEST_ROOT/.startup-health-check.tmp"
 rm -f "$probe_file"
-touch "$probe_file" || fail "could not write test file under $JELLYFIN_ROOT/ingest"
+touch "$probe_file" || fail "could not write test file under $INGEST_ROOT"
 rm -f "$probe_file"
 pass "write test succeeded in ingest folder"
 
@@ -69,8 +69,7 @@ if [[ -f "$PROJECT_ROOT/docker-compose.yml" ]]; then
       docker compose -f "$PROJECT_ROOT/docker-compose.yml" exec -T backend sh -lc '
         set -e
         test -d "/ark/media/jellyfin"
-        test -d "/ark/media/jellyfin/ingest"
-        test -d "/ark/media/jellyfin/_NeedsReview"
+        test -d "/ark/media/ingest"
         ls -1 "/ark/media/jellyfin" >/dev/null
       ' || fail "backend container cannot see required NAS folders"
       pass "backend container can access jellyfin folders"
@@ -80,9 +79,9 @@ if [[ -f "$PROJECT_ROOT/docker-compose.yml" ]]; then
   fi
 fi
 
-fstab_matches="$(rg -n '^//192\.168\.0\.175/(media|backups|documents|images|projects|staging|vaults)\s+/ark/' /etc/fstab | wc -l | tr -d ' ')"
-[[ "$fstab_matches" -ge 1 ]] || fail "no TrueNAS /ark share entries found in /etc/fstab"
-pass "persistent TrueNAS fstab entries detected"
+fstab_matches="$(rg -n "^//[^[:space:]]+/media[[:space:]]+${MEDIA_ROOT}[[:space:]]" /etc/fstab | wc -l | tr -d ' ')"
+[[ "$fstab_matches" -ge 1 ]] || fail "no /etc/fstab entry mounts the NAS media share on $MEDIA_ROOT"
+pass "persistent fstab entry for $MEDIA_ROOT detected"
 
 echo
 echo "Startup health check completed successfully."

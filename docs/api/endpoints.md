@@ -24,7 +24,7 @@ Returns service health status and availability of all components.
 GET /metrics
 ```
 Unauthenticated Prometheus text exposition (`text/plain; version=0.0.4`), scraped
-from `192.168.0.227:8082` as job `media-manager`.
+from `192.168.0.239:8082` (beelink) as job `media-manager`.
 
 | Metric | Type | Labels |
 | --- | --- | --- |
@@ -43,7 +43,7 @@ Add the scrape job to `homelab-logging/prometheus/prometheus.yml`:
 ```yaml
 - job_name: media-manager
   static_configs:
-    - targets: ['192.168.0.227:8082']
+    - targets: ['192.168.0.239:8082']
 ```
 
 ---
@@ -786,7 +786,7 @@ curl http://localhost:8082/api/library/scan/status/abc-123-def-456
 ### Running the Server
 ```bash
 cd backend
-python start.py
+uvicorn main:app --reload --host 0.0.0.0 --port 8082
 ```
 
 ### Interactive API Documentation

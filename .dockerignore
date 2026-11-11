@@ -1,0 +1,15 @@
+# Frontend image build context. Keep env files (and their secrets) out of the
+# image: runtime config comes from docker-compose.yml, build-time NEXT_PUBLIC_*
+# values from build args.
+.env
+.env.*
+**/.env
+.git
+node_modules
+.next
+backend
+coverage
+test-results
+playwright-report
+blob-report
+*.stackdump

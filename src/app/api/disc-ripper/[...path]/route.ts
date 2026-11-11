@@ -3,7 +3,28 @@ import { spawn } from 'child_process';
 import { Readable } from 'stream';
 import type { ChildProcess } from 'child_process';
 
-const DISC_RIPPER_URL = process.env.NEXT_PUBLIC_DISC_RIPPER_URL ?? 'http://localhost:8083';
+// Server-side only: the browser never talks to disc-ripper-service directly, it
+// goes through this proxy (behind the session check in middleware.ts). Read per
+// request so the URL is runtime config (DISC_RIPPER_URL), not baked in at build.
+// NEXT_PUBLIC_DISC_RIPPER_URL is the legacy name, kept as a fallback.
+function discRipperBaseUrl(): string {
+  return (
+    process.env.DISC_RIPPER_URL
+    || process.env.NEXT_PUBLIC_DISC_RIPPER_URL
+    || 'http://localhost:8083'
+  ).replace(/\/$/, '');
+}
+
+export const dynamic = 'force-dynamic';
+
+// Response headers that must not be copied from the upstream fetch: hop-by-hop
+// headers, and content-encoding/length because fetch() has already decoded the
+// body (forwarding them would make the browser try to decode it again).
+const DROP_RESPONSE_HEADERS = new Set([
+  'connection', 'keep-alive', 'transfer-encoding', 'upgrade',
+  'proxy-authenticate', 'proxy-authorization', 'te', 'trailer',
+  'content-encoding', 'content-length',
+]);
 
 // Matches /jobs/<id>/files/<n>/stream
 const STREAM_PATH_RE = /^\/jobs\/[^/]+\/files\/\d+\/stream$/;
@@ -147,20 +168,28 @@ async function getFileMetadata(streamUrl: string): Promise<NextResponse> {
   }
 }
 
-// Plain proxy for all other disc ripper API calls (JSON endpoints).
+// Plain proxy for all other disc ripper API calls: JSON endpoints and the
+// job log, which is Server-Sent Events (GET /jobs/<id>/log, consumed by an
+// EventSource in MonitorStep). The upstream body is passed through as a stream,
+// never buffered, and the upstream request is aborted when the browser leaves.
 async function plainProxy(request: NextRequest, path: string): Promise<NextResponse> {
   const { search } = request.nextUrl;
-  const url = `${DISC_RIPPER_URL}${path}${search}`;
+  const url = `${discRipperBaseUrl()}${path}${search}`;
 
   let upstream: Response;
   try {
     const forwardHeaders: Record<string, string> = {};
-    for (const k of ['content-type', 'accept', 'authorization']) {
+    for (const k of ['content-type', 'accept', 'authorization', 'last-event-id']) {
       const v = request.headers.get(k);
       if (v) forwardHeaders[k] = v;
     }
-    const init: RequestInit = { method: request.method, headers: forwardHeaders };
-    if (request.method !== 'GET' && request.method !== 'HEAD') init.body = request.body;
+    const init: RequestInit = { method: request.method, headers: forwardHeaders, signal: request.signal };
+    if (request.method !== 'GET' && request.method !== 'HEAD') {
+      // Request bodies here are small JSON payloads; buffering avoids Node
+      // fetch's streaming-body (duplex) requirement.
+      const body = await request.arrayBuffer();
+      if (body.byteLength > 0) init.body = body;
+    }
     upstream = await fetch(url, init);
   } catch {
     return new NextResponse('Disc ripper unreachable', { status: 502 });
@@ -168,8 +197,15 @@ async function plainProxy(request: NextRequest, path: string): Promise<NextRespo
 
   const responseHeaders = new Headers();
   upstream.headers.forEach((v, k) => {
-    if (!k.startsWith('access-control-')) responseHeaders.set(k, v);
+    if (!k.startsWith('access-control-') && !DROP_RESPONSE_HEADERS.has(k)) responseHeaders.set(k, v);
   });
+
+  if ((upstream.headers.get('content-type') ?? '').startsWith('text/event-stream')) {
+    // no-transform keeps Next's compression from buffering the stream;
+    // X-Accel-Buffering disables buffering in an nginx-style reverse proxy.
+    responseHeaders.set('cache-control', 'no-cache, no-transform');
+    responseHeaders.set('x-accel-buffering', 'no');
+  }
 
   return new NextResponse(upstream.body, {
     status: upstream.status,
@@ -182,11 +218,12 @@ async function handler(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
   const path = pathname.replace(/^\/api\/disc-ripper/, '');
 
+  const base = discRipperBaseUrl();
   if (STREAM_PATH_RE.test(path)) {
-    return transcodeStream(`${DISC_RIPPER_URL}${path}`);
+    return transcodeStream(`${base}${path}`);
   }
   if (METADATA_PATH_RE.test(path)) {
-    const streamUrl = `${DISC_RIPPER_URL}${path.replace('/metadata', '/stream')}`;
+    const streamUrl = `${base}${path.replace('/metadata', '/stream')}`;
     return getFileMetadata(streamUrl);
   }
   return plainProxy(request, path);

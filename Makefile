@@ -8,7 +8,7 @@
 #   make dev-db            Start a local dev database on port 5432
 #   make docker-up         Start the full PRODUCTION stack (Docker only)
 #
-# See docs/TESTING.md for the full workflow guide.
+# See docs/guides/TESTING.md for the full workflow guide.
 # =============================================================================
 
 .PHONY: test test-backend test-frontend \
@@ -55,7 +55,7 @@ test: test-frontend test-backend
 
 test-db-up:
 	docker compose -f docker-compose.test.yml up -d --wait
-	@echo "Test database is ready on port 5433."
+	@echo "Test database is ready on 127.0.0.1:$${TEST_DB_PORT:-55433} (override with TEST_DB_PORT)."
 
 test-db-down:
 	docker compose -f docker-compose.test.yml down -v
@@ -68,10 +68,10 @@ test-integration: test-db-up
 # ── Local Development ─────────────────────────────────────────────────────────
 
 dev-db:
-	@echo "Starting development database on port 5432..."
-	docker compose up postgres -d
-	@echo "Dev database is ready. Connect with:"
-	@echo "  postgresql://media_user:changeme_strong_password@localhost:5432/media_manager"
+	@test -f .env || { echo "No .env found: cp .env.example .env and fill it in first."; exit 1; }
+	@echo "Starting development database (127.0.0.1:POSTGRES_HOST_PORT, default 5432)..."
+	docker compose up postgres -d --wait
+	@echo "Dev database is ready. Credentials: POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB in .env."
 
 reset-library-to-ingest:
 	bash scripts/reset-library-to-ingest.sh --yes

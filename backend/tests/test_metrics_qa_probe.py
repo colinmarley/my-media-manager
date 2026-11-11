@@ -12,7 +12,7 @@ plus regression tests for the findings raised on the previous QA round.
        -> test_ac3_six_domain_gauges_come_from_mocked_count_queries
   AC4  the PR description carries the scrape job for
        homelab-logging/prometheus/prometheus.yml (job `media-manager`, target
-       192.168.0.227:8082)
+       192.168.0.239:8082 since the move to the beelink)
        -> test_ac4_pr_summary_carries_the_prometheus_scrape_job, asserted
        against docs/api/endpoints.md, which is the block the summary quotes, so
        the shipped scrape config and the documented one cannot drift.
@@ -65,7 +65,7 @@ PROMETHEUS_DOCS = REPO_ROOT / "docs" / "api" / "endpoints.md"
 
 # The job block the PR summary has to hand the operator.
 SCRAPE_JOB = "job_name: media-manager"
-SCRAPE_TARGET = "192.168.0.227:8082"
+SCRAPE_TARGET = "192.168.0.239:8082"  # beelink; see docs/architecture/STORAGE_AND_HOSTS.md
 
 
 @pytest.fixture(autouse=True)
