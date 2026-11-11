@@ -21,7 +21,7 @@ const PosterToolsCard = ({
   hasPosterSource,
   onSavePosterSource,
 }: Props) => (
-  <Paper sx={{ ...styles.sectionCard, mb: 2.5 }}>
+  <Paper sx={styles.sectionCard}>
     <Typography variant="h6" sx={styles.sectionTitle}>
       Poster Tools
     </Typography>
@@ -39,7 +39,6 @@ const PosterToolsCard = ({
         onChange={(e) => onPosterSourceInputChange(e.target.value)}
         placeholder="https://example.com/poster.jpg"
         disabled={posterSourceSaving}
-        sx={styles.posterSourceInput}
       />
       <Button
         variant="contained"

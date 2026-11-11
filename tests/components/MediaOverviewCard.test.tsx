@@ -12,6 +12,7 @@ const MOVIE = {
   title: 'Big Movie',
   releaseDate: '1995-04-22',
   runtime: '178 min',
+  plot: 'Two hitmen have a long day.',
   countryOfOrigin: ['USA', 'UK'],
   genres: ['Crime', 'Drama'],
   directors: [{ fullName: 'Director One' }],
@@ -21,78 +22,64 @@ const MOVIE = {
 
 const buildProps = (overrides: Partial<CardProps> = {}): CardProps => ({
   media: MOVIE,
-  mediaType: 'movie',
-  inLibrary: true,
-  fileCount: 2,
+  catalogType: 'movie',
   folderPath: '/ark/media/jellyfin/Movies/Big Movie',
   externalIds: { imdbId: 'tt0110912', tmdbId: 155 },
   ...overrides,
 });
 
-describe('MediaOverviewCard', () => {
-  it('shows the title with library chips', () => {
+/** The dd that belongs to a dt label. */
+const valueOf = (label: string) => screen.getByText(label, { selector: 'dt' }).nextElementSibling as HTMLElement;
+
+describe('MediaOverviewCard (Metadata tab fields)', () => {
+  it('shows the overview and the labelled fields', () => {
     render(<MediaOverviewCard {...buildProps()} />);
 
-    expect(screen.getByText('Big Movie')).toBeInTheDocument();
-    expect(screen.getByText('Movie')).toBeInTheDocument();
-    expect(screen.getByText('In Library')).toBeInTheDocument();
-    expect(screen.getByText('2 files')).toBeInTheDocument();
+    expect(screen.getByText('Two hitmen have a long day.')).toBeInTheDocument();
+    expect(valueOf('Release date')).toHaveTextContent('1995-04-22');
+    expect(valueOf('Runtime')).toHaveTextContent('178 min');
+    expect(valueOf('Country')).toHaveTextContent('USA, UK');
+    expect(valueOf('Genres')).toHaveTextContent('Crime, Drama');
+    expect(valueOf('Directors')).toHaveTextContent('Director One');
+    expect(valueOf('Cast')).toHaveTextContent('Cast One, Cast Two');
+    expect(valueOf('Writers')).toHaveTextContent('Writer One');
+    expect(valueOf('Folder path')).toHaveTextContent('/ark/media/jellyfin/Movies/Big Movie');
   });
 
-  it('labels show types and singular file counts', () => {
-    render(
-      <MediaOverviewCard
-        {...buildProps({
-          media: { title: 'Long Running Show', runningDates: '2011 — 2019', seasons: [] } as unknown as LibraryMedia,
-          mediaType: 'series',
-          inLibrary: false,
-          fileCount: 1,
-        })}
-      />
-    );
-
-    expect(screen.getByText('Show')).toBeInTheDocument();
-    expect(screen.getByText('Not In Library')).toBeInTheDocument();
-    expect(screen.getByText('1 file')).toBeInTheDocument();
-    expect(screen.getByText('2011 — 2019')).toBeInTheDocument();
-  });
-
-  it('renders the headline metadata grid', () => {
+  it('links the external ids out to IMDb and TMDB', () => {
     render(<MediaOverviewCard {...buildProps()} />);
 
-    expect(screen.getByText('1995-04-22')).toBeInTheDocument();
-    expect(screen.getByText('178 min')).toBeInTheDocument();
-    expect(screen.getByText('USA, UK')).toBeInTheDocument();
-    expect(screen.getByText('Crime, Drama')).toBeInTheDocument();
-    expect(screen.getByText('Director One')).toBeInTheDocument();
-    expect(screen.getByText('Cast One, Cast Two')).toBeInTheDocument();
-    expect(screen.getByText('Writer One')).toBeInTheDocument();
-    expect(screen.getByText('/ark/media/jellyfin/Movies/Big Movie')).toBeInTheDocument();
-    expect(screen.getByText('IMDB: tt0110912 | TMDB: 155')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /IMDb tt0110912/ })).toHaveAttribute('href', 'https://www.imdb.com/title/tt0110912/');
+    expect(screen.getByRole('link', { name: /TMDB 155/ })).toHaveAttribute('href', 'https://www.themoviedb.org/movie/155');
+  });
+
+  it('links a show to TMDB TV and labels its running dates', () => {
+    const show = { ...MOVIE, seasons: [], runningDates: '2008–2013' } as unknown as LibraryMedia;
+    render(<MediaOverviewCard {...buildProps({ media: show, catalogType: 'series', externalIds: { tmdbId: 1396 } })} />);
+
+    expect(screen.getByRole('link', { name: /TMDB 1396/ })).toHaveAttribute('href', 'https://www.themoviedb.org/tv/1396');
+    expect(valueOf('Running dates')).toHaveTextContent('2008–2013');
   });
 
   it('falls back to the legacy IMDB id when there are no external ids', () => {
-    render(<MediaOverviewCard {...buildProps({ externalIds: null, legacyImdbId: 'tt0068646' })} />);
+    render(<MediaOverviewCard {...buildProps({ externalIds: null, legacyImdbId: 'tt7654321' })} />);
 
-    expect(screen.getByText('IMDB: tt0068646')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /IMDb tt7654321/ })).toBeInTheDocument();
   });
 
   it('uses placeholders for missing values', () => {
-    const { container } = render(
+    render(
       <MediaOverviewCard
         {...buildProps({
-          media: {} as unknown as LibraryMedia,
-          inLibrary: false,
-          fileCount: 0,
+          media: { title: 'Bare' } as unknown as LibraryMedia,
           folderPath: null,
           externalIds: null,
         })}
-      />
+      />,
     );
 
-    expect(container.querySelector('em')).toHaveTextContent('[No Title]');
-    expect(screen.getByText('Not In Library')).toBeInTheDocument();
-    expect(screen.getByText('0 files')).toBeInTheDocument();
-    expect(screen.getAllByText('N/A').length).toBeGreaterThanOrEqual(8);
+    for (const label of ['Release date', 'Runtime', 'Country', 'Genres', 'Directors', 'Cast', 'Writers', 'External IDs', 'Folder path']) {
+      expect(valueOf(label)).toHaveTextContent('N/A');
+    }
   });
 });

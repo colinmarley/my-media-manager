@@ -3,6 +3,7 @@
 import React from 'react';
 import { Chip, Stack } from '@mui/material';
 import { borders, fontFamilies, status, text } from '@/theme/tokens';
+import { formatChannelLayout } from '@/utils/format';
 
 export interface FileTech {
   container?: string | null;
@@ -13,14 +14,8 @@ export interface FileTech {
   audioChannels?: number | string | null;
 }
 
-/** "6" / 6 → "5.1", "2" → "Stereo"; anything else passes through. */
-export function formatAudioChannels(channels: number | string | null | undefined): string | null {
-  if (channels === null || channels === undefined || channels === '') return null;
-  const n = typeof channels === 'number' ? channels : Number(channels);
-  if (!Number.isFinite(n)) return String(channels);
-  const named: Record<number, string> = { 1: 'Mono', 2: 'Stereo', 6: '5.1', 8: '7.1' };
-  return named[n] ?? `${n} ch`;
-}
+/** "6" / 6 → "5.1", "2" → "Stereo"; see formatChannelLayout in utils/format. */
+export const formatAudioChannels = formatChannelLayout;
 
 function clean(value: string | null | undefined): string | null {
   const trimmed = (value ?? '').trim();

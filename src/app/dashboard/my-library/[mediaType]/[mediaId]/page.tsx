@@ -1,85 +1,92 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Box, Alert, Grid, Typography } from '@mui/material';
+import React, { useMemo, useState } from 'react';
+import { Alert, Box, Button, Skeleton, Tab, Tabs } from '@mui/material';
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 
+import { PageContainer } from '@/components/ui/PageHeader';
+import { useNotify } from '@/context/NotificationContext';
 import ReassignFilesDialog from '../../_components/ReassignFilesDialog';
 import DiskReassignDialog from '../../_components/DiskReassignDialog';
 import MediaDetailHeaderBar from '../../_components/detail/MediaDetailHeaderBar';
-import MediaOverviewCard from '../../_components/detail/MediaOverviewCard';
-import MediaProcessingSummaryCard from '../../_components/detail/MediaProcessingSummaryCard';
-import MediaAssociatedFilesCard from '../../_components/detail/MediaAssociatedFilesCard';
-import PosterToolsCard from '../../_components/detail/PosterToolsCard';
-import PosterGalleryCard from '../../_components/detail/PosterGalleryCard';
-import CatalogMetadataCard, { NfoMetadataCard } from '../../_components/detail/MetadataCards';
+import TitleHeader from '../../_components/detail/TitleHeader';
+import FilesTab from '../../_components/detail/FilesTab';
+import DiscsTapesTab from '../../_components/detail/DiscsTapesTab';
+import MetadataTab from '../../_components/detail/MetadataTab';
+import ArtworkTab from '../../_components/detail/ArtworkTab';
+import MediaFolderFileList from '../../_components/detail/MediaFolderFileList';
+import LinkFileToDiscDialog, { SourceOption } from '../../_components/detail/LinkFileToDiscDialog';
+import RenameCanonicalDialog from '../../_components/detail/RenameCanonicalDialog';
 import EpisodeAssignDialog from '../../_components/detail/EpisodeAssignDialog';
 import RemoveFromLibraryDialog from '../../_components/detail/RemoveFromLibraryDialog';
-import styles from '../../_components/detail/mediaDetailStyles';
+import { FileActionHandlers } from '../../_components/detail/fileActionTypes';
 import useMediaDetailRecord from '@/hooks/library/useMediaDetailRecord';
 import useMediaPoster from '@/hooks/library/useMediaPoster';
 import useMediaFolderFiles from '@/hooks/library/useMediaFolderFiles';
-import useMediaEffectiveness from '@/hooks/library/useMediaEffectiveness';
 import useNfoFromDisk from '@/hooks/library/useNfoFromDisk';
 import useDiskReassign from '@/hooks/library/useDiskReassign';
 import useEpisodeAssignment from '@/hooks/library/useEpisodeAssignment';
 import useMediaRemoval from '@/hooks/library/useMediaRemoval';
+import useFileActions from '@/hooks/library/useFileActions';
+import useInventoryScan from '@/hooks/library/useInventoryScan';
+import useDetailTab, { DetailTab } from '@/hooks/library/useDetailTab';
+import { currentFilePath, fileSource, TitleSource, titleSources } from '@/service/library/mediaFileModel';
+import { MediaFile } from '@/types/library/MediaFile.type';
+
+const TAB_LABELS: Record<DetailTab, string> = {
+  files: 'Files',
+  discs: 'Discs & Tapes',
+  metadata: 'Metadata',
+  artwork: 'Artwork',
+};
+
+const toOption = (source: TitleSource): SourceOption => ({
+  kind: source.kind,
+  id: source.id,
+  title: source.title,
+  format: source.format,
+});
 
 /**
- * Library media details screen. This file is the composition root only: the data loading lives
- * in the hooks, the sections live in the detail components, and the pure rules live in
- * service/library/mediaDetailModel + service/library/mediaFolderFiles.
+ * Library title detail: a header (poster, facts, inventory stats, actions) over four
+ * URL-addressable tabs — Files, Discs & Tapes, Metadata, Artwork. This file is the composition
+ * root: data lives in the hooks/library hooks, sections in _components/detail, and the display
+ * rules in service/library/mediaFileModel.
  */
 const LibraryMediaDetailPage = () => {
   const params = useParams<{ mediaType?: string; mediaId?: string }>();
   const mediaTypeFromRoute = params?.mediaType;
   const mediaIdFromRoute = decodeURIComponent(params?.mediaId || '');
+  const notify = useNotify();
+  const { tab, setTab } = useDetailTab();
 
   const record = useMediaDetailRecord({ mediaTypeFromRoute, mediaIdFromRoute });
-  const poster = useMediaPoster({
-    mediaTypeFromRoute,
-    mediaIdFromRoute,
-    currentPosterSource: record.currentPosterSource,
-  });
+  const hasInventory = record.source === 'detail';
+  const poster = useMediaPoster({ mediaTypeFromRoute, mediaIdFromRoute, currentPosterSource: record.currentPosterSource });
+  // The on-disk listing is only the fallback for a title with no inventory rows.
   const folderFiles = useMediaFolderFiles({
-    effectiveFolderPath: record.effectiveFolderPath,
+    effectiveFolderPath: !record.loading && record.allFiles.length === 0 ? record.effectiveFolderPath : null,
     isSeries: record.isSeries,
   });
-  const effectiveness = useMediaEffectiveness({
-    computed: record.computed,
-    processingSummary: record.processingSummary,
-    folderFiles: folderFiles.folderFiles,
-  });
-  const diskNfoData = useNfoFromDisk({
-    folderPath: record.folderPath,
-    nfoMetadata: record.nfoMetadata,
-  });
+  const diskNfoData = useNfoFromDisk({ folderPath: record.folderPath, nfoMetadata: record.nfoMetadata });
 
-  const [selectedDiscIds, setSelectedDiscIds] = useState<Set<string>>(new Set());
-  const [reassignOpen, setReassignOpen] = useState(false);
-  const [reassignSuccessMsg, setReassignSuccessMsg] = useState<string | null>(null);
-  const [folderMessages, setFolderMessages] = useState<string | null>(null);
+  const refreshAll = async () => {
+    await record.refetch();
+    folderFiles.refreshFolderFiles();
+  };
 
-  const clearSelectedDiscIds = () => setSelectedDiscIds(new Set());
-  const toggleDisc = (id: string) =>
-    setSelectedDiscIds((prev) => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+  const fileActions = useFileActions({ refetch: record.refetch });
+  const scan = useInventoryScan({ onFinished: record.refetch });
+
+  const [linkDialog, setLinkDialog] = useState<{ files: MediaFile[]; target?: SourceOption } | null>(null);
+  const [renameFiles, setRenameFiles] = useState<MediaFile[] | null>(null);
+  const [reassignDisc, setReassignDisc] = useState<TitleSource | null>(null);
 
   const diskReassign = useDiskReassign({
-    onReassigned: ({ newPath }) => {
-      setFolderMessages(
-        diskReassign.diskReassignMode === 'folder'
-          ? `Folder reassigned. New path: ${newPath}`
-          : `File moved to: ${newPath}`
-      );
-      folderFiles.clearFolderFiles();
-      // Keep this details page scoped to the currently viewed media entry.
-      // For file reassignments, loading `newPath` here shows destination-title files
-      // on the source-title page until a manual reload.
-      folderFiles.refreshFolderFiles();
+    onReassigned: ({ mode, newPath }) => {
+      notify(mode === 'folder' ? `Folder reassigned. New path: ${newPath}` : `File moved to: ${newPath}`, 'success');
+      void refreshAll();
     },
   });
 
@@ -89,118 +96,190 @@ const LibraryMediaDetailPage = () => {
     seriesEpisodeOptions: record.seriesEpisodeOptions,
     selectedSeasonPath: folderFiles.selectedSeasonPath,
     onAssigned: ({ targetDir, message }) => {
-      setFolderMessages(message);
-      if (targetDir) {
-        folderFiles.setSelectedSeasonPath(targetDir);
-      }
+      notify(message, 'success');
+      if (targetDir) folderFiles.setSelectedSeasonPath(targetDir);
+      void record.refetch();
       folderFiles.refreshFolderFiles(targetDir);
     },
   });
 
   const removal = useMediaRemoval({ mediaTypeFromRoute, mediaIdFromRoute });
 
+  const sources = useMemo(
+    () => titleSources(record.associatedDiscs, record.associatedTapes, record.allFiles),
+    [record.associatedDiscs, record.associatedTapes, record.allFiles],
+  );
+
+  const handlers: FileActionHandlers = {
+    onLink: (files) => files.length > 0 && setLinkDialog({ files }),
+    onUnlink: (files) => void fileActions.unlink(files),
+    onReassign: (file) => diskReassign.openDiskReassign('file', currentFilePath(file), file.fileName),
+    onAssignEpisode: record.isSeries
+      ? (file) => episodeAssignment.openEpisodeAssignDialog({ path: currentFilePath(file), name: file.fileName })
+      : undefined,
+    onSetFlag: (files, needsReview) => void fileActions.setReview(files.map((f) => f.id), needsReview),
+    onRename: (files) => files.length > 0 && setRenameFiles(files),
+    reviewUnavailable: fileActions.reviewUnavailable,
+    renameUnavailable: fileActions.renameUnavailable,
+    busy: fileActions.busy,
+  };
+
+  const media = record.matchedMedia;
+  const folderPath = record.folderPath;
+  const reassignFolder = folderPath
+    ? () => diskReassign.openDiskReassign('folder', folderPath, folderPath.split('/').pop() || folderPath)
+    : undefined;
+
+  const folderFallback = folderFiles.folderFilesLoading ? (
+    <Skeleton variant="rounded" height={120} aria-label="Loading folder listing" />
+  ) : folderFiles.folderFiles.length > 0 ? (
+    <MediaFolderFileList
+      files={folderFiles.folderFiles}
+      isSeries={record.isSeries}
+      seasonFolders={folderFiles.seasonFolders}
+      selectedSeasonPath={folderFiles.selectedSeasonPath}
+      onSeasonChange={folderFiles.setSelectedSeasonPath}
+      folderPath={folderPath}
+      onReassignFolder={reassignFolder ?? (() => {})}
+      onReassignFile={(path, name) => diskReassign.openDiskReassign('file', path, name)}
+      onAssignEpisode={episodeAssignment.openEpisodeAssignDialog}
+    />
+  ) : folderPath ? (
+    <Alert severity="info">No files were found in the title&apos;s folder on disk ({folderPath}).</Alert>
+  ) : (
+    <Alert severity="info">This title has no folder in the library yet.</Alert>
+  );
+
   return (
-    <Box sx={styles.page}>
-      <MediaDetailHeaderBar
-        hasMedia={Boolean(record.matchedMedia)}
-        onRemoveFromLibrary={() => removal.setDeleteConfirmOpen(true)}
+    <PageContainer>
+      <TitleHeader
+        media={media}
+        loading={record.loading}
+        mediaType={record.detailMediaType ?? record.computed?.mediaType ?? null}
+        posterSrc={
+          mediaTypeFromRoute
+            ? `/api/backend/api/posters/${mediaTypeFromRoute}/${encodeURIComponent(mediaIdFromRoute)}?index=0&v=${poster.posterCacheBust}`
+            : null
+        }
+        summary={record.summary}
+        sourceCount={sources.length}
+        hasInventory={hasInventory}
+        attentionBanner={null /* slot for the titles-needing-attention banner (later PR) */}
+        actions={
+          <MediaDetailHeaderBar
+            hasMedia={Boolean(media)}
+            onRemoveFromLibrary={() => removal.setDeleteConfirmOpen(true)}
+            onRescan={hasInventory ? scan.startScan : undefined}
+            scanning={scan.scanning}
+          />
+        }
       />
 
-      {record.error && <Alert severity="error">Unable to load details: {record.error}</Alert>}
+      {record.error && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2 }}
+          action={<Button color="inherit" size="small" onClick={() => void record.refetch()}>Retry</Button>}
+        >
+          Unable to load this title: {record.error}
+        </Alert>
+      )}
 
-      {record.loading && <Typography>Loading media details...</Typography>}
-
-      {!record.loading && !record.matchedMedia && (
-        <Alert severity="warning" sx={{ mb: 2 }}>
+      {!record.loading && !record.error && !media && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 2 }}
+          action={<Button component={Link} href="/dashboard/my-library" color="inherit" size="small">My Library</Button>}
+        >
           This title was not found. It may have been removed or its identifier has changed.
         </Alert>
       )}
 
-      {!record.loading && mediaTypeFromRoute && mediaIdFromRoute && (
-        <PosterToolsCard
-          posterSourceInput={poster.posterSourceInput}
-          onPosterSourceInputChange={poster.setPosterSourceInput}
-          posterSourceSaving={poster.posterSourceSaving}
-          posterSourceStatus={poster.posterSourceStatus}
-          hasPosterSource={Boolean(record.currentPosterSource)}
-          onSavePosterSource={poster.handlePosterSourceUpdate}
-        />
+      {record.loading && !media && <Skeleton variant="rounded" height={240} aria-label="Loading files" />}
+
+      {media && (
+        <>
+          <Tabs
+            value={tab}
+            onChange={(_e, next: DetailTab) => setTab(next)}
+            aria-label="Title sections"
+            sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
+          >
+            {(Object.keys(TAB_LABELS) as DetailTab[]).map((key) => (
+              <Tab
+                key={key}
+                value={key}
+                id={`detail-tab-${key}`}
+                aria-controls={`detail-tabpanel-${key}`}
+                label={key === 'files' && hasInventory ? `Files (${record.summary.fileCount})` : key === 'discs' ? `${TAB_LABELS[key]} (${sources.length})` : TAB_LABELS[key]}
+              />
+            ))}
+          </Tabs>
+
+          <Box role="tabpanel" id={`detail-tabpanel-${tab}`} aria-labelledby={`detail-tab-${tab}`} aria-busy={record.refreshing || undefined}>
+            {tab === 'files' && (
+              <FilesTab
+                groups={record.files}
+                allFiles={record.allFiles}
+                actions={handlers}
+                hasInventory={hasInventory}
+                onScan={scan.startScan}
+                scanning={scan.scanning}
+                onReassignFolder={reassignFolder}
+                folderFallback={folderFallback}
+              />
+            )}
+            {tab === 'discs' && (
+              <DiscsTapesTab
+                sources={sources}
+                allFiles={record.allFiles}
+                actions={handlers}
+                onLinkFilesTo={(source) =>
+                  setLinkDialog({ files: record.allFiles.filter((file) => !fileSource(file)), target: toOption(source) })
+                }
+                onReassignDisc={setReassignDisc}
+              />
+            )}
+            {tab === 'metadata' && (
+              <MetadataTab
+                media={media}
+                catalogType={record.catalogType}
+                folderPath={folderPath}
+                externalIds={record.externalIds}
+                legacyImdbId={record.legacyOmdbData?.imdbID}
+                nfoMetadata={record.nfoMetadata}
+                diskNfoData={diskNfoData}
+              />
+            )}
+            {tab === 'artwork' && (
+              <ArtworkTab
+                mediaTypeFromRoute={mediaTypeFromRoute}
+                mediaIdFromRoute={mediaIdFromRoute}
+                title={media.title || ''}
+                hasPosterSource={Boolean(record.currentPosterSource)}
+                poster={poster}
+              />
+            )}
+          </Box>
+        </>
       )}
 
-      {!record.loading && record.matchedMedia && record.computed && (
-        <Grid container spacing={2.5}>
-          <Grid size={{ xs: 12, md: 4 }}>
-            <PosterGalleryCard
-              mediaTypeFromRoute={mediaTypeFromRoute}
-              mediaIdFromRoute={mediaIdFromRoute}
-              title={record.matchedMedia.title || ''}
-              posterIndex={poster.posterIndex}
-              posterCount={poster.posterCount}
-              posterLoadFailed={poster.posterLoadFailed}
-              posterCacheBust={poster.posterCacheBust}
-              setPosterIndex={poster.setPosterIndex}
-              onPosterLoadError={poster.handlePosterLoadError}
-            />
-          </Grid>
+      <LinkFileToDiscDialog
+        open={Boolean(linkDialog)}
+        onClose={() => setLinkDialog(null)}
+        files={linkDialog?.files ?? []}
+        target={linkDialog?.target ?? null}
+        sources={sources.map(toOption)}
+        onLink={(fileIds, target) => fileActions.link(fileIds, target)}
+      />
 
-          <Grid size={{ xs: 12, md: 8 }}>
-            <MediaOverviewCard
-              media={record.matchedMedia}
-              mediaType={record.computed.mediaType}
-              inLibrary={effectiveness.effectiveInLibrary}
-              fileCount={effectiveness.effectiveFileCount}
-              folderPath={record.folderPath}
-              externalIds={record.externalIds}
-              legacyImdbId={record.legacyOmdbData?.imdbID}
-            />
-          </Grid>
-
-          <Grid size={{ xs: 12 }}>
-            <MediaProcessingSummaryCard summary={effectiveness.effectiveProcessingSummary} />
-          </Grid>
-
-          <Grid size={{ xs: 12, md: 6 }}>
-            <CatalogMetadataCard media={record.matchedMedia} />
-          </Grid>
-
-          <Grid size={{ xs: 12, md: 6 }}>
-            <NfoMetadataCard nfoMetadata={record.nfoMetadata} diskNfoData={diskNfoData} />
-          </Grid>
-
-          <Grid size={{ xs: 12 }}>
-            <MediaAssociatedFilesCard
-              folderPath={record.folderPath}
-              selectedDiscCount={selectedDiscIds.size}
-              onOpenReassign={() => setReassignOpen(true)}
-              reassignSuccessMsg={reassignSuccessMsg}
-              onCloseReassignSuccessMsg={() => setReassignSuccessMsg(null)}
-              diskReassignMsg={folderMessages}
-              onCloseDiskReassignMsg={() => setFolderMessages(null)}
-              associatedDiscs={record.associatedDiscs}
-              associatedTapes={record.associatedTapes}
-              mediaLinksLoading={record.mediaLinksLoading}
-              selectedDiscIds={selectedDiscIds}
-              onToggleDisc={toggleDisc}
-              folderSection={{
-                loading: folderFiles.folderFilesLoading,
-                files: folderFiles.folderFiles,
-                isSeries: record.isSeries,
-                seasonFolders: folderFiles.seasonFolders,
-                selectedSeasonPath: folderFiles.selectedSeasonPath,
-                onSeasonChange: folderFiles.setSelectedSeasonPath,
-                onReassignFolder: () =>
-                  diskReassign.openDiskReassign(
-                    'folder',
-                    record.folderPath || '',
-                    (record.folderPath || '').split('/').pop() || record.folderPath || ''
-                  ),
-                onReassignFile: (path, name) => diskReassign.openDiskReassign('file', path, name),
-                onAssignEpisode: episodeAssignment.openEpisodeAssignDialog,
-              }}
-            />
-          </Grid>
-        </Grid>
-      )}
+      <RenameCanonicalDialog
+        open={Boolean(renameFiles)}
+        files={renameFiles ?? []}
+        onClose={() => setRenameFiles(null)}
+        onApplied={record.refetch}
+        onUnavailable={fileActions.markRenameUnavailable}
+      />
 
       {diskReassign.diskReassignOpen && (
         <DiskReassignDialog
@@ -214,25 +293,17 @@ const LibraryMediaDetailPage = () => {
         />
       )}
 
-      {record.matchedMedia && reassignOpen && (
+      {media && reassignDisc && (
         <ReassignFilesDialog
-          open={reassignOpen}
+          open
           fromMediaId={mediaIdFromRoute}
-          fromMediaTitle={record.matchedMedia.title || 'this entry'}
-          selectedDiscs={record.associatedDiscs
-            .filter((disc) => selectedDiscIds.has(disc.id))
-            .map((disc) => ({
-              id: disc.id,
-              title: disc.title || disc.id,
-              fileNames: Array.isArray(disc.videoFiles) ? disc.videoFiles.map((file) => file.fileName) : [],
-            }))}
-          onClose={() => setReassignOpen(false)}
+          fromMediaTitle={media.title || 'this entry'}
+          selectedDiscs={[{ id: reassignDisc.id, title: reassignDisc.title, fileNames: reassignDisc.files.map((f) => f.fileName) }]}
+          onClose={() => setReassignDisc(null)}
           onReassigned={(_toMediaId, toMediaTitle) => {
-            setReassignOpen(false);
-            clearSelectedDiscIds();
-            setReassignSuccessMsg(
-              `${selectedDiscIds.size} disc record${selectedDiscIds.size !== 1 ? 's' : ''} successfully reassigned to "${toMediaTitle}".`
-            );
+            setReassignDisc(null);
+            notify(`Disc record moved to "${toMediaTitle}".`, 'success');
+            void record.refetch();
           }}
         />
       )}
@@ -256,12 +327,12 @@ const LibraryMediaDetailPage = () => {
       <RemoveFromLibraryDialog
         open={removal.deleteConfirmOpen}
         onClose={removal.closeDeleteConfirm}
-        title={record.matchedMedia?.title}
+        title={media?.title}
         error={removal.deleteError}
         deleting={removal.deleting}
         onConfirm={removal.handleDelete}
       />
-    </Box>
+    </PageContainer>
   );
 };
 

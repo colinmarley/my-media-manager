@@ -15,7 +15,11 @@ import { CatalogDisc } from '@/types/catalog/Disc.type';
 import { CatalogTape } from '@/types/catalog/Tape.type';
 import { deleteDisc } from '@/service/catalog/DiscCatalogService';
 import { deleteTape } from '@/service/catalog/TapeCatalogService';
-import { disconnectFile, LinkedMediaFile } from '@/service/catalog/MediaFileLinkService';
+import { disconnectFile } from '@/service/catalog/MediaFileLinkService';
+import PageHeader, { PageContainer } from '@/components/ui/PageHeader';
+import FileTechChips from '@/components/ui/FileTechChips';
+import { qualityLabel } from '@/service/library/mediaFileModel';
+import { MediaFile } from '@/types/library/MediaFile.type';
 import { currentLoan } from '@/utils/loanUtils';
 import { formatStorageLocation } from '@/utils/storageLocation';
 import DiscEditDialog from '../../_components/DiscEditDialog';
@@ -23,6 +27,7 @@ import TapeEditDialog from '../../_components/TapeEditDialog';
 import ConfirmDeleteDialog from '../../_components/ConfirmDeleteDialog';
 import ConnectFileDialog from '../../_components/ConnectFileDialog';
 import DiscRipStatusPanel from '../../_components/DiscRipStatusPanel';
+import LinkedTitlesSection from '../../_components/LinkedTitlesSection';
 import { formatBytes } from '@/utils/format';
 
 function formatSize(bytes: number | null): string {
@@ -37,7 +42,7 @@ export default function PhysicalMediaDetailPage() {
   const id = params.id;
 
   const [item, setItem] = useState<CatalogDisc | CatalogTape | null>(null);
-  const [files, setFiles] = useState<LinkedMediaFile[]>([]);
+  const [files, setFiles] = useState<MediaFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -52,7 +57,7 @@ export default function PhysicalMediaDetailPage() {
     setError('');
     return Promise.all([
       api.get<CatalogDisc | CatalogTape>(`/api/catalog/${mediaKind}/${id}`),
-      api.get<LinkedMediaFile[]>(`/api/catalog/${mediaKind}/${id}/files`),
+      api.get<MediaFile[]>(`/api/catalog/${mediaKind}/${id}/files`),
     ])
       .then(([itemData, filesData]) => {
         setItem(itemData);
@@ -96,19 +101,17 @@ export default function PhysicalMediaDetailPage() {
   const loan = currentLoan(item);
 
   return (
-    <Box sx={{ p: 3, maxWidth: 900 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 3 }}>
-        <Box>
-          <Typography variant="h4" sx={{ mb: 0.5 }}>{item.title}</Typography>
-          <Typography variant="body2" color="text.secondary">
-            {isTape ? 'Physical tape' : 'Physical disc'}
-          </Typography>
-        </Box>
-        <Stack direction="row" spacing={1}>
-          <Button startIcon={<EditIcon />} onClick={() => setEditOpen(true)}>Edit</Button>
-          <Button startIcon={<DeleteIcon />} color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
-        </Stack>
-      </Stack>
+    <PageContainer maxWidth={1100}>
+      <PageHeader
+        title={item.title}
+        subtitle={isTape ? 'Physical tape' : 'Physical disc'}
+        actions={
+          <>
+            <Button startIcon={<EditIcon />} onClick={() => setEditOpen(true)}>Edit</Button>
+            <Button startIcon={<DeleteIcon />} color="error" onClick={() => setDeleteOpen(true)}>Delete</Button>
+          </>
+        }
+      />
 
       {loan && (
         <Alert severity="info" sx={{ mb: 3 }}>
@@ -146,6 +149,8 @@ export default function PhysicalMediaDetailPage() {
         )}
       </Paper>
 
+      <LinkedTitlesSection kind={isTape ? 'tape' : 'disc'} id={id} />
+
       {disc && <DiscRipStatusPanel discId={id} />}
 
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1.5 }}>
@@ -171,6 +176,7 @@ export default function PhysicalMediaDetailPage() {
               <TableRow>
                 <TableCell>File</TableCell>
                 <TableCell>Type</TableCell>
+                <TableCell>Quality</TableCell>
                 <TableCell>Size</TableCell>
                 <TableCell>Status</TableCell>
                 <TableCell align="right">Actions</TableCell>
@@ -186,6 +192,10 @@ export default function PhysicalMediaDetailPage() {
                     </Typography>
                   </TableCell>
                   <TableCell>{f.detectedMediaType ?? '—'}</TableCell>
+                  <TableCell>
+                    <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>{qualityLabel(f) ?? '—'}</Typography>
+                    <FileTechChips {...f} />
+                  </TableCell>
                   <TableCell>{formatSize(f.fileSize)}</TableCell>
                   <TableCell>
                     <Chip
@@ -253,6 +263,6 @@ export default function PhysicalMediaDetailPage() {
         onClose={() => setConnectOpen(false)}
         onConnected={() => load()}
       />
-    </Box>
+    </PageContainer>
   );
 }

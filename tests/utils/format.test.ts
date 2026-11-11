@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes } from '@/utils/format';
+import { formatBytes, formatChannelLayout, formatDuration } from '@/utils/format';
 import { formatFileSize } from '@/service/library/mediaFolderFiles';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
 
@@ -45,5 +45,36 @@ describe('call sites keep their output', () => {
     expect(DiscRipperService.formatBytes(0)).toBe('—');
     expect(DiscRipperService.formatBytes(4.7 * GB)).toBe('4.7 GB');
     expect(DiscRipperService.formatBytes(350 * MB)).toBe('350 MB');
+  });
+});
+
+describe('formatChannelLayout', () => {
+  it('names the common speaker layouts', () => {
+    expect(formatChannelLayout(1)).toBe('Mono');
+    expect(formatChannelLayout(2)).toBe('Stereo');
+    expect(formatChannelLayout(3)).toBe('2.1');
+    expect(formatChannelLayout(6)).toBe('5.1');
+    expect(formatChannelLayout('8')).toBe('7.1');
+    expect(formatChannelLayout(7)).toBe('6.1');
+    expect(formatChannelLayout(4)).toBe('4 ch');
+  });
+
+  it('returns null for missing or empty input and passes unparseable text through', () => {
+    for (const value of [null, undefined, '', 0]) expect(formatChannelLayout(value)).toBeNull();
+    expect(formatChannelLayout('5.1(side)')).toBe('5.1(side)');
+  });
+});
+
+describe('formatDuration', () => {
+  it('shows hours and minutes, minutes, or seconds', () => {
+    expect(formatDuration(8_280_000)).toBe('2h 18m');
+    expect(formatDuration(7_200_000)).toBe('2h');
+    expect(formatDuration(42 * 60_000)).toBe('42m');
+    expect(formatDuration(45_000)).toBe('45s');
+  });
+
+  it('returns the empty text for missing, zero, negative or non-finite input', () => {
+    for (const value of [null, undefined, 0, -5, Number.NaN]) expect(formatDuration(value)).toBe('—');
+    expect(formatDuration(null, '')).toBe('');
   });
 });
