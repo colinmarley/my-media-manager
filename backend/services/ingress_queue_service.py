@@ -76,6 +76,12 @@ QUEUE_ALL_STATUSES = (
     QUEUE_IGNORED,
 )
 VALID_CLASSIFICATION_OVERRIDES = {"main_feature", "special_feature", "alternate_version"}
+# parsed_info key that holds a file for review whatever the matcher finds. Set
+# by hold_files_for_review (e.g. a folder removed from the library, which still
+# carries its [imdbid-...] tag and would otherwise be auto-assigned straight
+# back); kept across reprocessing like classification_override; cleared by a
+# manual assignment.
+HOLD_REASON_KEY = "hold_reason"
 
 
 class QueueItemBusy(ValueError):
@@ -423,6 +429,34 @@ class IngressQueueService:
         )
         return queue_item
 
+    async def hold_files_for_review(
+        self,
+        file_paths: Iterable[str],
+        reason: str,
+        ingress_path: Optional[str] = None,
+    ) -> List[IngressQueueItem]:
+        """Queue files that must wait for a person, whatever the matcher finds.
+
+        Each video file is added (or re-queued) as ``pending`` with
+        ``parsed_info[HOLD_REASON_KEY]`` set before the processor can pick it
+        up; processing then matches it and stops at ``needs_review`` with the
+        proposal pre-filled. Non-video files are skipped as usual.
+        """
+        held: List[IngressQueueItem] = []
+        for file_path in file_paths:
+            item = self.add_manual_file(file_path, ingress_path=ingress_path)
+            if item is None:
+                continue
+            with self.lock:
+                parsed_info = dict(item.parsed_info or {})
+                parsed_info[HOLD_REASON_KEY] = reason
+                item.parsed_info = parsed_info
+            await self._persist_queue_item(item)
+            held.append(item)
+        if held:
+            logger.info("Files queued and held for review", count=len(held), reason=reason)
+        return held
+
     async def process_next_item(self) -> Optional[IngressQueueItem]:
         """Process the next pending item and update status."""
         with self.lock:
@@ -473,6 +507,9 @@ class IngressQueueService:
             if existing_override in VALID_CLASSIFICATION_OVERRIDES:
                 parsed_info["classification_override"] = existing_override
                 candidate.classification_override = existing_override
+            hold_reason = (candidate.parsed_info or {}).get(HOLD_REASON_KEY)
+            if hold_reason:
+                parsed_info[HOLD_REASON_KEY] = hold_reason
 
             inferred_media_type = self._infer_source_media_type(source_root)
             if inferred_media_type == "episode":
@@ -500,6 +537,10 @@ class IngressQueueService:
                 match_result = self._run_matcher(
                     {**parsed_info, "media_duration_ms": candidate.media_duration_ms}
                 )
+            # A held file is matched (so the proposal is pre-filled) but never
+            # auto-assigned: the same forced-review path as a track-set guess.
+            if hold_reason and not force_review_reason:
+                force_review_reason = f"held for review: {hold_reason}"
             best_match = match_result.get("best_match") if match_result else None
             has_best_match = isinstance(best_match, dict) and bool(best_match)
             ambiguous = bool(match_result.get("ambiguous")) if match_result else False
@@ -986,6 +1027,8 @@ class IngressQueueService:
 
         parsed_info = dict(item.parsed_info or {})
         parsed_info["media_type"] = normalized_media_type
+        # A reviewer decided where this file goes: the hold has done its job.
+        parsed_info.pop(HOLD_REASON_KEY, None)
         if normalized_media_type == "episode":
             if unknown_episode:
                 parsed_info.pop("season", None)
