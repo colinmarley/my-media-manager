@@ -17,8 +17,9 @@ import useAdminStore from '../../store/useAdminStore';
 const AdminPage: React.FC = () => {
   const { selectedType } = useAdminStore();
 
+  // Padding and the header come from ./layout.tsx.
   return (
-    <Box sx={{ padding: 2 }}>
+    <Box>
       {selectedType && <AdminFormComponent type={selectedType} />}
     </Box>
   );

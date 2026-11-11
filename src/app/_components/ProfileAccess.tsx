@@ -1,51 +1,47 @@
 import React, { useState } from 'react';
-import { Avatar, Button, Menu, MenuItem } from '@mui/material';
-import { deepOrange } from '@mui/material/colors';
+import { Avatar, IconButton, ListItemIcon, Menu, MenuItem } from '@mui/material';
+import { Logout } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
 import useAuthenticationStore from '../../store/useAuthenticationStore';
+import { accent } from '@/theme/tokens';
 
 const ProfileAccess = () => {
   const { logout } = useAuthenticationStore();
   const router = useRouter();
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
-
-  const handleClick = (event: React.MouseEvent<HTMLElement>) => {
-    setAnchorEl(event.currentTarget);
-  };
-
-  const handleClose = () => {
-    setAnchorEl(null);
-  };
+  const open = Boolean(anchorEl);
 
   const handleLogoutClick = async () => {
     await logout();
-    handleClose();
+    setAnchorEl(null);
     router.push('/login');
   };
 
   return (
-    <div>
-      <Button onClick={handleClick}>
-        <Avatar sx={Styles.avatar}>U</Avatar>
-      </Button>
+    <>
+      <IconButton
+        onClick={(event) => setAnchorEl(event.currentTarget)}
+        aria-label="Account"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        size="small"
+      >
+        <Avatar sx={{ width: 28, height: 28, fontSize: '0.8125rem', bgcolor: accent.tint, color: accent.light }}>U</Avatar>
+      </IconButton>
       <Menu
         anchorEl={anchorEl}
-        open={Boolean(anchorEl)}
-        onClose={handleClose}
+        open={open}
+        onClose={() => setAnchorEl(null)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+        transformOrigin={{ vertical: 'top', horizontal: 'right' }}
       >
-        <MenuItem onClick={handleLogoutClick}>Logout</MenuItem>
+        <MenuItem onClick={handleLogoutClick}>
+          <ListItemIcon><Logout fontSize="small" /></ListItemIcon>
+          Sign out
+        </MenuItem>
       </Menu>
-    </div>
+    </>
   );
 };
-
-const Styles = {
-  avatar: {
-    bgcolor: deepOrange[500],
-  },
-  displayName: {
-    marginLeft: 1,
-  }
-}
 
 export default ProfileAccess;
