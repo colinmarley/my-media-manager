@@ -165,7 +165,7 @@ Create your backend `.env` from the example and point it at the dev database:
 ```bash
 cp backend/.env.example backend/.env
 # Edit backend/.env and set DATABASE_URL to:
-# postgresql+asyncpg://media_user:changeme_strong_password@localhost:5432/media_manager
+# postgresql+asyncpg://<POSTGRES_USER>:<POSTGRES_PASSWORD>@127.0.0.1:5432/media_manager   (values from the root .env)
 ```
 
 Run the backend locally:
