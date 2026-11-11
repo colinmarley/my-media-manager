@@ -469,3 +469,33 @@ async def test_undo_route_returns_the_result(app, monkeypatch):
 
     assert response.status_code == 200
     assert response.json()['data'] == outcome
+
+
+def test_undo_moves_the_media_file_row_back_to_the_source_and_drops_title_links(tmp_path, monkeypatch):
+    from db.models import MediaAssignment, MediaFile, Movie
+    from services import media_file_index
+    from tests.fake_db import FakeSession
+
+    log = _MemoryLog()
+    service, _, filesystem, item, _, source = _accepted_movie(tmp_path, monkeypatch, log)
+    monkeypatch.setattr('services.storage_paths.settings.ingress_default_paths', [os.fspath(tmp_path / 'ingest')])
+    destination = _move_row(log, item.id)['dst']
+    media_file = MediaFile(id='f1', file_name='x.mkv', disc_id='disc-1', organization_status='completed')
+    media_file_index.apply_path(media_file, destination)
+    media_file.movie_id = 'm1'
+    assert media_file.location == 'library' and media_file.role == 'main'
+    session = FakeSession([
+        MediaAssignment(id=item.assignment_id, media_type='movie', media_id='m1', primary_file_id='f1',
+                        organization_status='completed', operations=[{'op': 'move'}]),
+        media_file,
+        Movie(id='m1', title='Some Movie', jellyfin_info={}, raw_data={}),
+    ])
+
+    result = _undo(service, log, filesystem, item.id, db_session_factory=session)
+
+    assert result['success'] is True
+    assert media_file.file_path == media_file_index.normalize_path(source)
+    assert media_file.id == 'f1' and media_file.disc_id == 'disc-1'
+    assert media_file.movie_id is None and media_file.role is None
+    assert media_file.location == 'ingest' and media_file.relative_path is None
+    assert media_file.target_path is None and media_file.organization_status == 'pending'

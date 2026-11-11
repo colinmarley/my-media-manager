@@ -9,10 +9,11 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from sqlalchemy import select
 
 from db.models import MediaAssignment as DBMediaAssignment
 from db.models import MediaFile as DBMediaFile
+from services import media_file_index
+from services.library_path_parser import ROLE_EPISODE
 from services.metadata_enrichment_service import metadata_enrichment_service
 from utils.logging import logger
 
@@ -228,6 +229,7 @@ class AssignmentOrchestrator:
                             db_assignment.organization_error = organization_result.get("error")
                             db_assignment.operations = organization_result.get("operations") or []
 
+                            media_file = None
                             if db_assignment.primary_file_id:
                                 media_file = await session.get(DBMediaFile, db_assignment.primary_file_id)
                                 if media_file is not None:
@@ -236,6 +238,15 @@ class AssignmentOrchestrator:
                                     target_path = organization_result.get("targetPath")
                                     if target_path:
                                         media_file.target_path = target_path
+
+                            await self._relocate_organized_files(
+                                session,
+                                media_file,
+                                queue_item,
+                                media_type,
+                                assignment_doc,
+                                organization_result,
+                            )
 
                             await session.commit()
 
@@ -313,12 +324,10 @@ class AssignmentOrchestrator:
         if not file_path:
             return None
 
-        result = await session.execute(select(DBMediaFile).where(DBMediaFile.file_path == file_path))
-        media_file = result.scalar_one_or_none()
-
+        # A late call for a file that was organized since finds its organized row.
+        media_file = await media_file_index.resolve_current(session, file_path)
         if media_file is None:
-            media_file = DBMediaFile(id=str(uuid.uuid4()), file_path=file_path)
-            session.add(media_file)
+            media_file = await media_file_index.upsert_by_path(session, file_path)
 
         media_file.file_name = queue_item.get("file_name") or media_file.file_name
         media_file.file_size = queue_item.get("file_size")
@@ -328,3 +337,84 @@ class AssignmentOrchestrator:
 
         await session.flush()
         return media_file
+
+    async def _relocate_organized_files(
+        self,
+        session: Any,
+        media_file: Optional[DBMediaFile],
+        queue_item: Dict[str, Any],
+        media_type: str,
+        assignment_doc: Dict[str, Any],
+        organization_result: Dict[str, Any],
+    ) -> None:
+        """Point the moved files' rows at where the organizer really put them.
+
+        The primary file's row follows its move's ``destination`` (not the
+        destination folder in ``targetPath``), gets its library placement and
+        the catalog title the organizer wrote (``catalogId``). Extras moved in
+        the same plan follow theirs. Best effort: the files are already moved,
+        and the inventory scan heals the rows from ``ingest_operations``.
+        """
+        if not organization_result or not organization_result.get("success"):
+            return
+        try:
+            moves = [
+                op for op in (organization_result.get("operations") or [])
+                if isinstance(op, dict) and op.get("success") and op.get("source") and op.get("destination")
+            ]
+            if not moves:
+                return
+            primary_source = media_file_index.normalize_path(queue_item.get("file_path"))
+            primary = next(
+                (op for op in moves if media_file_index.normalize_path(op["source"]) == primary_source),
+                moves[0],
+            )
+            catalog_id = organization_result.get("catalogId")
+            is_series = media_type in ("episode", "series")
+
+            async with media_file_index.savepoint(session):
+                for op in moves:
+                    await self._relocate_one(
+                        session, op, op is primary, media_file, catalog_id, is_series, assignment_doc
+                    )
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Could not relocate media_files rows after organize; the inventory scan will heal them",
+                queue_item_id=queue_item.get("id"),
+                error=str(exc),
+            )
+
+    @staticmethod
+    async def _relocate_one(
+        session: Any,
+        op: Dict[str, Any],
+        is_primary: bool,
+        media_file: Optional[DBMediaFile],
+        catalog_id: Optional[str],
+        is_series: bool,
+        assignment_doc: Dict[str, Any],
+    ) -> None:
+        row = media_file if (is_primary and media_file is not None) else None
+        relocated = await media_file_index.relocate(session, op["source"], op["destination"], row=row)
+        if relocated is None:
+            return
+        if catalog_id:
+            if is_series:
+                relocated.series_id = catalog_id
+            else:
+                relocated.movie_id = catalog_id
+        if is_primary and is_series and relocated.role == ROLE_EPISODE:
+            # The plan's numbers win over what the name parses to.
+            if assignment_doc.get("seasonNumber") is not None:
+                relocated.season_number = assignment_doc.get("seasonNumber")
+            if assignment_doc.get("episodeNumber") is not None:
+                relocated.episode_number = assignment_doc.get("episodeNumber")
+            if assignment_doc.get("episodeEnd") is not None:
+                relocated.episode_end_number = assignment_doc.get("episodeEnd")
+        if is_primary and media_file is not None and relocated is not media_file:
+            # A merge kept an older row for this file; the assignment was repointed to it.
+            logger.info(
+                "Organized file merged into an existing media_files row",
+                kept_id=relocated.id,
+                dropped_id=media_file.id,
+            )

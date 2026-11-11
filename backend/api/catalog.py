@@ -22,7 +22,7 @@ from db.models import Movie, Series, Disc, DiscSet, DiscMediaLink, Tape, TapeMed
 from api.mobile_auth import require_any_auth
 from services.catalog_stats import RECENT_DAYS_DEFAULT, build_catalog_stats
 from config.settings import settings
-from services import storage_paths
+from services import media_file_index, storage_paths
 from utils.logging import logger
 
 router = APIRouter(prefix="/api/catalog", tags=["Catalog"])
@@ -235,7 +235,21 @@ def _with_kept_blobs(row, body: dict[str, Any]) -> dict[str, Any]:
     return kept
 
 
-def _media_file_to_dict(row: MediaFile) -> dict:
+def _iso(value: Any) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _source_summary(row: Any, format_field: str) -> dict | None:
+    """``{id, title, format}`` of a linked disc (``format``) or tape (``tape_type``)."""
+    if row is None:
+        return None
+    return {"id": row.id, "title": row.title, "format": getattr(row, format_field, None)}
+
+
+def _media_file_to_dict(row: MediaFile, disc: Any = None, tape: Any = None) -> dict:
+    """File DTO. The first nine keys are the original shape (the mobile app
+    reads them); everything after is additive. ``disc`` / ``tape`` are filled
+    only when the caller passes the linked rows, else null."""
     return {
         "id": row.id,
         "fileName": row.file_name,
@@ -245,7 +259,34 @@ def _media_file_to_dict(row: MediaFile) -> dict:
         "assignmentStatus": row.assignment_status,
         "targetPath": row.target_path,
         "organizationStatus": row.organization_status,
-        "createdAt": row.created_at.isoformat() if row.created_at else None,
+        "createdAt": _iso(row.created_at),
+        # Inventory (additive).
+        "relativePath": row.relative_path,
+        "role": row.role,
+        "seasonNumber": row.season_number,
+        "episodeNumber": row.episode_number,
+        "episodeEndNumber": row.episode_end_number,
+        "location": row.location,
+        "container": row.container,
+        "videoCodec": row.video_codec,
+        "resolutionCategory": row.resolution_category,
+        "width": row.width,
+        "height": row.height,
+        "hdrFormat": row.hdr_format,
+        "audioCodec": row.audio_codec,
+        "audioChannels": row.audio_channels,
+        "durationMs": row.duration_ms,
+        "bitrate": row.bitrate,
+        "probedAt": _iso(row.probed_at),
+        "probeError": row.probe_error,
+        "isAvailable": row.is_available,
+        "missingSince": _iso(row.missing_since),
+        "discId": row.disc_id,
+        "tapeId": row.tape_id,
+        "movieId": row.movie_id,
+        "seriesId": row.series_id,
+        "disc": _source_summary(disc, "format"),
+        "tape": _source_summary(tape, "tape_type"),
     }
 
 
@@ -1007,7 +1048,12 @@ async def list_media_discs_and_tapes(
     """
     if media_type not in ("movie", "series"):
         raise HTTPException(status_code=400, detail="media_type must be 'movie' or 'series'")
+    return await discs_and_tapes_for_media(db, media_type, media_id)
 
+
+async def discs_and_tapes_for_media(db: AsyncSession, media_type: str, media_id: str) -> dict[str, list[dict]]:
+    """Discs and tapes linked to a movies/series row (``media_type`` is the table:
+    ``movie`` or ``series``), via the link tables or the legacy raw_data.mediaId."""
     linked_disc_ids = (await db.execute(
         select(DiscMediaLink.disc_id).where(
             DiscMediaLink.media_type == media_type, DiscMediaLink.media_id == media_id
@@ -1090,15 +1136,12 @@ async def link_source_media(body: dict[str, Any], db: AsyncSession = Depends(get
 
     linked: list[str] = []
     for file_path in file_paths:
-        result = await db.execute(select(MediaFile).where(MediaFile.file_path == file_path))
-        media_file = result.scalar_one_or_none()
+        # A call that arrives after the file was organized finds the organized
+        # row (through the recorded move) instead of leaving an orphan at the
+        # ingest path.
+        media_file = await media_file_index.resolve_current(db, file_path)
         if media_file is None:
-            media_file = MediaFile(
-                id=str(uuid.uuid4()),
-                file_path=file_path,
-                file_name=os.path.basename(file_path),
-            )
-            db.add(media_file)
+            media_file = await media_file_index.upsert_by_path(db, file_path)
         if disc_id:
             media_file.disc_id = disc_id
         if tape_id:

@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
+from services import media_file_index
 from utils.logging import logger
 
 OP_MOVE = "move"
@@ -318,12 +319,15 @@ class IngestUndoService:
                 assignment.organization_date = None
                 assignment.organization_error = None
                 assignment.operations = []
+                media_file = None
                 if assignment.primary_file_id:
                     media_file = await session.get(MediaFile, assignment.primary_file_id)
                     if media_file is not None:
                         media_file.target_path = None
                         media_file.organization_status = "pending"
                         media_file.needs_organization = True
+                        media_file_index.clear_title_links(media_file)
+                await self._restore_media_file_paths(session, operations, media_file)
 
                 model = Series if assignment.media_type in ("episode", "series") else Movie
                 row = await session.get(model, assignment.media_id) if assignment.media_id else None
@@ -343,6 +347,29 @@ class IngestUndoService:
                 await session.commit()
         except Exception as exc:
             logger.warning("Failed to clear catalog after undo", assignment_id=assignment_id, error=str(exc))
+
+    @staticmethod
+    async def _restore_media_file_paths(session: Any, operations: List[Dict[str, Any]], primary: Any) -> None:
+        """Move each undone file's row back to the move's ``src`` and drop its library placement.
+
+        Best effort, like the rest of the catalog clean-up: the files are
+        already back, and the inventory scan reconciles the rows.
+        """
+        try:
+            async with media_file_index.savepoint(session):
+                for op in operations:
+                    if op.get("op") != OP_MOVE or not op.get("src") or not op.get("dst"):
+                        continue
+                    row = None
+                    if primary is not None and media_file_index.normalize_path(
+                        getattr(primary, "file_path", None)
+                    ) == media_file_index.normalize_path(op["dst"]):
+                        row = primary
+                    restored = await media_file_index.relocate(session, op["dst"], op["src"], row=row)
+                    if restored is not None:
+                        media_file_index.clear_title_links(restored)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Could not restore media_files paths after undo", error=str(exc))
 
     @staticmethod
     def _owns_folder(folder: str, moved_dirs: set) -> bool:

@@ -19,7 +19,7 @@ from config.settings import settings
 from db.database import get_db
 from db.models import MediaAssignment, MediaFile, Movie, Series
 from services.ingest_operations import IngestUndoService, OperationLog, UndoError
-from services import storage_paths
+from services import media_file_index, storage_paths
 from services.ingress_queue_service import QueueItemBusy
 from services.ingress_triage_service import (
     QUEUE_GROUP_BY,
@@ -199,6 +199,29 @@ def _apply_reset_move_pairs(
         "reset_results": reset_results,
         "failures": failures,
     }
+
+
+async def _relocate_reset_files(db: AsyncSession, reset_results: List[Dict[str, Any]]) -> None:
+    """Move the rows of files reset back to ingest to their encoded paths.
+
+    Best effort: the files are already back, a DB failure must not undo or
+    fail the reset (the inventory scan reconciles the rows later).
+    """
+    for result in reset_results:
+        if not result.get("success"):
+            continue
+        try:
+            async with media_file_index.savepoint(db):
+                row = await media_file_index.relocate(db, result["source"], result["destination"])
+                if row is not None:
+                    media_file_index.clear_title_links(row)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(
+                "Could not relocate media_files row after reset",
+                source=result.get("source"),
+                destination=result.get("destination"),
+                error=str(exc),
+            )
 
 
 def _queue_existing_files_background(
@@ -779,6 +802,7 @@ async def reset_ingress_item_to_encoded(
     reset_result = _apply_reset_move_pairs(file_manager, move_pairs)
     reset_results = reset_result["reset_results"]
     failures = reset_result["failures"]
+    await _relocate_reset_files(db, reset_results)
 
     # Update the assignment (and its primary file, if any) status after reset attempt.
     assignment.organization_status = "pending" if len(failures) == 0 else "failed"
@@ -909,6 +933,7 @@ async def reset_completed_items_to_encoded(req: Request, db: AsyncSession = Depe
         reset_results = reset_result["reset_results"]
         failures = reset_result["failures"]
         files_reset += sum(1 for r in reset_results if r.get("success"))
+        await _relocate_reset_files(db, reset_results)
 
         assignment.organization_status = "pending" if len(failures) == 0 else "failed"
         if assignment.primary_file_id:

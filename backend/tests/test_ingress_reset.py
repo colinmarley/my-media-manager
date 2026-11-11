@@ -52,6 +52,10 @@ def _make_db(*, assignment=None, media_file=None):
 
     session.get = AsyncMock(side_effect=fake_get)
     session.commit = AsyncMock()
+    savepoint = MagicMock()
+    savepoint.__aenter__ = AsyncMock(return_value=savepoint)
+    savepoint.__aexit__ = AsyncMock(return_value=False)
+    session.begin_nested = MagicMock(return_value=savepoint)
     return session
 
 
@@ -246,5 +250,74 @@ class TestResetCompletedItemsToEncoded:
             assert body["success"] is False
             assert body["data"]["itemsReset"] == 0
             assert "missing-assign" in body["data"]["errors"][0]
+        finally:
+            app.dependency_overrides.clear()
+
+
+class TestResetRelocatesMediaFileRows:
+    @pytest.mark.asyncio
+    async def test_reset_moves_the_row_back_to_the_encoded_path(self, app, monkeypatch):
+        from db.database import get_db
+        from db.models import MediaAssignment, MediaFile
+        from services import media_file_index, storage_paths
+        from tests.fake_db import FakeSession
+
+        storage_paths.set_overrides({"jellyfinDestBase": "/ark/library", "defaultIngressPaths": ["/ark/encoded"]})
+        organized = "/ark/library/Movies/Movie (2020)/Movie.mkv"
+        media_file = MediaFile(id="file-1", file_name="Movie.mkv", disc_id="disc-1")
+        media_file_index.apply_path(media_file, organized)
+        media_file.movie_id = "m1"
+        assignment = MediaAssignment(
+            id="assign-1", media_type="movie", media_id="m1", primary_file_id="file-1",
+            operations=[{"source": "/ark/encoded/movie.mkv", "destination": organized}],
+        )
+        session = FakeSession([assignment, media_file])
+        queue_item = _make_queue_item()
+        _wire_app_state(app, queue_item=queue_item, file_manager=MagicMock())
+
+        async def override_db():
+            yield session
+
+        app.dependency_overrides[get_db] = override_db
+        try:
+            monkeypatch.setattr("os.path.exists", lambda path: True)
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post("/api/ingress/queue/reset-to-encoded", json={"itemId": queue_item.id})
+            assert resp.status_code == 200, resp.text
+            assert media_file.id == "file-1" and media_file.disc_id == "disc-1"
+            assert media_file.file_path == "/ark/encoded/movie.mkv"
+            assert media_file.location == "ingest" and media_file.relative_path is None
+            assert media_file.movie_id is None and media_file.role is None
+            assert media_file.organization_status == "pending" and media_file.target_path is None
+        finally:
+            app.dependency_overrides.clear()
+            storage_paths.clear_overrides()
+
+    @pytest.mark.asyncio
+    async def test_a_database_failure_does_not_fail_the_reset(self, app, monkeypatch):
+        from db.database import get_db
+        from services import media_file_index
+
+        queue_item = _make_queue_item()
+        file_manager = MagicMock()
+        _wire_app_state(app, queue_item=queue_item, file_manager=file_manager)
+        db = _make_db(assignment=_make_assignment())
+
+        async def broken_relocate(*args, **kwargs):
+            raise RuntimeError("database went away")
+
+        monkeypatch.setattr(media_file_index, "relocate", broken_relocate)
+
+        async def override_db():
+            yield db
+
+        app.dependency_overrides[get_db] = override_db
+        try:
+            monkeypatch.setattr("os.path.exists", lambda path: True)
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post("/api/ingress/queue/reset-to-encoded", json={"itemId": queue_item.id})
+            assert resp.status_code == 200
+            assert resp.json()["data"]["filesReset"] == 1
+            file_manager.move_file.assert_called_once()
         finally:
             app.dependency_overrides.clear()

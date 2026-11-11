@@ -9,13 +9,16 @@ import re
 import shutil
 import mimetypes
 import xml.etree.ElementTree as ET
-from typing import List, Dict, Optional
+from typing import Any, List, Dict, Optional, Tuple
 from xml.sax.saxutils import escape
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException, Header
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 from config.settings import settings
-from services import storage_paths
+from db.database import get_db
+from services import media_file_index, storage_paths
+from utils.logging import logger
 from services.jellyfin_movie_organizer import JellyfinMovieOrganizer
 from services.jellyfin_show_organizer import JellyfinShowOrganizer
 from services.path_builder import PathBuilder
@@ -517,23 +520,107 @@ def _build_episode_nfo(series_title: str, season_number: int, episode_number: in
     ])
 
 
-def _merge_dir_into(src_dir: str, dst_dir: str, ops: List[str]) -> None:
+def _merge_dir_into(
+    src_dir: str,
+    dst_dir: str,
+    ops: List[str],
+    moved: Optional[List[Tuple[str, str]]] = None,
+) -> None:
     """Recursively merge *src_dir* into *dst_dir*, then remove *src_dir*.
 
     Handles SMB/CIFS mounts where os.rename() on a non-empty directory fails
     with ENOTEMPTY instead of EXDEV, causing shutil.move() to raise rather than
-    falling back to copy+delete.
+    falling back to copy+delete. Each file move is appended to *moved*.
     """
     os.makedirs(dst_dir, exist_ok=True)
     for entry in os.listdir(src_dir):
         src_entry = os.path.join(src_dir, entry)
         if os.path.isdir(src_entry):
-            _merge_dir_into(src_entry, os.path.join(dst_dir, entry), ops)
+            _merge_dir_into(src_entry, os.path.join(dst_dir, entry), ops, moved)
         else:
             unique_dst = _ensure_unique_path(os.path.join(dst_dir, entry))
             shutil.move(src_entry, unique_dst)
+            if moved is not None:
+                moved.append((src_entry, unique_dst))
             ops.append(f"Merged {entry} → {os.path.relpath(unique_dst, dst_dir)}")
     shutil.rmtree(src_dir)
+
+
+def _stored_path(path: str, dest_base: str) -> str:
+    """A path under the realpath'd library root, spelled under the configured root (as stored)."""
+    rel = storage_paths.relative_to(path, dest_base)
+    if rel is None:
+        return path
+    return storage_paths.from_library_relative(rel) if rel else storage_paths.library_root()
+
+
+async def _sync_media_file_index(
+    db: Any,
+    dest_base: str,
+    *,
+    tree_moves: Optional[List[Tuple[str, str]]] = None,
+    file_moves: Optional[List[Tuple[str, str]]] = None,
+    media_type: Optional[str] = None,
+    imdb_id: Optional[str] = None,
+) -> None:
+    """Move the media_files rows after a filesystem move (best effort).
+
+    The move already happened: a database failure is logged and left for the
+    next inventory scan to heal, never raised. With an IMDb id the moved rows
+    are linked to the one catalog row that has it.
+    """
+    if not tree_moves and not file_moves:
+        return
+    try:
+        relocated: List[Any] = []
+        for old_dir, new_dir in tree_moves or []:
+            await media_file_index.relocate_tree(
+                db, _stored_path(old_dir, dest_base), _stored_path(new_dir, dest_base)
+            )
+            relocated.extend(await _rows_under(db, _stored_path(new_dir, dest_base)))
+        for old_path, new_path in file_moves or []:
+            row = await media_file_index.relocate(
+                db, _stored_path(old_path, dest_base), _stored_path(new_path, dest_base)
+            )
+            if row is not None:
+                relocated.append(row)
+        if imdb_id and relocated:
+            await _link_rows_by_imdb(db, relocated, media_type, imdb_id)
+        await db.commit()
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.warning("Could not update media_files after a library move; the next scan heals it", error=str(exc))
+        try:
+            await db.rollback()
+        except Exception:  # pylint: disable=broad-except
+            pass
+
+
+async def _rows_under(db: Any, directory: str) -> List[Any]:
+    from sqlalchemy import select
+    from db.models import MediaFile
+
+    result = await db.execute(
+        select(MediaFile).where(
+            MediaFile.file_path.like(media_file_index.like_prefix(media_file_index.normalize_path(directory)), escape="\\")
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def _link_rows_by_imdb(db: Any, rows: List[Any], media_type: Optional[str], imdb_id: str) -> None:
+    from sqlalchemy import select
+    from db.models import Movie, Series
+
+    model = Series if media_type in ("series", "episode", "tv") else Movie
+    result = await db.execute(select(model.id).where(model.imdb_id == imdb_id).limit(2))
+    ids = [row[0] for row in result.all()]
+    if len(ids) != 1:
+        return
+    for row in rows:
+        if model is Series:
+            row.series_id, row.movie_id = ids[0], None
+        else:
+            row.movie_id, row.series_id = ids[0], None
 
 
 def _ensure_unique_path(path: str) -> str:
@@ -710,7 +797,7 @@ def _category_subfolder(media_type: str) -> str:
 
 
 @router.post("/dest-folder/reassign-folder")
-async def reassign_folder(request: ReassignFolderRequest):
+async def reassign_folder(request: ReassignFolderRequest, db: AsyncSession = Depends(get_db)):
     """Rename a media folder and every file inside it to match the new media, and rewrite the NFO.
 
     - Folder is renamed to Jellyfin format: Title (Year) [imdbid-ttXXX]
@@ -743,6 +830,8 @@ async def reassign_folder(request: ReassignFolderRequest):
 
     ops: List[str] = []
     errors: List[str] = []
+    tree_moves: List[Tuple[str, str]] = []
+    file_moves: List[Tuple[str, str]] = []
 
     try:
         # 1. Rename / move the folder
@@ -757,11 +846,12 @@ async def reassign_folder(request: ReassignFolderRequest):
                 for entry in os.listdir(current_path):
                     src_entry = os.path.join(current_path, entry)
                     if os.path.isdir(src_entry):
-                        _merge_dir_into(src_entry, os.path.join(new_folder_path, entry), ops)
+                        _merge_dir_into(src_entry, os.path.join(new_folder_path, entry), ops, file_moves)
                         ops.append(f"Merged subdirectory: {entry}")
                     else:
                         dst_entry = _ensure_unique_path(os.path.join(new_folder_path, entry))
                         shutil.move(src_entry, dst_entry)
+                        file_moves.append((src_entry, dst_entry))
                         ops.append(f"Merged {entry} → {os.path.basename(dst_entry)}")
                 # rmtree handles any hidden SMB metadata files (._*) left behind
                 shutil.rmtree(current_path)
@@ -769,6 +859,7 @@ async def reassign_folder(request: ReassignFolderRequest):
                 merged_into_existing = True
             else:
                 shutil.move(current_path, new_folder_path)
+                tree_moves.append((current_path, new_folder_path))
                 ops.append(f"Moved folder → {new_folder_path}")
         else:
             ops.append("Folder path unchanged")
@@ -784,6 +875,7 @@ async def reassign_folder(request: ReassignFolderRequest):
                     dst = os.path.join(new_folder_path, new_filename)
                     if src != dst:
                         os.rename(src, dst)
+                        file_moves.append((src, dst))
                         ops.append(f"Renamed {entry} → {new_filename}")
 
         if is_custom_mode:
@@ -814,6 +906,11 @@ async def reassign_folder(request: ReassignFolderRequest):
     except Exception as exc:
         errors.append(str(exc))
 
+    await _sync_media_file_index(
+        db, dest_base, tree_moves=tree_moves, file_moves=file_moves,
+        media_type=request.mediaType, imdb_id=imdb_id,
+    )
+
     return {
         "success": len(errors) == 0,
         "data": {
@@ -825,7 +922,7 @@ async def reassign_folder(request: ReassignFolderRequest):
 
 
 @router.post("/dest-folder/reassign-file")
-async def reassign_file(request: ReassignFileRequest):
+async def reassign_file(request: ReassignFileRequest, db: AsyncSession = Depends(get_db)):
     """Move a single file to the correct media folder and write/update the NFO.
 
     - Calculates the Jellyfin destination folder from newTitle/year/imdbId
@@ -865,6 +962,7 @@ async def reassign_file(request: ReassignFileRequest):
 
     ops: List[str] = []
     errors: List[str] = []
+    file_moves: List[Tuple[str, str]] = []
 
     try:
         folder_preexisted = os.path.exists(target_dir)
@@ -888,6 +986,7 @@ async def reassign_file(request: ReassignFileRequest):
             target_file = _ensure_unique_path(os.path.join(target_dir, new_folder_name + ext))
 
         shutil.move(file_path, target_file)
+        file_moves.append((file_path, target_file))
         ops.append(f"Moved file → {target_file}")
 
         # Write NFO only for main_feature, and only if one doesn't exist yet.
@@ -925,6 +1024,10 @@ async def reassign_file(request: ReassignFileRequest):
     except Exception as exc:
         errors.append(str(exc))
 
+    await _sync_media_file_index(
+        db, dest_base, file_moves=file_moves, media_type=request.mediaType, imdb_id=imdb_id,
+    )
+
     return {
         "success": len(errors) == 0,
         "data": {
@@ -937,7 +1040,7 @@ async def reassign_file(request: ReassignFileRequest):
 
 
 @router.post("/dest-folder/assign-episode")
-async def assign_episode_file(request: AssignEpisodeFileRequest):
+async def assign_episode_file(request: AssignEpisodeFileRequest, db: AsyncSession = Depends(get_db)):
     """Move a file into the correct series season folder and optionally rename it to an episode."""
     dest_base = os.path.realpath(storage_paths.library_root())
     file_path = _check_in_dest(request.filePath, dest_base)
@@ -971,6 +1074,7 @@ async def assign_episode_file(request: AssignEpisodeFileRequest):
     target_file = _ensure_unique_path(os.path.join(target_season_dir, new_filename))
     ops: List[str] = []
     errors: List[str] = []
+    file_moves: List[Tuple[str, str]] = []
 
     try:
         os.makedirs(target_season_dir, exist_ok=True)
@@ -978,6 +1082,7 @@ async def assign_episode_file(request: AssignEpisodeFileRequest):
 
         if os.path.realpath(file_path) != os.path.realpath(target_file):
             shutil.move(file_path, target_file)
+            file_moves.append((file_path, target_file))
             ops.append(f"Moved file → {target_file}")
         else:
             ops.append("File already in the correct location")
@@ -1004,6 +1109,8 @@ async def assign_episode_file(request: AssignEpisodeFileRequest):
 
     except Exception as exc:
         errors.append(str(exc))
+
+    await _sync_media_file_index(db, dest_base, file_moves=file_moves)
 
     return {
         "success": len(errors) == 0,

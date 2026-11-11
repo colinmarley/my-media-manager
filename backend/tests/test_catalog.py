@@ -65,7 +65,18 @@ def _make_media_file(
     row.created_at = None
     row.disc_id = disc_id
     row.tape_id = tape_id
+    # Inventory columns (all unset for a file that was never scanned).
+    for name in INVENTORY_FIELDS:
+        setattr(row, name, None)
     return row
+
+
+INVENTORY_FIELDS = (
+    "relative_path", "role", "season_number", "episode_number", "episode_end_number", "location",
+    "container", "video_codec", "resolution_category", "width", "height", "hdr_format",
+    "audio_codec", "audio_channels", "duration_ms", "bitrate", "probed_at", "probe_error",
+    "is_available", "missing_since", "movie_id", "series_id",
+)
 
 
 def _make_sequential_db(*results):
@@ -1611,5 +1622,99 @@ class TestMobileTokenAuthOnCatalogRoutes:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.delete("/api/catalog/discs/disc1")
             assert resp.status_code == 401
+        finally:
+            app.dependency_overrides.clear()
+
+
+# ===========================================================================
+# Inventory: link-source after organize, and the file DTO superset
+# ===========================================================================
+
+class TestLinkSourceAndFileDto:
+    ORIGINAL_KEYS = [
+        "id", "fileName", "filePath", "fileSize", "detectedMediaType",
+        "assignmentStatus", "targetPath", "organizationStatus", "createdAt",
+    ]
+
+    @pytest.mark.asyncio
+    async def test_late_link_source_attaches_the_disc_to_the_organized_row(self, app, monkeypatch):
+        from datetime import datetime, timezone
+        from db.database import get_db
+        from db.models import IngestOperation, MediaFile
+        from tests.fake_db import FakeSession
+
+        organized = MediaFile(
+            id="organized", file_path="/ark/media/jellyfin/Movies/A (2000)/A (2000).mkv", file_name="A (2000).mkv",
+        )
+        session = FakeSession([
+            organized,
+            IngestOperation(id="o1", op="move", src="/ark/media/ingest/rip/title_t00.mkv", dst=organized.file_path,
+                            status="done", undone_at=None, created_at=datetime(2026, 1, 1, tzinfo=timezone.utc)),
+        ])
+        monkeypatch.setattr("services.media_file_index._default_exists", lambda path: False)
+
+        async def override_db():
+            yield session
+
+        app.dependency_overrides[get_db] = override_db
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post("/api/catalog/link-source", json={
+                    "filePaths": ["/ark/media/ingest/rip/title_t00.mkv"], "discId": "disc-1",
+                })
+            assert resp.status_code == 200
+            assert organized.disc_id == "disc-1"
+            assert len(session.all_of(MediaFile)) == 1  # no orphan at the ingest path
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_link_source_before_organize_creates_the_row_at_the_ingest_path(self, app, monkeypatch):
+        from db.database import get_db
+        from db.models import MediaFile
+        from tests.fake_db import FakeSession
+
+        session = FakeSession()
+        monkeypatch.setattr("services.media_file_index._default_exists", lambda path: True)
+
+        async def override_db():
+            yield session
+
+        app.dependency_overrides[get_db] = override_db
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.post("/api/catalog/link-source", json={
+                    "filePaths": ["/ark/media/ingest/rip/title_t00.mkv"], "tapeId": "tape-1",
+                })
+            assert resp.status_code == 200
+            (row,) = session.all_of(MediaFile)
+            assert row.file_path == "/ark/media/ingest/rip/title_t00.mkv"
+            assert row.file_name == "title_t00.mkv" and row.tape_id == "tape-1"
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_disc_files_keep_the_original_nine_keys_and_gain_inventory_fields(self, app):
+        from db.database import get_db
+
+        row = _make_media_file(disc_id="disc1")
+        row.video_codec = "HEVC"
+        row.resolution_category = "4K"
+        db = _make_db(rows=[row])
+
+        async def override():
+            yield db
+
+        app.dependency_overrides[get_db] = override
+        try:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                resp = await ac.get("/api/catalog/discs/disc1/files")
+            assert resp.status_code == 200
+            dto = resp.json()[0]
+            assert list(dto)[:9] == self.ORIGINAL_KEYS
+            assert dto["fileName"] == "Test File.mkv" and dto["fileSize"] == 123456789
+            assert dto["createdAt"] is None
+            assert dto["videoCodec"] == "HEVC" and dto["resolutionCategory"] == "4K"
+            assert dto["discId"] == "disc1" and dto["disc"] is None and dto["tape"] is None
         finally:
             app.dependency_overrides.clear()
