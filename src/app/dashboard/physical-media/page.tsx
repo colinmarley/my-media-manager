@@ -30,6 +30,7 @@ function LoanChip({ item }: { item: CatalogDisc | CatalogTape }) {
 import {
   filterByStorageLocation, formatStorageLocation, listStorageLocations, NO_LOCATION,
 } from '@/utils/storageLocation';
+import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
 
 export default function PhysicalMediaPage() {
   const [tab, setTab] = useState<'discs' | 'tapes'>('discs');
@@ -64,11 +65,11 @@ export default function PhysicalMediaPage() {
   const [deletingTape, setDeletingTape] = useState<CatalogTape | null>(null);
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Typography variant="h4" sx={{ mb: 1 }}>Physical Media</Typography>
-      <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        Everything you own on disc or tape, and the files ripped/digitized from each.
-      </Typography>
+    <PageContainer>
+      <PageHeader
+        title="Discs & Tapes"
+        subtitle="Everything you own on disc or tape, and the files ripped or digitized from each."
+      />
 
       <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}>
         <Tabs value={tab} onChange={(_, v) => setTab(v)}>
@@ -284,6 +285,6 @@ export default function PhysicalMediaPage() {
           }
         }}
       />
-    </Box>
+    </PageContainer>
   );
 }

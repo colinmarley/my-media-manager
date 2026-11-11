@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import TestLibraryScanner from './_components/TestLibraryScanner';
 import FolderBrowser from './_components/FolderBrowser';
 import LibraryMaintenancePanel from './_components/LibraryMaintenancePanel';
+import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
 import {
   Box,
   Typography,
@@ -79,6 +79,9 @@ function TabPanel(props: TabPanelProps) {
   );
 }
 
+/** Tab order below; `?tab=` accepts these keys. */
+const LIBRARY_TAB_KEYS = ['paths', 'scan', 'files', 'settings'];
+
 const LibraryManagementPage: React.FC = () => {
   const { authenticated } = useAuthenticationStore();
   const notify = useNotify();
@@ -136,6 +139,13 @@ const LibraryManagementPage: React.FC = () => {
     } catch (storageError) {
       console.error('Failed to load saved library settings:', storageError);
     }
+  }, []);
+
+  // Deep link: /admin/library?tab=settings (linked from Settings > Library & Naming).
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('tab');
+    const index = requested ? LIBRARY_TAB_KEYS.indexOf(requested) : -1;
+    if (index >= 0) setCurrentTab(index);
   }, []);
 
   // Load scan results when tab changes
@@ -352,23 +362,17 @@ const LibraryManagementPage: React.FC = () => {
   };
 
   return (
-    <Box sx={{ p: 4 }}>
-      <Typography variant="h4" gutterBottom>
-        Media Library Management
-      </Typography>
+    <PageContainer>
+      <PageHeader
+        title="Library Paths"
+        subtitle="The library folders the app scans and organizes into, plus naming and matching settings."
+      />
 
       {!authenticated && (
         <Alert severity="warning" sx={{ mb: 3 }}>
           Please log in to manage your library paths and access scan results.
         </Alert>
       )}
-
-      {/* Temporary test component for backend integration */}
-      <Card sx={{ mb: 3, backgroundColor: '#fff3e0' }}>
-        <CardContent>
-          <TestLibraryScanner />
-        </CardContent>
-      </Card>
 
       {error && (
         <Alert severity="error" onClose={clearError} sx={{ mb: 2 }}>
@@ -931,7 +935,7 @@ const LibraryManagementPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
-    </Box>
+    </PageContainer>
   );
 };
 

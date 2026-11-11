@@ -57,7 +57,7 @@ test('disc edit dialog opens pre-filled, and cancelling changes nothing', async 
   });
 
   await page.goto('/dashboard/physical-media');
-  await expect(page.getByRole('heading', { name: 'Physical Media' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Discs & Tapes' })).toBeVisible();
   await page.getByRole('tab', { name: /Discs/ }).click();
 
   const row = page.locator('tbody tr').first();

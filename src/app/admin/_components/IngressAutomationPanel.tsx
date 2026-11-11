@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { Box, CircularProgress, Grid, Typography } from '@mui/material';
+import { Box, CircularProgress, Grid } from '@mui/material';
 import FolderBrowser from '@/app/admin/library/_components/FolderBrowser';
 import IngressStatusAlerts from './ingress/IngressStatusAlerts';
 import IngressStatusSummary from './ingress/IngressStatusSummary';
@@ -63,10 +63,6 @@ const IngressAutomationPanel: React.FC = () => {
 
   return (
     <Box>
-      <Typography variant="h5" sx={{ mb: 2 }}>
-        Ingress Automation
-      </Typography>
-
       <IngressStatusAlerts
         error={status.error}
         statusMessage={status.statusMessage}

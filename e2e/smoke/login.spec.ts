@@ -5,7 +5,7 @@ import { login } from '../support/auth';
 
 test('logs in with the configured passphrase and reaches the dashboard', async ({ page }) => {
   await login(page);
-  await expect(page.getByText('Choose a workspace below.')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Home' })).toBeVisible();
 });
 
 test('rejects an incorrect passphrase', async ({ page }) => {
