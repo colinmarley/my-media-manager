@@ -15,8 +15,10 @@ export type {
   StartJobRequest,
 } from '@/types/disc-ripper/DiscRipper.type';
 
-const BASE = process.env.NEXT_PUBLIC_DISC_RIPPER_URL ?? 'http://localhost:8083';
-const api = axios.create({ baseURL: BASE });
+// Same-origin proxy (src/app/api/disc-ripper): it holds the ripper's address
+// (DISC_RIPPER_URL) and sits behind the session check in middleware.ts.
+export const DISC_RIPPER_PROXY_BASE = '/api/disc-ripper';
+const api = axios.create({ baseURL: DISC_RIPPER_PROXY_BASE });
 
 function formatDuration(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -57,12 +59,17 @@ export const DiscRipperService = {
   },
 
   streamUrl(jobId: string, fileIndex: number): string {
-    return `/api/disc-ripper/jobs/${jobId}/files/${fileIndex}/stream`;
+    return `${DISC_RIPPER_PROXY_BASE}/jobs/${jobId}/files/${fileIndex}/stream`;
+  },
+
+  /** Server-Sent Events stream of a job's log lines (ends with a `[EOF]` message). */
+  logStreamUrl(jobId: string): string {
+    return `${DISC_RIPPER_PROXY_BASE}/jobs/${jobId}/log`;
   },
 
   async getFileDuration(jobId: string, fileIndex: number): Promise<number | null> {
     try {
-      const res = await fetch(`/api/disc-ripper/jobs/${jobId}/files/${fileIndex}/metadata`);
+      const res = await fetch(`${DISC_RIPPER_PROXY_BASE}/jobs/${jobId}/files/${fileIndex}/metadata`);
       if (!res.ok) return null;
       const data = await res.json() as { duration?: number };
       return data.duration ?? null;

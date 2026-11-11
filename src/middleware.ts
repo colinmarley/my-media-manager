@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-const PUBLIC_PATHS = ['/login', '/_next', '/favicon.ico', '/api/backend', '/api/disc-ripper'];
+// /api/backend stays public: the backend enforces its own session/bearer auth
+// (and the login call itself goes through it). /api/disc-ripper is NOT public:
+// disc-ripper-service has no auth of its own, so the session check here is its
+// only gate. Nothing unauthenticated uses it (the ripper calls the backend
+// directly, the mobile app reads rip status via the backend's ripper proxy).
+const PUBLIC_PATHS = ['/login', '/_next', '/favicon.ico', '/api/backend'];
 const CORRELATION_HEADER = 'X-Correlation-ID';
 
 export function middleware(request: NextRequest) {
@@ -29,7 +34,13 @@ export function middleware(request: NextRequest) {
     return response;
   }
 
-  // All other paths require a session cookie.
+  // All other paths require a session cookie. API callers get a 401 rather
+  // than an HTML redirect to /login.
+  if (!sessionCookie && pathname.startsWith('/api/')) {
+    const response = NextResponse.json({ detail: 'Not authenticated' }, { status: 401 });
+    response.headers.set(CORRELATION_HEADER, correlationId);
+    return response;
+  }
   if (!sessionCookie) {
     const response = NextResponse.redirect(new URL('/login', request.url));
     response.headers.set(CORRELATION_HEADER, correlationId);
