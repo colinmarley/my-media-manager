@@ -384,6 +384,10 @@ class MediaFile(Base):
     probed_at           = Column(DateTime(timezone=True))
     probe_error         = Column(Text)
     missing_since       = Column(DateTime(timezone=True))
+    # A person's "look at this again" flag (migration ad1e2f3a4b5c).
+    needs_review        = Column(Boolean, nullable=False, default=False, server_default=sa.text("false"))
+    review_note         = Column(Text)
+    reviewed_at         = Column(DateTime(timezone=True))
     created_at          = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at          = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -555,6 +559,30 @@ class IngestOperation(Base):
     executed_at   = Column(DateTime(timezone=True))
     undone_at     = Column(DateTime(timezone=True))
     created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class AttentionDismissal(Base):
+    """A To-Do (attention) item someone dismissed (migration ad1e2f3a4b5c).
+
+    ``fingerprint`` is the fact that was dismissed (for a rename item, the
+    file's relative path then): once the fact changes the dismissal no longer
+    applies. ``dismissed_until`` null means until the fact changes.
+    """
+
+    __tablename__ = "attention_dismissals"
+
+    id              = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
+    kind            = Column(Text, nullable=False)
+    subject_type    = Column(Text, nullable=False)
+    subject_id      = Column(Text, nullable=False)
+    fingerprint     = Column(Text)
+    dismissed_until = Column(DateTime(timezone=True))
+    note            = Column(Text)
+    created_at      = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("kind", "subject_type", "subject_id", name="uq_attention_dismissals_subject"),
+    )
 
 
 class IngressProcessingHistory(Base):
