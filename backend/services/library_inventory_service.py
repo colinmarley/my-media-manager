@@ -429,6 +429,13 @@ class LibraryInventoryService:
                 self._progress["running"] = False
                 self._progress["finishedAt"] = self.clock()
                 self._running = False
+                # A scan changes what the To-Do list counts (new, missing,
+                # probed, relinked files), so drop the cached summary.
+                try:
+                    from services import attention_service
+                    attention_service.invalidate_summary()
+                except Exception:  # pylint: disable=broad-except
+                    logger.warning("Could not invalidate the To-Do summary after a scan")
         return self.status()
 
     def _check_cancel(self) -> None:
