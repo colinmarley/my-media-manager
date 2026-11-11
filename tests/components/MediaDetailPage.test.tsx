@@ -127,6 +127,19 @@ describe('LibraryMediaDetailPage', () => {
     expect(calls(fetchMock).some((c) => c.url.endsWith('/api/catalog/movies'))).toBe(false);
   });
 
+  it('shows the title’s To-Do banner under the header', async () => {
+    const fetchMock = stubFetch((url) =>
+      url.includes('/api/attention/items')
+        ? json({ items: [{ id: 'needs_rename:media_file:f1', kind: 'needs_rename', subjectType: 'media_file', subjectId: 'f1', mediaType: 'movie', mediaId: 'movie-1', catalogType: 'movie' }], total: 1 })
+        : undefined,
+    );
+    render(<LibraryMediaDetailPage />);
+
+    expect(await screen.findByText('1 file needs renaming')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open To-Do' })).toHaveAttribute('href', '/organize/todo?mediaType=movie&mediaId=movie-1');
+    expect(calls(fetchMock).some((c) => c.url.includes('/api/attention/items?mediaType=movie&mediaId=movie-1'))).toBe(true);
+  });
+
   it('opens on the Files tab and switches tabs through ?tab=', async () => {
     stubFetch();
     render(<LibraryMediaDetailPage />);

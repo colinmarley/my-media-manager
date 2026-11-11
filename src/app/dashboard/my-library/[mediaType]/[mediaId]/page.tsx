@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 
 import { PageContainer } from '@/components/ui/PageHeader';
+import TitleAttentionBanner from '@/components/attention/TitleAttentionBanner';
 import { useNotify } from '@/context/NotificationContext';
 import ReassignFilesDialog from '../../_components/ReassignFilesDialog';
 import DiskReassignDialog from '../../_components/DiskReassignDialog';
@@ -164,7 +165,13 @@ const LibraryMediaDetailPage = () => {
         summary={record.summary}
         sourceCount={sources.length}
         hasInventory={hasInventory}
-        attentionBanner={null /* slot for the titles-needing-attention banner (later PR) */}
+        attentionBanner={
+          <TitleAttentionBanner
+            catalogType={record.catalogType}
+            mediaId={record.detail?.record.id ?? (mediaIdFromRoute || null)}
+            refreshKey={record.detail}
+          />
+        }
         actions={
           <MediaDetailHeaderBar
             hasMedia={Boolean(media)}

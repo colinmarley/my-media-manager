@@ -28,8 +28,8 @@ const PIPELINE_POLL_MS = 15_000;
 
 export interface HomeOverviewProps {
   /**
-   * To-Do tiles, rendered above the library section when provided. A later
-   * PR fills this from /api/attention/summary; nothing calls it yet.
+   * To-Do tiles (TodoTiles, from /api/attention/summary), rendered above the
+   * library section when provided.
    */
   todoSlot?: React.ReactNode;
 }

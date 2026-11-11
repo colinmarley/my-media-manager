@@ -4,6 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { Badge, Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, Tooltip, Typography } from '@mui/material';
 import { accent, status as statusColors, surfaces, text, type StatusTone } from '@/theme/tokens';
+import { attentionCountLabel } from '@/service/attention/attentionModel';
 import type { NavGroup } from './navConfig';
 
 export interface NavIndicator {
@@ -46,7 +47,9 @@ const NavSection: React.FC<NavSectionProps> = ({ group, activeId, collapsed, bad
           const Icon = item.icon;
           const badge = badges?.[item.id] ?? 0;
           const indicator = indicators?.[item.id];
-          const accessibleName = indicator ? `${item.label} (${indicator.label})` : item.label;
+          const badgeLabel = badge > 0 ? attentionCountLabel(badge) : null;
+          const extras = [indicator?.label, badgeLabel].filter(Boolean).join(', ');
+          const accessibleName = extras ? `${item.label} (${extras})` : item.label;
 
           const icon = (
             <Badge color="primary" badgeContent={badge} max={99} invisible={!badge || !collapsed} variant="dot">
@@ -104,7 +107,8 @@ const NavSection: React.FC<NavSectionProps> = ({ group, activeId, collapsed, bad
                   {badge > 0 && (
                     <Box
                       component="span"
-                      aria-label={`${badge} items`}
+                      role="img"
+                      aria-label={badgeLabel ?? undefined}
                       sx={{ ml: 1, px: 0.75, minWidth: 20, textAlign: 'center', borderRadius: 1, fontSize: '0.6875rem', fontWeight: 600, bgcolor: accent.tint, color: accent.light }}
                     >
                       {badge > 99 ? '99+' : badge}

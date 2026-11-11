@@ -22,7 +22,16 @@ vi.mock('@/service/ingress/IngressAutomationService', () => ({ default: ingress 
 vi.mock('@/service/library/LibraryComplianceService', () => ({ default: { getSummary } }));
 vi.mock('@/service/catalog/CatalogStatsService', () => ({ getCatalogStats }));
 
+const getAttentionSummary = vi.hoisted(() => vi.fn());
+vi.mock('@/service/attention/AttentionService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/service/attention/AttentionService')>();
+  return { ...actual, default: { ...actual.default, getSummary: getAttentionSummary } };
+});
+
 import Dashboard from '@/app/dashboard/page';
+import { resetAttentionSummaryStore } from '@/hooks/attention/useAttentionSummary';
+import { ApiError } from '@/service/api/apiClient';
+import { attentionSummary } from '../utils/attentionFixtures';
 
 const queue = {
   total: 26,
@@ -49,6 +58,8 @@ describe('Home page', () => {
     ingress.processPending.mockReset().mockResolvedValue(3);
     getSummary.mockReset().mockResolvedValue(compliance);
     getCatalogStats.mockReset().mockResolvedValue(stats);
+    resetAttentionSummaryStore();
+    getAttentionSummary.mockReset().mockResolvedValue(attentionSummary());
   });
 
   it('renders the stage counts, failures and library tiles from the services', async () => {
@@ -96,9 +107,27 @@ describe('Home page', () => {
     await waitFor(() => expect(ingress.processPending).toHaveBeenCalledTimes(1));
   });
 
-  it('does not render a To-Do section until a later PR fills the slot', async () => {
+  it('shows a To-Do tile per kind with items, each linking to its tab', async () => {
+    getAttentionSummary.mockResolvedValue(attentionSummary({ needs_rename: 12, missing_file: 2, unripped_disc: 3 }));
+    render(<Dashboard />);
+    expect(await screen.findByRole('heading', { name: 'To-Do' })).toBeInTheDocument();
+    const list = await screen.findByRole('list', { name: 'To-Do by category' });
+    const links = within(list).getAllByRole('link');
+    expect(links.map((a) => a.getAttribute('aria-label'))).toEqual(['12 Needs renaming', '2 Missing files', '3 Unripped discs']);
+    expect(links[0]).toHaveAttribute('href', '/organize/todo?kind=needs_rename');
+    expect(screen.getByRole('link', { name: 'Open To-Do' })).toHaveAttribute('href', '/organize/todo');
+  });
+
+  it('shows "All organized" when nothing needs attention', async () => {
+    render(<Dashboard />);
+    expect(await screen.findByText('All organized. Nothing needs your attention.')).toBeInTheDocument();
+  });
+
+  it('leaves the To-Do section out on a server without the To-Do list', async () => {
+    getAttentionSummary.mockRejectedValue(new ApiError(404, 'Not Found'));
     render(<Dashboard />);
     await screen.findByText('300 movies, 40 shows');
-    expect(screen.queryByRole('heading', { name: 'To-Do' })).not.toBeInTheDocument();
+    await waitFor(() => expect(getAttentionSummary).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'To-Do' })).not.toBeInTheDocument());
   });
 });

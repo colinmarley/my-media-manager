@@ -1,5 +1,5 @@
 import React from 'react';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ThemeProvider } from '@mui/material/styles';
 import theme from '@/app/theme';
@@ -30,7 +30,16 @@ vi.mock('@/service/disc-ripper/DiscRipperService', () => ({
   DiscRipperService: { listJobs: (...args: unknown[]) => listJobs(...args) },
 }));
 
+const getAttentionSummary = vi.hoisted(() => vi.fn());
+vi.mock('@/service/attention/AttentionService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/service/attention/AttentionService')>();
+  return { ...actual, default: { ...actual.default, getSummary: getAttentionSummary } };
+});
+
 import AppShell from '@/components/shell/AppShell';
+import { resetAttentionSummaryStore } from '@/hooks/attention/useAttentionSummary';
+import { ApiError } from '@/service/api/apiClient';
+import { attentionSummary } from '../utils/attentionFixtures';
 import useShellStore, { SHELL_COLLAPSED_STORAGE_KEY } from '@/store/useShellStore';
 import { ADMIN_VIEWS, findActiveNavItem, getNavGroups, NAV_GROUPS } from '@/components/shell/navConfig';
 
@@ -69,10 +78,13 @@ describe('AppShell', () => {
     window.localStorage.clear();
     useShellStore.setState({ collapsed: false, mobileOpen: false, hydrated: false });
     listJobs.mockReset().mockResolvedValue([]);
+    resetAttentionSummaryStore();
+    getAttentionSummary.mockReset().mockResolvedValue(attentionSummary());
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    resetAttentionSummaryStore();
   });
 
   it('renders every workflow group and the page content', () => {
@@ -86,15 +98,44 @@ describe('AppShell', () => {
     expect(screen.getByText('page body')).toBeInTheDocument();
   });
 
-  it('hides the flagged To-Do item by default and shows it with its badge when enabled', () => {
-    const { unmount } = renderShell();
-    expect(within(nav()).queryByRole('link', { name: /To-Do/ })).not.toBeInTheDocument();
-    unmount();
-
-    renderShell({ flags: { organizeTodo: true }, badges: { todo: 4 } });
+  it('shows the To-Do item with the shared summary total as its badge', async () => {
+    getAttentionSummary.mockResolvedValue(attentionSummary({ needs_rename: 4, needs_review: 2, unprobed: 9 }));
+    renderShell();
     const todo = within(nav()).getByRole('link', { name: /To-Do/ });
     expect(todo).toHaveAttribute('href', '/organize/todo');
-    expect(within(todo).getByText('4')).toBeInTheDocument();
+    // unprobed is not part of `total`.
+    expect(await within(todo).findByRole('img', { name: '6 items need attention' })).toHaveTextContent('6');
+    expect(getAttentionSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides the badge at zero and on a server without the To-Do list', async () => {
+    const { unmount } = renderShell();
+    await waitFor(() => expect(getAttentionSummary).toHaveBeenCalled());
+    expect(within(nav()).getByRole('link', { name: /To-Do/ })).not.toHaveTextContent(/\d/);
+    unmount();
+
+    resetAttentionSummaryStore();
+    getAttentionSummary.mockRejectedValue(new ApiError(404, 'Not Found'));
+    renderShell();
+    await waitFor(() => expect(getAttentionSummary).toHaveBeenCalledTimes(2));
+    expect(within(nav()).getByRole('link', { name: /To-Do/ })).toBeInTheDocument();
+    expect(within(nav()).queryByRole('img', { name: /need attention/ })).not.toBeInTheDocument();
+  });
+
+  it('keeps the badge as a dot with an accessible count in the collapsed rail', async () => {
+    window.localStorage.setItem(SHELL_COLLAPSED_STORAGE_KEY, '1');
+    getAttentionSummary.mockResolvedValue(attentionSummary({ needs_assignment: 1 }));
+    renderShell();
+    const todo = await within(nav()).findByRole('link', { name: 'To-Do (1 item needs attention)' });
+    expect(todo.querySelector('.MuiBadge-dot:not(.MuiBadge-invisible)')).not.toBeNull();
+  });
+
+  it('lets an explicit badge override the summary and hides the item when the flag is off', () => {
+    const { unmount } = renderShell({ flags: { organizeTodo: false } });
+    expect(within(nav()).queryByRole('link', { name: /To-Do/ })).not.toBeInTheDocument();
+    unmount();
+    renderShell({ badges: { todo: 4 } });
+    expect(within(within(nav()).getByRole('link', { name: /To-Do/ })).getByText('4')).toBeInTheDocument();
   });
 
   it('marks the active item for nested routes and shows its title in the top bar', () => {

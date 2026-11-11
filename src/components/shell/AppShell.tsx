@@ -7,6 +7,7 @@ import { Box, Drawer, IconButton, Tooltip, Typography, useMediaQuery, useTheme }
 import { KeyboardDoubleArrowLeft, KeyboardDoubleArrowRight, VideoLibraryOutlined } from '@mui/icons-material';
 import useShellStore from '@/store/useShellStore';
 import useRipperStatus from '@/hooks/shell/useRipperStatus';
+import useAttentionSummary from '@/hooks/attention/useAttentionSummary';
 import { accent, borders, layout, surfaces, text } from '@/theme/tokens';
 import NavSection, { type NavIndicator } from './NavSection';
 import TopBar from './TopBar';
@@ -15,7 +16,7 @@ import { DEFAULT_NAV_FLAGS, findActiveNavItem, getNavGroups, type NavFlags, type
 export interface AppShellProps {
   children: React.ReactNode;
   flags?: NavFlags;
-  /** Count badges by nav item id, e.g. `{ todo: 4 }` once /organize/todo exists. */
+  /** Count badges by nav item id. The To-Do badge comes from the shared attention summary unless given here. */
   badges?: Partial<Record<string, number>>;
 }
 
@@ -127,6 +128,9 @@ export default function AppShell({ children, flags = DEFAULT_NAV_FLAGS, badges }
   const ripper = useRipperStatus();
   const groups = useMemo(() => getNavGroups(flags), [flags]);
   const indicators = useMemo(() => ({ 'rip-disc': ripper }), [ripper]);
+  // Hidden at 0, while loading, and on a server without the To-Do list (total stays 0).
+  const attention = useAttentionSummary();
+  const allBadges = useMemo(() => ({ todo: attention.total, ...badges }), [attention.total, badges]);
 
   useEffect(() => {
     hydrate();
@@ -149,7 +153,7 @@ export default function AppShell({ children, flags = DEFAULT_NAV_FLAGS, badges }
           activeId={resolveActive(groups, pathname, view).activeId}
           collapsed={railCollapsed}
           showCollapseToggle={isDesktop}
-          badges={badges}
+          badges={allBadges}
           indicators={indicators}
           onToggleCollapsed={toggleCollapsed}
           onNavigate={isDesktop ? undefined : () => setMobileOpen(false)}
