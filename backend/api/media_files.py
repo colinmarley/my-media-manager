@@ -8,6 +8,11 @@ Every file of a library title, with its technical metadata and source disc / tap
   ``GET /api/catalog/media/{type}/{id}/discs``), its files grouped, and counts.
 - ``GET /api/catalog/media/{media_type}/{media_id}/files`` — the grouped files
   and counts only.
+- ``PATCH /api/catalog/media-files/{file_id}/review`` ``{needsReview, note?}`` —
+  set or clear a file's review flag; returns the file DTO.
+- ``POST /api/catalog/media-files/{file_id}/rename-canonical?dryRun=true|false``
+  — the file's canonical name (dry run, the default) or the rename itself
+  (services/canonical_rename.py).
 
 ``media_type`` is what the web UI routes with: ``movie`` and ``series``, or a
 type it derives from the record (``documentary``, ``live_performance``,
@@ -19,9 +24,11 @@ whose id or IMDb id matches and whose derived type is ``media_type``.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -282,4 +289,120 @@ async def get_media_files(media_type: str, media_id: str, db: AsyncSession = Dep
         "catalogType": kind,
         **group_files(files),
         "summary": summarize_files(files),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Single-file actions
+# ---------------------------------------------------------------------------
+
+def _file_error(status: int, code: str, message: str) -> HTTPException:
+    return HTTPException(status_code=status, detail={"type": "MediaFileError", "code": code, "message": message})
+
+
+async def _file_or_404(db: AsyncSession, file_id: str) -> MediaFile:
+    row = await db.get(MediaFile, file_id)
+    if row is None:
+        raise _file_error(404, "MEDIA_FILE_NOT_FOUND", f"Media file not found: {file_id}")
+    return row
+
+
+async def file_dto(db: AsyncSession, row: MediaFile) -> Dict[str, Any]:
+    disc = await db.get(Disc, row.disc_id) if row.disc_id else None
+    tape = await db.get(Tape, row.tape_id) if row.tape_id else None
+    return catalog_api._media_file_to_dict(row, disc=disc, tape=tape)
+
+
+class ReviewRequest(BaseModel):
+    needsReview: bool
+    note: Optional[str] = None
+
+
+@router.patch("/media-files/{file_id}/review")
+async def set_review_flag(file_id: str, body: ReviewRequest, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Flag a file for a second look (``needsReview: true``) or clear the flag.
+
+    Clearing stamps ``reviewedAt``; a ``note`` given either way replaces the
+    stored one (omit it to keep the old note).
+    """
+    from services import attention_service
+
+    row = await _file_or_404(db, file_id)
+    row.needs_review = body.needsReview
+    if body.note is not None:
+        row.review_note = body.note.strip() or None
+    row.reviewed_at = None if body.needsReview else datetime.now(timezone.utc)
+    await db.commit()
+    attention_service.invalidate_summary()
+    return await file_dto(db, row)
+
+
+@router.post("/media-files/{file_id}/rename-canonical")
+async def rename_canonical(
+    file_id: str,
+    req: Request,
+    dry_run: bool = Query(True, alias="dryRun"),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Rename a linked library file to the library's canonical name.
+
+    The target is the exact PathBuilder name inside the file's current title
+    folder (the folder is never renamed or created here; when it is not
+    canonical, ``folderMismatch`` says so). Sidecars sharing the file's stem
+    move with it. Refused (409 / 422) for files outside the library, missing,
+    unlinked, with a role that keeps its own name, or when the target is taken.
+    """
+    from services import attention_service, canonical_rename
+
+    row = await _file_or_404(db, file_id)
+    try:
+        plan = await canonical_rename.plan(db, row)
+    except canonical_rename.RenameRefused as exc:
+        raise _file_error(exc.status, exc.code, exc.message) from exc
+
+    result = plan.result
+    applied = False
+    operations: List[str] = []
+    sidecar_errors: List[str] = []
+    current_path, current_rel = plan.current_path, result.current_relative
+    if not dry_run and plan.changed:
+        if plan.conflict:
+            raise HTTPException(status_code=409, detail={
+                "type": "MediaFileError", "code": "RENAME_CONFLICT", "message": plan.conflict,
+                "conflict": plan.conflict, "canonicalPath": plan.target_path,
+            })
+        file_manager = getattr(req.app.state, "file_manager", None)
+        if file_manager is None:
+            from services.filesystem_manager import FileSystemManager
+
+            file_manager = FileSystemManager()
+        try:
+            outcome = await canonical_rename.apply(db, plan, file_manager)
+        except canonical_rename.RenameRefused as exc:
+            raise _file_error(exc.status, exc.code, exc.message) from exc
+        row = outcome["row"]
+        operations, sidecar_errors = outcome["operations"], outcome["sidecarErrors"]
+        applied = True
+        attention_service.invalidate_summary()
+
+    folder_mismatch = None
+    if result.current_folder != result.canonical_folder:
+        folder_mismatch = {"current": result.current_folder, "expected": result.canonical_folder}
+    return {
+        "fileId": row.id,
+        "currentPath": current_path,
+        "canonicalPath": plan.target_path,
+        "currentRelativePath": current_rel,
+        "canonicalRelativePath": result.target_relative,
+        "changed": plan.changed,
+        "applied": applied,
+        "conflict": plan.conflict if plan.changed else None,
+        "file": await file_dto(db, row),
+        # Additive.
+        "fullCanonicalRelativePath": result.canonical_relative,
+        "folderMismatch": folder_mismatch,
+        "detail": " ".join(result.notes) or None,
+        "sidecars": [{"from": src, "to": dst} for src, dst in plan.sidecars],
+        "sidecarErrors": sidecar_errors,
+        "operations": operations,
     }

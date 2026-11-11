@@ -287,6 +287,10 @@ def _media_file_to_dict(row: MediaFile, disc: Any = None, tape: Any = None) -> d
         "seriesId": row.series_id,
         "disc": _source_summary(disc, "format"),
         "tape": _source_summary(tape, "tape_type"),
+        # Review flag (additive).
+        "needsReview": bool(getattr(row, "needs_review", False)),
+        "reviewNote": getattr(row, "review_note", None),
+        "reviewedAt": _iso(getattr(row, "reviewed_at", None)),
     }
 
 
