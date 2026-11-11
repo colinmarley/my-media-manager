@@ -14,7 +14,17 @@ import {
 
 export type NotifySeverity = 'success' | 'error' | 'info';
 
-export type NotifyFn = (message: string, severity?: NotifySeverity) => void;
+export interface NotifyAction {
+  label: string;
+  onClick: () => void;
+}
+
+export interface NotifyOptions {
+  /** A button in the toast, e.g. Undo. Clicking it also closes the toast. */
+  action?: NotifyAction;
+}
+
+export type NotifyFn = (message: string, severity?: NotifySeverity, options?: NotifyOptions) => void;
 
 export interface ConfirmOptions {
   title?: string;
@@ -34,6 +44,7 @@ interface QueuedNotification {
   key: number;
   message: string;
   severity: NotifySeverity;
+  action?: NotifyAction;
 }
 
 interface PendingConfirm extends ConfirmOptions {
@@ -46,9 +57,9 @@ const NotificationContext = createContext<NotificationContextValue | null>(null)
 // The mounted provider registers itself here; without one, messages go to the console.
 let globalNotify: NotifyFn | null = null;
 
-export const notify: NotifyFn = (message, severity = 'info') => {
+export const notify: NotifyFn = (message, severity = 'info', options) => {
   if (globalNotify) {
-    globalNotify(message, severity);
+    globalNotify(message, severity, options);
     return;
   }
   if (severity === 'error') {
@@ -66,9 +77,9 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const current = queue[0];
 
-  const notifyFn = useCallback<NotifyFn>((message, severity = 'info') => {
+  const notifyFn = useCallback<NotifyFn>((message, severity = 'info', options) => {
     keyRef.current += 1;
-    setQueue((prev) => [...prev, { key: keyRef.current, message, severity }]);
+    setQueue((prev) => [...prev, { key: keyRef.current, message, severity, action: options?.action }]);
   }, []);
 
   const confirmFn = useCallback<ConfirmFn>((options) => {
@@ -115,12 +126,29 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       <Snackbar
         key={current?.key}
         open={open && !!current}
-        autoHideDuration={current?.severity === 'error' ? 8000 : 4000}
+        autoHideDuration={current?.severity === 'error' || current?.action ? 8000 : 4000}
         onClose={handleClose}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         TransitionProps={{ onExited: handleExited }}
       >
-        <Alert onClose={handleClose} severity={current?.severity ?? 'info'} variant="filled" sx={{ width: '100%' }}>
+        <Alert
+          onClose={handleClose}
+          severity={current?.severity ?? 'info'}
+          variant="filled"
+          sx={{ width: '100%', alignItems: 'center' }}
+          action={current?.action ? (
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => {
+                current.action?.onClick();
+                handleClose();
+              }}
+            >
+              {current.action.label}
+            </Button>
+          ) : undefined}
+        >
           {current?.message}
         </Alert>
       </Snackbar>

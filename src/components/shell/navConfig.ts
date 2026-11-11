@@ -32,12 +32,12 @@ export const ADMIN_VIEWS = {
 } as const;
 
 export interface NavFlags {
-  /** /organize/todo ships in a later PR; keep the item hidden until then. */
+  /** The To-Do page (/organize/todo). */
   organizeTodo: boolean;
 }
 
 export const DEFAULT_NAV_FLAGS: NavFlags = {
-  organizeTodo: false,
+  organizeTodo: true,
 };
 
 export interface NavItem {

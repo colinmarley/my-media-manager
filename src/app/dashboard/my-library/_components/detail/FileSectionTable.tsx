@@ -54,7 +54,8 @@ const FileSectionTable = ({ section, selected, onToggle, onToggleMany, actions, 
 
   const table = (
     <TableContainer sx={{ border: `1px solid ${borders.default}`, borderRadius: 1, bgcolor: surfaces.paper, overflowX: 'auto' }}>
-      <Table size="small" aria-labelledby={headingId} sx={{ minWidth: 1100 }}>
+      {/* 960 fits the content column at 1280px with the sidebar open (1280 - 232 - gutters). */}
+      <Table size="small" aria-labelledby={headingId} sx={{ minWidth: 960 }}>
         <TableHead>
           <TableRow>
             <TableCell padding="checkbox">
