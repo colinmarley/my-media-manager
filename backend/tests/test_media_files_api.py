@@ -20,6 +20,7 @@ INVENTORY_KEYS = [
     "container", "videoCodec", "resolutionCategory", "width", "height", "hdrFormat",
     "audioCodec", "audioChannels", "durationMs", "bitrate", "probedAt", "probeError",
     "isAvailable", "missingSince", "discId", "tapeId", "movieId", "seriesId", "disc", "tape",
+    "needsReview", "reviewNote", "reviewedAt",
 ]
 
 
