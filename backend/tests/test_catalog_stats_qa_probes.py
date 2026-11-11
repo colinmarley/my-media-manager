@@ -129,11 +129,18 @@ def test_stats_auth_posture_matches_sibling_catalog_gets(app):
 
     stats_guards = guards("/api/catalog/stats")
     assert stats_guards is not None
+    # The file-inventory reads (api/media_files.py) were added behind
+    # require_any_auth on purpose; they are stricter, not looser, than stats.
+    deliberately_guarded = {
+        "/api/catalog/media/{media_type}/{media_id}/detail",
+        "/api/catalog/media/{media_type}/{media_id}/files",
+    }
     siblings = [
         route.path for route in app.routes
         if getattr(route, "path", "").startswith("/api/catalog")
         and "GET" in (getattr(route, "methods", None) or set())
         and route.path != "/api/catalog/stats"
+        and route.path not in deliberately_guarded
     ]
     assert siblings
     for path in siblings:

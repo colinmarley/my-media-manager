@@ -52,6 +52,7 @@ from api.ripper_proxy import router as ripper_proxy_router
 from api.wishlist import router as wishlist_router
 from api.storage_locations import router as storage_locations_router
 from api.library_inventory import router as library_inventory_router
+from api.media_files import router as media_files_router
 from api.metrics import MetricsMiddleware, router as metrics_router
 from api.errors import install_error_handling
 from db.database import engine, Base, AsyncSessionLocal
@@ -494,6 +495,7 @@ app.include_router(ripper_proxy_router)
 app.include_router(wishlist_router)
 app.include_router(storage_locations_router)
 app.include_router(library_inventory_router)
+app.include_router(media_files_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
 # Unauthenticated like /health — Prometheus pulls metrics and has no session cookie.
 app.include_router(metrics_router)
