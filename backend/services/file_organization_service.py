@@ -211,7 +211,7 @@ class FileOrganizationService:
             # Write jellyfinInfo back to the PostgreSQL catalog so My Library reflects
             # the organized state without needing Firebase.
             if all_successful and self.db_session_factory:
-                await self._upsert_catalog_jellyfin_info(
+                result["catalogId"] = await self._upsert_catalog_jellyfin_info(
                     media_type=media_type,
                     media_id=assignment.get("mediaId"),
                     folder_path=target_path,
@@ -555,11 +555,14 @@ class FileOrganizationService:
         organized_at: str,
         media: Dict[str, Any],
         file_count: Optional[int] = None,
-    ) -> None:
+    ) -> Optional[str]:
         """Upsert jellyfinInfo into PostgreSQL catalog after a successful move.
 
         This creates the catalog record when it doesn't already exist, which makes
         newly organized items appear in My Library without manual seeding.
+
+        Returns the catalog row's id (``movies.id`` or ``series.id``), None if
+        the write failed.
         """
         try:
             from sqlalchemy import select
@@ -716,6 +719,7 @@ class FileOrganizationService:
                     media_type=media_type,
                     folder_path=folder_path,
                 )
+                return row.id
         except Exception as exc:
             # Non-fatal: organization succeeded even if catalog update fails
             logger.warning(
@@ -723,6 +727,7 @@ class FileOrganizationService:
                 media_id=media_id,
                 error=str(exc),
             )
+        return None
 
     def _collect_video_file_entries(self, root_path: str) -> List[Dict[str, Any]]:
         """Return linked video-file metadata for all organized files under a media root."""

@@ -51,6 +51,8 @@ from api.cover_scan import router as cover_scan_router
 from api.ripper_proxy import router as ripper_proxy_router
 from api.wishlist import router as wishlist_router
 from api.storage_locations import router as storage_locations_router
+from api.library_inventory import router as library_inventory_router
+from api.media_files import router as media_files_router
 from api.metrics import MetricsMiddleware, router as metrics_router
 from api.errors import install_error_handling
 from db.database import engine, Base, AsyncSessionLocal
@@ -67,6 +69,7 @@ from services.library_scanner import LibraryScanner
 from services.library_compliance_service import LibraryComplianceService
 from services.task_manager import AsyncTaskManager
 from services.retention_service import run_retention_loop
+from services.library_inventory_service import LibraryInventoryService, run_inventory_loop
 from services import storage_paths
 from api.ingress_operations import apply_runtime_config, normalize_config_overrides
 from utils.logging import logger
@@ -371,6 +374,20 @@ async def lifespan(app: FastAPI):
     if settings.retention_enabled:
         retention_task = asyncio.create_task(run_retention_loop(AsyncSessionLocal))
 
+    # Library inventory: always available for a manual scan; scheduled when enabled.
+    def _ingest_queue_busy() -> bool:
+        with ingress_queue_service.lock:
+            return any(item.status == "processing" for item in ingress_queue_service.items_by_id.values())
+
+    library_inventory_service = LibraryInventoryService(
+        AsyncSessionLocal,
+        queue_busy=_ingest_queue_busy,
+    )
+    app.state.library_inventory_service = library_inventory_service
+    inventory_task = None
+    if settings.inventory_enabled:
+        inventory_task = asyncio.create_task(run_inventory_loop(library_inventory_service))
+
     logger.info("Services initialized successfully")
     
     yield
@@ -409,6 +426,15 @@ async def lifespan(app: FastAPI):
             await retention_task
         except asyncio.CancelledError:
             pass
+
+    if inventory_task:
+        inventory_task.cancel()
+        try:
+            await inventory_task
+        except asyncio.CancelledError:
+            pass
+    library_inventory_service.cancel()
+    await library_inventory_service.wait()
 
 # Create FastAPI application instance with OpenAPI documentation
 app = FastAPI(
@@ -468,6 +494,8 @@ app.include_router(cover_scan_router)
 app.include_router(ripper_proxy_router)
 app.include_router(wishlist_router)
 app.include_router(storage_locations_router)
+app.include_router(library_inventory_router)
+app.include_router(media_files_router)
 app.include_router(ingress_router, prefix="/api/ingress", tags=["Ingress Operations"])
 # Unauthenticated like /health — Prometheus pulls metrics and has no session cookie.
 app.include_router(metrics_router)

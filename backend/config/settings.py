@@ -158,6 +158,20 @@ class LibrarySettings(BaseSettings):
     retention_ingress_history_days: int = 180
     retention_completed_queue_days: int = 90
 
+    # Library inventory scan (services/library_inventory_service.py): walks the
+    # four category folders, reconciles media_files (new / changed / moved /
+    # missing), links files to their catalog title and probes technical
+    # metadata. Runs shortly after startup, then every inventory_interval_minutes.
+    # Env: MEDIA_LIBRARY_INVENTORY_* (e.g. MEDIA_LIBRARY_INVENTORY_ENABLED=false).
+    inventory_enabled: bool = True
+    inventory_interval_minutes: int = 360
+    # Files probed (mediainfo) per scan, one at a time; the rest wait for the next scan.
+    inventory_probe_batch: int = 25
+    inventory_probe_timeout_seconds: int = 120
+    # More than this fraction of the known library files vanishing in one scan
+    # looks like an unmounted share, so nothing is marked missing.
+    inventory_missing_abort_ratio: float = 0.2
+
     # Default app password — seeded automatically on first startup if no password hash
     # is found in the database. Set via APP_DEFAULT_PASSWORD env var.
     # Leave empty to require manual seeding via scripts/seed_password.py.

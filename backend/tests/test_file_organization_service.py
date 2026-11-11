@@ -56,3 +56,37 @@ def test_library_root_is_resolved_at_call_time_unless_pinned(monkeypatch):
         assert service.jellyfin_dest_base == '/saved/library'
     finally:
         storage_paths.clear_overrides()
+
+
+def test_catalog_upsert_returns_the_catalog_row_id(tmp_path):
+    from db.models import Movie, Series
+    from tests.fake_db import FakeSession
+
+    existing = Movie(id='movie-1', title='Inception', imdb_id='tt1375666', jellyfin_info={}, raw_data={})
+    session = FakeSession([existing])
+    service = FileOrganizationService(filesystem_manager=MagicMock(), db_session_factory=session)
+    folder = os.fspath(tmp_path / 'Movies' / 'Inception (2010)')
+
+    found = asyncio.run(service._upsert_catalog_jellyfin_info(
+        media_type='movie', media_id='tt1375666', folder_path=folder,
+        organized_at='2026-11-11T00:00:00', media={'title': 'Inception', 'imdbId': 'tt1375666'},
+    ))
+    created = asyncio.run(service._upsert_catalog_jellyfin_info(
+        media_type='episode', media_id=None, folder_path=os.fspath(tmp_path / 'TV Shows' / 'Show' / 'Season 01'),
+        organized_at='2026-11-11T00:00:00', media={'seriesTitle': 'Show', 'imdbId': 'tt0000009'},
+    ))
+
+    assert found == 'movie-1'
+    (series,) = session.all_of(Series)
+    assert created == series.id == 'tt0000009'
+
+
+def test_catalog_upsert_returns_none_when_the_write_fails(tmp_path):
+    class Broken:
+        def __call__(self):
+            raise RuntimeError('database went away')
+
+    service = FileOrganizationService(filesystem_manager=MagicMock(), db_session_factory=Broken())
+    assert asyncio.run(service._upsert_catalog_jellyfin_info(
+        media_type='movie', media_id='m', folder_path=os.fspath(tmp_path), organized_at='x', media={},
+    )) is None
