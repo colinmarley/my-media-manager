@@ -107,10 +107,18 @@ class LibrarySettings(BaseSettings):
     folder_tv_shows: str = "TV Shows"
     folder_documentaries: str = "Documentaries"
     folder_live_performances: str = "Live Performances"
-    # Staging folder for files that could not be automatically matched or routed
+    # Legacy staging folder inside the library. Nothing creates or moves files
+    # into it any more (unmatched files stay in ingest, held for review); kept
+    # so existing env files that set it still load.
     folder_needs_review: str = "_NeedsReview"
     # Folder for residual source trees that still contain unprocessed files
     folder_unprocessed: str = "Unprocessed"
+
+    # Home videos live outside the Jellyfin library root (tape ingest).
+    home_videos_path: str = Field(
+        default="/ark/media/home-videos",
+        validation_alias=AliasChoices("HOME_VIDEOS_PATH", "MEDIA_LIBRARY_HOME_VIDEOS_PATH"),
+    )
 
     # When a second copy of a movie is processed, it is considered an alternate version
     # (Version 2, Version 3, …) rather than a Special Feature if its duration is at least
