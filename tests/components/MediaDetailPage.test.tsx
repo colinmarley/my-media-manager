@@ -1,40 +1,30 @@
 /**
- * Render test for the library media details composition root
- * (src/app/dashboard/my-library/[mediaType]/[mediaId]/page.tsx).
- *
- * The screen used to be one 1,465-line component. It is now a composition root over the
- * `hooks/library` data hooks and the `detail/*` section components, so this test drives the
- * real hooks against a stubbed `fetch` and pins the whole screen: every section must still be
- * rendered, wired to the same data, after the split.
+ * Render test for the library title detail page
+ * (src/app/dashboard/my-library/[mediaType]/[mediaId]/page.tsx), driving the real hooks against a
+ * stubbed `fetch`: the header, the ?tab= tabs, the link flow, feature detection of the endpoints
+ * that arrive with a later backend PR, the error / not-found states and the legacy fallback.
  */
 
 import React from 'react';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const nav = vi.hoisted(() => ({ search: '', replace: vi.fn(), push: vi.fn() }));
 
 vi.mock('next/navigation', async (importOriginal) => {
   const actual = await importOriginal<typeof import('next/navigation')>();
-
   return {
     ...actual,
     useParams: () => ({ mediaType: 'movie', mediaId: 'movie-1' }),
-    useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn() }),
+    useRouter: () => ({ push: nav.push, replace: nav.replace, refresh: vi.fn(), prefetch: vi.fn() }),
+    useSearchParams: () => new URLSearchParams(nav.search),
+    usePathname: () => '/dashboard/my-library/movie/movie-1',
   };
 });
 
-// The disk reassign dialog owns a search / move / catalog-sync flow of its own. The behaviour pins
-// below only need the page's half of a finished reassignment: the message the page keeps and how
-// long it stays on screen.
-vi.mock('../../src/app/dashboard/my-library/_components/DiskReassignDialog', () => ({
-  default: ({ onReassigned }: { onReassigned: (newPath: string) => void }) => (
-    <button type="button" onClick={() => onReassigned('/ark/media/library/moved')}>
-      Stub Confirm Reassignment
-    </button>
-  ),
-}));
-
 import LibraryMediaDetailPage from '../../src/app/dashboard/my-library/[mediaType]/[mediaId]/page';
 
+const GB = 1024 ** 3;
 const FOLDER = '/ark/media/jellyfin/Movies/Big Movie';
 
 const MOVIE = {
@@ -44,219 +34,244 @@ const MOVIE = {
   releaseDate: '1995-04-22',
   runtime: '178 min',
   genres: ['Crime', 'Drama'],
+  directors: [{ fullName: 'Director One' }],
   folderPath: FOLDER,
   posterUrl: 'https://example.com/poster.jpg',
   externalIds: { imdbId: 'tt0110912', tmdbId: 155 },
   nfoData: { originaltitle: 'Big Movie', year: '1995' },
-  releases: [{ discIds: ['disc-1'] }],
-  assignmentSummary: {
-    totalFiles: 2,
-    assignedFiles: 1,
-    unassignedFiles: 1,
-    totalFileSizeFormatted: '5.0 GB',
-  },
 };
 
-const DISC = {
-  id: 'disc-1',
-  title: 'Disc One',
-  videoFiles: [{ fileName: 'Big Movie.mkv' }],
-  storageType: 'Disc',
-  storageId: 'A12',
+const fileDto = (overrides: Record<string, unknown>) => ({
+  fileSize: GB,
+  detectedMediaType: 'movie',
+  assignmentStatus: 'assigned',
+  targetPath: null,
+  organizationStatus: 'completed',
+  createdAt: null,
+  probedAt: '2026-01-01T00:00:00Z',
+  isAvailable: true,
+  ...overrides,
+});
+
+const MAIN = fileDto({
+  id: 'f1', fileName: 'Big Movie (1995).mkv', filePath: `${FOLDER}/Big Movie (1995).mkv`, role: 'main',
+  resolutionCategory: '4K', hdrFormat: 'HDR10', videoCodec: 'hevc', audioCodec: 'truehd', audioChannels: 8, container: 'matroska',
+  discId: 'disc-1', disc: { id: 'disc-1', title: 'Disc One', format: 'UHD Blu-ray' },
+});
+const EXTRA = fileDto({ id: 'f2', fileName: 'Featurette.mkv', filePath: `${FOLDER}/extras/Featurette.mkv`, role: 'extra', isAvailable: false });
+
+const DETAIL = {
+  record: MOVIE,
+  mediaType: 'movie',
+  catalogType: 'movie',
+  discs: [{ id: 'disc-1', title: 'Disc One', format: 'UHD Blu-ray', storageType: 'Box', storageId: 'MED0001', linkedFileCount: 1 }],
+  tapes: [],
+  files: { main: [MAIN], versions: [], extras: [EXTRA], other: [], seasons: [] },
+  summary: { fileCount: 2, totalSize: 2 * GB, missingCount: 1, unprobedCount: 0 },
 };
 
-const BROWSE_ENTRIES = [
-  { name: 'Big Movie.mkv', path: `${FOLDER}/Big Movie.mkv`, isDirectory: false, size: 5368709120 },
-];
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 
-const jsonResponse = (body: unknown) =>
-  new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+type Route = (url: string, init?: RequestInit) => Response | Promise<Response> | undefined;
 
-/** Routes every endpoint the details screen touches to a canned payload. */
-const stubFetch = (
-  {
-    movies = [MOVIE] as unknown[],
-    pendingRemove = false,
-  }: { movies?: unknown[]; pendingRemove?: boolean } = {}
-) => {
-  const fetchMock = vi.fn(async (input: unknown) => {
+/** Canned payloads for every endpoint the page touches; `extra` runs first. */
+const stubFetch = (extra?: Route) => {
+  const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
     const url = String(input);
-
-    // `pendingRemove` leaves the removal request in flight (never settles) so the dialog can be
-    // poked while `deleting` is true.
-    if (url.includes('/remove-to-review')) {
-      return pendingRemove ? new Promise<Response>(() => {}) : jsonResponse({ success: true });
-    }
-    if (url.includes('/api/catalog/media/')) {
-      return jsonResponse({ discs: [], tapes: [] });
-    }
-    if (url.includes('/api/catalog/movies')) {
-      return jsonResponse(movies);
-    }
-    if (url.includes('/api/catalog/series')) {
-      return jsonResponse([]);
-    }
-    if (url.includes('/api/catalog/discs')) {
-      return jsonResponse([DISC]);
-    }
-    if (url.includes('/posters/movie/movie-1/list')) {
-      return jsonResponse({ count: 2 });
-    }
-    if (url.includes('/dest-folder/browse')) {
-      return jsonResponse({ data: BROWSE_ENTRIES });
-    }
-    if (url.includes('/dest-folder/nfo')) {
-      return jsonResponse({ data: null });
-    }
-
-    return jsonResponse(null);
+    const custom = extra?.(url, init);
+    if (custom) return custom;
+    if (url.includes('/remove-to-review')) return json({ success: true });
+    if (url.endsWith('/detail')) return json(DETAIL);
+    if (url.includes('/posters/movie/movie-1/list')) return json({ count: 2 });
+    if (url.includes('/dest-folder/browse')) return json({ data: [{ name: 'Big Movie.mkv', path: `${FOLDER}/Big Movie.mkv`, isDirectory: false, size: GB }] });
+    if (url.includes('/dest-folder/nfo')) return json({ data: null });
+    return json(null);
   });
-
   vi.stubGlobal('fetch', fetchMock);
-
   return fetchMock;
 };
 
+const calls = (fetchMock: ReturnType<typeof vi.fn>) =>
+  fetchMock.mock.calls.map(([u, init]) => ({ url: String(u), method: (init as RequestInit | undefined)?.method ?? 'GET', body: (init as RequestInit | undefined)?.body }));
+
+const detailLoads = (fetchMock: ReturnType<typeof vi.fn>) => calls(fetchMock).filter((c) => c.url.endsWith('/detail')).length;
+
 describe('LibraryMediaDetailPage', () => {
   beforeEach(() => {
-    stubFetch();
+    nav.search = '';
+    nav.replace.mockReset();
   });
 
   afterEach(() => {
     vi.unstubAllGlobals();
-    vi.useRealTimers();
   });
 
-  it('shows the loading copy while the record is being fetched', () => {
+  it('shows skeletons while loading, then the header with facts, stats and actions', async () => {
+    const fetchMock = stubFetch();
     render(<LibraryMediaDetailPage />);
 
-    expect(screen.getByText('Loading media details...')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Remove from Library' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Loading title')).toBeInTheDocument();
+
+    expect(await screen.findByRole('heading', { level: 1, name: /Big Movie/ })).toHaveTextContent('Big Movie(1995)');
+    expect(screen.getByText('178 min · Crime, Drama · Directed by Director One')).toBeInTheDocument();
+    expect(screen.getByText('Movie')).toBeInTheDocument();
+    expect(screen.getByText('Total size', { selector: 'p' }).nextElementSibling).toHaveTextContent('2.0 GB');
+    expect(screen.getByText('Missing', { selector: 'p' }).nextElementSibling).toHaveTextContent('1');
+    expect(screen.getByText('Discs & tapes', { selector: 'p' }).nextElementSibling).toHaveTextContent('1');
+    expect(screen.getByRole('link', { name: 'Back to My Library' })).toHaveAttribute('href', '/dashboard/my-library');
+    expect(screen.getByRole('button', { name: 'Rescan files' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Remove from Library' })).toBeInTheDocument();
+
+    // One request for the title instead of three whole-catalog loads.
+    expect(calls(fetchMock).some((c) => c.url.endsWith('/api/catalog/movies'))).toBe(false);
   });
 
-  it('renders every section of the screen wired to the loaded record', async () => {
+  it('opens on the Files tab and switches tabs through ?tab=', async () => {
+    stubFetch();
+    render(<LibraryMediaDetailPage />);
+
+    const filesTab = await screen.findByRole('tab', { name: 'Files (2)' });
+    expect(filesTab).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'detail-tab-files');
+    expect(screen.getByText('4K · HDR10')).toBeInTheDocument();
+    expect(screen.getByRole('rowheader', { name: /Featurette.mkv/ }).closest('tr')).toHaveAttribute('data-missing', 'true');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Metadata' }));
+    expect(nav.replace).toHaveBeenCalledWith('/dashboard/my-library/movie/movie-1?tab=metadata', { scroll: false });
+  });
+
+  it('shows labelled metadata with the raw JSON behind a disclosure', async () => {
+    nav.search = 'tab=metadata';
+    stubFetch();
     const { container } = render(<LibraryMediaDetailPage />);
 
-    // Header bar.
-    await waitFor(() =>
-      expect(screen.getByRole('button', { name: 'Remove from Library' })).toBeInTheDocument()
-    );
-    expect(screen.getByRole('link', { name: 'Back to My Library' })).toHaveAttribute(
-      'href',
-      '/dashboard/my-library'
-    );
+    expect(await screen.findByRole('heading', { name: 'Details' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /IMDb tt0110912/ })).toBeInTheDocument();
+    expect(container.querySelectorAll('pre')).toHaveLength(0);
 
-    // Poster tools (pre-filled from the record's poster source). useMediaPoster fills the input in an
-    // effect one render after the record lands, so wait for it rather than racing it under load.
-    expect(screen.getByText('Poster Tools')).toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByLabelText('Poster image URL')).toHaveValue('https://example.com/poster.jpg')
-    );
+    fireEvent.click(screen.getByRole('button', { name: 'Raw data' }));
+    await waitFor(() => expect(container.querySelectorAll('pre')).toHaveLength(2));
+    expect(container.querySelector('pre')?.textContent).toContain('"title": "Big Movie"');
+  });
 
-    // Poster gallery (poster count comes from the /list endpoint).
-    expect(container.querySelector('img')).toHaveAttribute(
-      'src',
-      expect.stringContaining('/api/backend/api/posters/movie/movie-1?index=0')
-    );
+  it('shows the poster gallery and tools on the Artwork tab', async () => {
+    nav.search = 'tab=artwork';
+    stubFetch();
+    render(<LibraryMediaDetailPage />);
+
+    expect(await screen.findByText('Poster Tools')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByLabelText('Poster image URL')).toHaveValue('https://example.com/poster.jpg'));
     expect(await screen.findByText('1 / 2')).toBeInTheDocument();
-
-    // Overview card.
-    expect(screen.getByText('Big Movie')).toBeInTheDocument();
-    expect(screen.getByText('In Library')).toBeInTheDocument();
-    expect(screen.getByText('2 files')).toBeInTheDocument();
-    expect(screen.getByText('IMDB: tt0110912 | TMDB: 155')).toBeInTheDocument();
-
-    // Processing summary.
-    expect(screen.getByText('Processing Summary')).toBeInTheDocument();
-    expect(screen.getByText('50%')).toBeInTheDocument();
-    expect(screen.getByText('Total size: 5.0 GB')).toBeInTheDocument();
-
-    // Catalog + NFO metadata cards, both rendering their JSON blocks.
-    expect(screen.getByText('Catalog Metadata')).toBeInTheDocument();
-    expect(screen.getByText('NFO Metadata')).toBeInTheDocument();
-    expect(Array.from(container.querySelectorAll('pre')).map((pre) => pre.textContent)).toEqual(
-      [expect.stringContaining('"title": "Big Movie"'), expect.stringContaining('"originaltitle"')]
-    );
-
-    // Associated files card: destination files on disk plus the linked disc record.
-    expect(screen.getByText('Associated Discs and Files')).toBeInTheDocument();
-    expect(
-      screen.getByText('Destination files on disk. You can manually reassign the entire folder or individual files.')
-    ).toBeInTheDocument();
-    expect(screen.getByText('Big Movie.mkv')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Reassign Entire Folder/ })).toBeInTheDocument();
-    expect(screen.getByText('Disc One')).toBeInTheDocument();
-    expect(screen.getByText('Big Movie.mkv · Disc A12')).toBeInTheDocument();
   });
 
-  it('opens the remove-from-library confirm dialog from the header action', async () => {
+  it('links files to a disc from the Discs & Tapes tab, then reloads the title', async () => {
+    nav.search = 'tab=discs';
+    const fetchMock = stubFetch((url, init) => (url.endsWith('/link') && init?.method === 'PATCH' ? json({ id: 'f2' }) : undefined));
     render(<LibraryMediaDetailPage />);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove from Library' }));
+    const card = await screen.findByRole('article', { name: 'Disc One' });
+    expect(within(card).getByText('Big Movie (1995).mkv')).toBeInTheDocument();
+    expect(detailLoads(fetchMock)).toBe(1);
 
-    expect(await screen.findByText('Remove from Library?')).toBeInTheDocument();
-    expect(screen.getByText('will be removed from your catalog.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Remove' })).toBeInTheDocument();
-  });
-
-  it('keeps a folder reassignment message up until it is dismissed', async () => {
-    render(<LibraryMediaDetailPage />);
-
-    // Load on real timers, then take the clocks over so the dismiss delay can be elapsed at once.
-    const reassignFolder = await screen.findByRole('button', { name: /Reassign Entire Folder/ });
-    fireEvent.click(reassignFolder);
-
-    vi.useFakeTimers();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Stub Confirm Reassignment' }));
-    const message = 'Folder reassigned. New path: /ark/media/library/moved';
-    expect(screen.getByText(message)).toBeInTheDocument();
-
-    act(() => {
-      vi.advanceTimersByTime(30_000);
+    fireEvent.click(within(card).getByRole('button', { name: 'Link files…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Link files to "Disc One"' });
+    fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Featurette.mkv' }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Link 1 file' }));
     });
 
-    expect(screen.getByText(message)).toBeInTheDocument();
+    await waitFor(() => expect(detailLoads(fetchMock)).toBe(2));
+    const patch = calls(fetchMock).find((c) => c.method === 'PATCH');
+    expect(patch?.url).toBe('/api/backend/api/catalog/media-files/f2/link');
+    expect(JSON.parse(String(patch?.body))).toEqual({ discId: 'disc-1' });
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(screen.queryByText(message)).not.toBeInTheDocument();
+  it('disables "Flag for second look" once the review endpoint answers 404', async () => {
+    const fetchMock = stubFetch((url) => (url.endsWith('/review') ? json({ detail: 'Not Found' }, 404) : undefined));
+    render(<LibraryMediaDetailPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Actions for Big Movie (1995).mkv' }));
+    await act(async () => {
+      fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: /Flag for second look/ }));
+    });
+    await waitFor(() => expect(calls(fetchMock).some((c) => c.url.endsWith('/f1/review'))).toBe(true));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Big Movie (1995).mkv' }));
+    const item = await within(screen.getByRole('menu')).findByRole('menuitem', { name: /Flag for second look/ });
+    await waitFor(() => expect(item).toHaveAttribute('aria-disabled', 'true'));
+    expect(within(item).getByText('Not available on this server yet')).toBeInTheDocument();
+  });
+
+  it('rescans the library and reloads the title when the scan finishes', async () => {
+    const fetchMock = stubFetch((url) => {
+      if (url.endsWith('/inventory/scan')) return json({ success: true });
+      if (url.endsWith('/inventory/status')) return json({ success: true, data: { running: false, phase: 'done', counts: {} } });
+      return undefined;
+    });
+    render(<LibraryMediaDetailPage />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Rescan files' }));
+    await waitFor(() => expect(detailLoads(fetchMock)).toBe(2), { timeout: 4000 });
+    expect(calls(fetchMock).find((c) => c.url.endsWith('/inventory/scan'))?.method).toBe('POST');
+  });
+
+  it('shows an inline error with a retry', async () => {
+    let fail = true;
+    stubFetch((url) => (url.endsWith('/detail') && fail ? json({ detail: 'boom' }, 500) : undefined));
+    render(<LibraryMediaDetailPage />);
+
+    expect(await screen.findByText(/Unable to load this title: API error 500/)).toBeInTheDocument();
+    fail = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('tab', { name: 'Files (2)' })).toBeInTheDocument();
+    expect(screen.queryByText(/Unable to load this title/)).not.toBeInTheDocument();
+  });
+
+  it('falls back to the catalog search and the folder listing on a backend without /detail', async () => {
+    stubFetch((url) => {
+      if (url.endsWith('/detail')) return json({ detail: 'Not Found' }, 404);
+      if (url.endsWith('/api/catalog/movies')) return json([MOVIE]);
+      if (url.endsWith('/api/catalog/series') || url.endsWith('/api/catalog/discs')) return json([]);
+      if (url.includes('/api/catalog/media/movie/movie-1/discs')) return json({ discs: [], tapes: [] });
+      return undefined;
+    });
+    render(<LibraryMediaDetailPage />);
+
+    expect(await screen.findByText('File inventory is not available')).toBeInTheDocument();
+    expect(await screen.findByText('Destination files on disk. You can manually reassign the entire folder or individual files.')).toBeInTheDocument();
+    expect(screen.getByText('Big Movie.mkv')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Rescan files' })).not.toBeInTheDocument();
+  });
+
+  it('warns when the title is not in the catalog', async () => {
+    stubFetch((url) => {
+      if (url.endsWith('/detail')) return json({ detail: 'No movie found for movie-1' }, 404);
+      if (/\/api\/catalog\/(movies|series|discs)$/.test(url)) return json([]);
+      return undefined;
+    });
+    render(<LibraryMediaDetailPage />);
+
+    expect(await screen.findByText('This title was not found. It may have been removed or its identifier has changed.')).toBeInTheDocument();
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
   });
 
   it('keeps the remove-from-library dialog open while the removal is still running', async () => {
-    vi.unstubAllGlobals();
-    stubFetch({ pendingRemove: true });
-
+    stubFetch((url) => (url.includes('/remove-to-review') ? new Promise<Response>(() => {}) : undefined));
     render(<LibraryMediaDetailPage />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Remove from Library' }));
+    expect(await screen.findByText('Remove from Library?')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
     expect(screen.getByRole('button', { name: 'Removing…' })).toBeDisabled();
 
     fireEvent.keyDown(screen.getByText('Remove from Library?'), { key: 'Escape' });
-    fireEvent.click(document.querySelector('.MuiBackdrop-root') as Element);
-
-    // A dismissed dialog unmounts once its exit transition ends, so wait past that window first.
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 400));
     });
 
-    // Closing it mid-removal would leave `deleting` true with both actions dead on the next open.
     expect(screen.getByText('Remove from Library?')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
-  });
-
-  it('warns when the title is no longer in the catalog', async () => {
-    vi.unstubAllGlobals();
-    stubFetch({ movies: [] });
-
-    render(<LibraryMediaDetailPage />);
-
-    expect(
-      await screen.findByText(
-        'This title was not found. It may have been removed or its identifier has changed.'
-      )
-    ).toBeInTheDocument();
-    expect(screen.getByText('Poster Tools')).toBeInTheDocument();
-    expect(screen.queryByText('Processing Summary')).not.toBeInTheDocument();
   });
 });
