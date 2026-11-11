@@ -1,37 +1,9 @@
 "use client";
 
-import { Box, Grid, Typography } from '@mui/material';
-import DashboardCard from './_components/DashboardCard';
+import React from 'react';
+import HomeOverview from './_components/home/HomeOverview';
 
-const Dashboard = () => {
-  const dashboardLinks = [
-    { title: 'My Library', description: 'Browse and manage your saved movies and shows.', href: '/dashboard/my-library' },
-    { title: 'Stats', description: 'Collection totals by type, format and decade, plus loans, shelving and what you added lately.', href: '/dashboard/stats' },
-    { title: 'Physical Media', description: 'Discs and tapes you own, and the files ripped/digitized from each.', href: '/dashboard/physical-media' },
-    { title: 'Movie Organizer', description: 'Preview and apply Jellyfin extras organization for processed movie folders.', href: '/dashboard/movie-organization' },
-    { title: 'TV Organizer', description: 'Preview and apply Jellyfin show episode/special/extras organization for processed TV folders.', href: '/dashboard/show-organization' },
-    { title: 'Ingress Automation', description: 'Monitor ingestion queue and automation health.', href: '/ingress-automation' },
-    { title: 'Disc Ripper', description: 'Rip DVDs and Blu-rays — scan titles, encode, and deliver to your Jellyfin library.', href: '/admin/disc-ripper' },
-    { title: 'Tape Ingest', description: 'Digitize VHS, VHS-C, and Mini DV tapes — scan, classify, and send to Jellyfin.', href: '/admin/tape-ingest' },
-    { title: 'Admin', description: 'Manage records, scanning, and tools.', href: '/admin' },
-  ];
-
-  return (
-    <Box sx={{ p: 3 }}>
-      <Typography variant="h4" sx={{ mb: 1 }}>
-        Dashboard
-      </Typography>
-      <Typography variant="body1" sx={{ mb: 3 }}>
-        Choose a workspace below.
-      </Typography>
-
-      <Grid container spacing={2}>
-        {dashboardLinks.map((link) => (
-          <DashboardCard key={link.href} {...link} />
-        ))}
-      </Grid>
-    </Box>
-  );
-};
+/** Home: the ingest pipeline at a glance, then library totals. */
+const Dashboard = () => <HomeOverview />;
 
 export default Dashboard;
