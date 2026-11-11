@@ -31,6 +31,7 @@ import LibraryMusicIcon from '@mui/icons-material/LibraryMusic';
 import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
 import { useCallback, useState } from 'react';
 import { api } from '@/service/api/apiClient';
+import { formatBytes } from '@/utils/format';
 import MediaAssignmentSearchService, {
   FolderFileStats,
   SearchResult,
@@ -107,16 +108,8 @@ function getTargetFolderLabel(mediaType: TargetMediaType): string {
   return 'Movies';
 }
 
-function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let idx = 0;
-  while (value >= 1024 && idx < units.length - 1) {
-    value /= 1024;
-    idx += 1;
-  }
-  return `${value.toFixed(value >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`;
+function formatSize(bytes: number): string {
+  return formatBytes(bytes, { empty: '0 B', precision: 'adaptive' });
 }
 
 function deriveRuntimeLabel(durationMs?: number): string {
@@ -357,13 +350,13 @@ export default function DiskReassignDialog({
                 assignedFiles: fileStats.fileCount,
                 unassignedFiles: 0,
                 totalFileSize: fileStats.totalFileSize,
-                totalFileSizeFormatted: formatBytes(fileStats.totalFileSize),
+                totalFileSizeFormatted: formatSize(fileStats.totalFileSize),
               },
               technicalMetadata: {
                 sourceFilePath: representativeFile?.path,
                 fileExtension: extracted?.extension,
                 fileSize: extracted?.size ?? representativeFile?.size,
-                fileSizeFormatted: formatBytes((extracted?.size ?? representativeFile?.size ?? 0)),
+                fileSizeFormatted: formatSize((extracted?.size ?? representativeFile?.size ?? 0)),
                 durationMs: mediaMeta?.duration || null,
                 quality: videoMeta?.resolutionCategory || null,
                 resolution: videoMeta?.resolution || null,

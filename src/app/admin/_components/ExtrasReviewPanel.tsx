@@ -6,6 +6,7 @@ import {
   Paper, Select, Stack, Typography,
 } from '@mui/material';
 import useExtrasReviewStore from '@/store/useExtrasReviewStore';
+import { formatBytes } from '@/utils/format';
 
 const CATEGORY_LABELS: Record<string, string> = {
   behind_the_scenes: 'Behind the Scenes',
@@ -21,10 +22,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   other: 'Other',
 };
 
-function formatBytes(bytes: number | null): string {
-  if (!bytes) return '—';
-  const gb = bytes / 1_073_741_824;
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1_048_576).toFixed(0)} MB`;
+function formatSize(bytes: number | null): string {
+  return formatBytes(bytes, { precision: 'video' });
 }
 
 /**
@@ -78,7 +77,7 @@ export default function ExtrasReviewPanel() {
                 </Box>
 
                 <Chip
-                  label={formatBytes(item.fileSize)}
+                  label={formatSize(item.fileSize)}
                   size="small"
                   variant="outlined"
                   sx={{ flexShrink: 0 }}

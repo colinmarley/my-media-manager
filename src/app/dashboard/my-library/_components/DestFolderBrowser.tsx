@@ -32,6 +32,7 @@ import SwapHorizIcon from '@mui/icons-material/SwapHoriz';
 import PlayCircleOutlineIcon from '@mui/icons-material/PlayCircleOutline';
 import DeleteForeverIcon from '@mui/icons-material/DeleteForever';
 import DiskReassignDialog, { DiskReassignMode } from './DiskReassignDialog';
+import { formatBytes } from '@/utils/format';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -170,14 +171,6 @@ function resolveMediaIdFromPath(
   return null;
 }
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let i = 0;
-  let v = bytes;
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-  return `${v.toFixed(1)} ${units[i]}`;
-}
 
 function isVideoFileName(name: string): boolean {
   return /\.(mp4|mkv|webm|mov|m4v|avi|ts|m2ts|wmv)$/i.test(name);

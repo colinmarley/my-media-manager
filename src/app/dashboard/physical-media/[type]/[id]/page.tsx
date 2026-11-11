@@ -23,11 +23,10 @@ import TapeEditDialog from '../../_components/TapeEditDialog';
 import ConfirmDeleteDialog from '../../_components/ConfirmDeleteDialog';
 import ConnectFileDialog from '../../_components/ConnectFileDialog';
 import DiscRipStatusPanel from '../../_components/DiscRipStatusPanel';
+import { formatBytes } from '@/utils/format';
 
-function formatBytes(bytes: number | null): string {
-  if (!bytes) return '—';
-  const gb = bytes / 1_073_741_824;
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1_048_576).toFixed(0)} MB`;
+function formatSize(bytes: number | null): string {
+  return formatBytes(bytes, { precision: 'video' });
 }
 
 export default function PhysicalMediaDetailPage() {
@@ -187,7 +186,7 @@ export default function PhysicalMediaDetailPage() {
                     </Typography>
                   </TableCell>
                   <TableCell>{f.detectedMediaType ?? '—'}</TableCell>
-                  <TableCell>{formatBytes(f.fileSize)}</TableCell>
+                  <TableCell>{formatSize(f.fileSize)}</TableCell>
                   <TableCell>
                     <Chip
                       label={f.organizationStatus ?? f.assignmentStatus ?? 'unknown'}
