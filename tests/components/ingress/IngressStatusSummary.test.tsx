@@ -22,14 +22,14 @@ describe('IngressStatusSummary', () => {
 
     expect(screen.getByText('Watcher')).toBeInTheDocument();
     expect(screen.getByText('Running')).toBeInTheDocument();
-    expect(screen.getByText('Watching 2 path(s)')).toBeInTheDocument();
+    expect(screen.getByText('Watching 2 folders')).toBeInTheDocument();
   });
 
   it('shows a stopped watcher when the status has not loaded yet', () => {
     render(<IngressStatusSummary watcher={null} queueStatus={null} health={null} />);
 
     expect(screen.getByText('Stopped')).toBeInTheDocument();
-    expect(screen.getByText('Watching 0 path(s)')).toBeInTheDocument();
+    expect(screen.getByText('Watching 0 folders')).toBeInTheDocument();
   });
 
   it('renders one chip per non-zero queue status', () => {
@@ -41,9 +41,9 @@ describe('IngressStatusSummary', () => {
 
     render(<IngressStatusSummary watcher={watcher} queueStatus={queueStatus} health={null} />);
 
-    expect(screen.getByText('needs_review: 3')).toBeInTheDocument();
-    expect(screen.getByText('completed: 2')).toBeInTheDocument();
-    expect(screen.queryByText('failed: 0')).not.toBeInTheDocument();
+    expect(screen.getByText('Needs review: 3')).toBeInTheDocument();
+    expect(screen.getByText('Organized: 2')).toBeInTheDocument();
+    expect(screen.queryByText('Failed: 0')).not.toBeInTheDocument();
   });
 
   it('says the queue is empty instead of rendering chips', () => {

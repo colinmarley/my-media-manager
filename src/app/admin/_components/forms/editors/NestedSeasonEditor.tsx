@@ -40,14 +40,14 @@ const NestedSeasonEditor: React.FC<NestedSeasonEditorProps> = ({ seasons, onChan
   return (
     <Stack spacing={2}>
       {seasons.length === 0 && (
-        <Typography variant="body2" color="rgba(255,255,255,0.5)">
+        <Typography variant="body2" color="text.secondary">
           No seasons added yet.
         </Typography>
       )}
       {seasons.map((season, index) => (
         <Box
           key={index}
-          sx={{ p: 2, border: '1px solid rgba(255,255,255,0.15)', borderRadius: 1 }}
+          sx={{ p: 2, border: 1, borderColor: 'divider', borderRadius: 1 }}
         >
           <Grid container spacing={1.5} alignItems="center" sx={{ mb: 2 }}>
             <Grid size={2}>
@@ -86,7 +86,7 @@ const NestedSeasonEditor: React.FC<NestedSeasonEditorProps> = ({ seasons, onChan
           </Grid>
           <Typography
             variant="subtitle2"
-            color="rgba(255,255,255,0.7)"
+            color="text.secondary"
             sx={{ mb: 1 }}
           >
             Episodes

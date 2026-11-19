@@ -3,7 +3,7 @@ import { Avatar, IconButton, ListItemIcon, Menu, MenuItem } from '@mui/material'
 import { Logout } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
 import useAuthenticationStore from '../../store/useAuthenticationStore';
-import { accent } from '@/theme/tokens';
+import { borders, surfaces, text } from '@/theme/tokens';
 
 const ProfileAccess = () => {
   const { logout } = useAuthenticationStore();
@@ -26,7 +26,7 @@ const ProfileAccess = () => {
         aria-expanded={open}
         size="small"
       >
-        <Avatar sx={{ width: 28, height: 28, fontSize: '0.8125rem', bgcolor: accent.tint, color: accent.light }}>U</Avatar>
+        <Avatar sx={{ width: 28, height: 28, fontSize: '0.8125rem', bgcolor: surfaces.selected, color: text.primary, border: `1px solid ${borders.strong}`, fontWeight: 600 }}>U</Avatar>
       </IconButton>
       <Menu
         anchorEl={anchorEl}

@@ -26,8 +26,8 @@ describe('IngressHistoryCard', () => {
     expect(screen.queryByText('/media/organized/movie-1.mkv')).not.toBeInTheDocument();
     expect(screen.queryByText('/media/organized/movie-0.mkv')).not.toBeInTheDocument();
 
-    expect(screen.getAllByText('completed')).toHaveLength(9);
-    expect(screen.getByText('failed')).toBeInTheDocument();
+    expect(screen.getAllByText('Organized')).toHaveLength(9);
+    expect(screen.getByText('Failed')).toBeInTheDocument();
     expect(screen.getAllByText('90%')).toHaveLength(10);
   });
 
@@ -39,7 +39,7 @@ describe('IngressHistoryCard', () => {
     );
 
     expect(screen.getByText('queue-44')).toBeInTheDocument();
-    expect(screen.getByText('needs_review')).toBeInTheDocument();
+    expect(screen.getByText('Needs review')).toBeInTheDocument();
     expect(screen.getByText('41%')).toBeInTheDocument();
   });
 

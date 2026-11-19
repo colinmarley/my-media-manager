@@ -32,7 +32,7 @@ test('admin page loads with the record tabs and Extras Review in the sidebar', a
 
 test('disc ripper page loads through the Scan Disc step', async ({ page }) => {
   await page.goto('/admin/disc-ripper');
-  await expect(page.getByRole('heading', { name: 'Disc Ripper' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Rip Disc' })).toBeVisible();
   // By text: the stepper's first step is also a button with the accessible name "Scan Disc" (its text is "1Scan Disc").
   await expect(page.locator('button').filter({ hasText: /^Scan Disc$/ })).toBeVisible();
 });

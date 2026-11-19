@@ -7,6 +7,7 @@ import type {
   IngressWatcherStatus,
 } from '@/service/ingress/IngressAutomationService';
 import { STATUS_COLORS } from '@/service/ingress/ingressQueueModel';
+import StatusChip, { resolveStatus } from '@/components/ui/StatusChip';
 
 type Props = {
   watcher: IngressWatcherStatus | null;
@@ -20,14 +21,9 @@ const IngressStatusSummary: React.FC<Props> = ({ watcher, queueStatus, health })
       <Card>
         <CardContent>
           <Typography variant="subtitle2" color="text.secondary">Watcher</Typography>
-          <Chip
-            label={watcher?.is_running ? 'Running' : 'Stopped'}
-            color={watcher?.is_running ? 'success' : 'default'}
-            size="small"
-            sx={{ mt: 1 }}
-          />
+          <StatusChip status={watcher?.is_running ? 'running' : 'stopped'} sx={{ mt: 1 }} />
           <Typography sx={{ mt: 1 }} variant="body2">
-            Watching {watcher?.watched_paths?.length || 0} path(s)
+            Watching {watcher?.watched_paths?.length || 0} folder{(watcher?.watched_paths?.length || 0) === 1 ? '' : 's'}
           </Typography>
         </CardContent>
       </Card>
@@ -40,12 +36,7 @@ const IngressStatusSummary: React.FC<Props> = ({ watcher, queueStatus, health })
             {Object.entries(queueStatus?.counts || {})
               .filter(([, count]) => (count as number) > 0)
               .map(([status, count]) => (
-                <Chip
-                  key={status}
-                  label={`${status}: ${count}`}
-                  size="small"
-                  color={STATUS_COLORS[status] || 'default'}
-                />
+                <StatusChip key={status} status={status} label={`${resolveStatus(status).label}: ${count}`} />
               ))}
             {!queueStatus?.total && (
               <Typography variant="body2" color="text.secondary">Empty</Typography>
@@ -60,11 +51,7 @@ const IngressStatusSummary: React.FC<Props> = ({ watcher, queueStatus, health })
           <Typography variant="subtitle2" color="text.secondary">Paths</Typography>
           {health?.ingress_paths?.map((p: any) => (
             <Box key={p.path} sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
-              <Chip
-                label={p.exists ? 'OK' : 'Missing'}
-                color={p.exists ? 'success' : 'error'}
-                size="small"
-              />
+              <StatusChip status={p.exists ? 'success' : 'error'} label={p.exists ? 'OK' : 'Missing'} />
               <Typography variant="caption" noWrap title={p.path}>{p.path}</Typography>
             </Box>
           )) || (

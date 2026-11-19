@@ -303,8 +303,8 @@ function EntryRow({
               pl: `${16 + indent}px`,
               py: 0.5,
               ...(isDragOver && {
-                backgroundColor: 'rgba(100, 180, 255, 0.18)',
-                outline: '2px dashed rgba(100, 180, 255, 0.6)',
+                backgroundColor: 'action.selected',
+                outline: '2px dashed', outlineColor: 'primary.light',
                 outlineOffset: '-2px',
               }),
             }}

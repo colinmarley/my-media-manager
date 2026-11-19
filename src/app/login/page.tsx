@@ -2,7 +2,9 @@
 
 import { useEffect, useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Box, Button, TextField, Typography, Alert, CircularProgress } from '@mui/material';
+import { Box, Button, Stack, TextField, Typography, Alert, CircularProgress } from '@mui/material';
+import { VideoLibraryOutlined } from '@mui/icons-material';
+import { accent, borders, radii, shadows, surfaces } from '@/theme/tokens';
 import useAuthenticationStore from '@/store/useAuthenticationStore';
 
 export default function LoginPage() {
@@ -56,70 +58,97 @@ export default function LoginPage() {
 
   return (
     <Box
+      component="main"
       sx={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: '60vh',
+        minHeight: '100vh',
+        display: 'grid',
+        placeItems: 'center',
+        px: 2,
+        py: 6,
+        // One soft light from above, so the card sits on something rather than floating in flat black.
+        backgroundImage: `radial-gradient(ellipse 70% 50% at 50% 0%, ${accent.tint}, transparent 70%)`,
       }}
     >
-      <Box
-        component="form"
-        onSubmit={onSubmit}
-        sx={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 2,
-          width: '100%',
-          maxWidth: 360,
-          p: 4,
-          borderRadius: 2,
-          backgroundColor: '#3a3a3a',
-        }}
-      >
-        <Typography variant="h5" textAlign="center">
-          Media Manager
-        </Typography>
-
-        {backendReady === false && (
-          <Alert
-            severity="warning"
-            action={
-              <Button color="inherit" size="small" onClick={() => void checkBackend()} disabled={checkingBackend}>
-                Retry
-              </Button>
-            }
+      <Box sx={{ width: '100%', maxWidth: 380 }}>
+        <Stack alignItems="center" spacing={1.5} sx={{ mb: 3, textAlign: 'center' }}>
+          <Box
+            aria-hidden
+            sx={{
+              width: 44, height: 44, borderRadius: '12px', display: 'grid', placeItems: 'center',
+              bgcolor: accent.main, color: accent.contrastText, boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.22)',
+            }}
           >
-            Backend is not reachable right now. Make sure Docker services are running.
-          </Alert>
-        )}
+            <VideoLibraryOutlined sx={{ fontSize: 24 }} />
+          </Box>
+          <Box>
+            <Typography variant="h3" component="h1">Media Manager</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              Enter the passphrase to open your library.
+            </Typography>
+          </Box>
+        </Stack>
 
-        {backendReady === null && (
-          <Alert severity="info">Checking backend availability...</Alert>
-        )}
-
-        {error && <Alert severity="error">{error}</Alert>}
-
-        <TextField
-          type="password"
-          label="Passphrase"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoFocus
-          fullWidth
-          disabled={loading}
-        />
-
-        <Button
-          type="submit"
-          variant="contained"
-          fullWidth
-          disabled={loading || checkingBackend || backendReady === false || !password.trim()}
-          startIcon={loading ? <CircularProgress size={16} /> : null}
+        <Box
+          component="form"
+          onSubmit={onSubmit}
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 2,
+            p: 3,
+            borderRadius: `${radii.lg}px`,
+            bgcolor: surfaces.paper,
+            border: `1px solid ${borders.default}`,
+            boxShadow: shadows.dialog,
+          }}
         >
-          {loading ? 'Signing in…' : 'Sign In'}
-        </Button>
+          {backendReady === false && (
+            <Alert
+              severity="warning"
+              action={
+                <Button color="inherit" size="small" onClick={() => void checkBackend()} disabled={checkingBackend}>
+                  Retry
+                </Button>
+              }
+            >
+              The server is not responding. Check that its Docker services are running.
+            </Alert>
+          )}
+
+          {error && <Alert severity="error">{error}</Alert>}
+
+          <TextField
+            type="password"
+            label="Passphrase"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus
+            fullWidth
+            size="medium"
+            autoComplete="current-password"
+            disabled={loading}
+          />
+
+          <Button
+            type="submit"
+            variant="contained"
+            size="large"
+            fullWidth
+            disabled={loading || checkingBackend || backendReady === false || !password.trim()}
+            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : null}
+          >
+            {loading ? 'Signing in…' : 'Sign In'}
+          </Button>
+        </Box>
+
+        <Typography
+          variant="caption"
+          color="text.disabled"
+          role="status"
+          sx={{ display: 'block', mt: 2, textAlign: 'center', minHeight: 16 }}
+        >
+          {backendReady === null ? 'Checking the server…' : ''}
+        </Typography>
       </Box>
     </Box>
   );

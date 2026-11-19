@@ -7,40 +7,56 @@
  * (sidebar widths, status colours keyed by our own status names).
  */
 
-/** Neutral greys with a slight blue cast — the "rack-mounted equipment" base. */
+/**
+ * Neutral graphite, darkest at the back. Each step up is one level of
+ * elevation: canvas < chrome < paper < raised < selected.
+ */
 export const surfaces = {
+  /** Wells: log output, code, poster placeholders. */
+  sunken: '#090a0b',
   /** App background behind everything. */
-  canvas: '#121519',
+  canvas: '#0d0e10',
   /** Sidebar and top bar. */
-  chrome: '#171b20',
+  chrome: '#111215',
   /** Cards, panels, dialogs. */
-  paper: '#1c2127',
-  /** Inputs, hovered rows, nested panels. */
-  raised: '#232931',
+  paper: '#16181b',
+  /** Menus, hovered rows, nested panels, secondary buttons. */
+  raised: '#1d2024',
   /** Selected nav item / selected rows. */
-  selected: '#2a323d',
+  selected: '#262a30',
 } as const;
 
 export const borders = {
-  subtle: '#262c34',
-  default: '#313844',
-  strong: '#434c5a',
+  subtle: '#1f2226',
+  default: '#2a2e34',
+  strong: '#3d424a',
 } as const;
 
 export const text = {
-  primary: '#e4e8ee',
-  secondary: '#9ba5b3',
-  disabled: '#6a7380',
+  primary: '#eceef2',
+  secondary: '#a1a7b3',
+  disabled: '#666c77',
 } as const;
 
-/** One accent. Used for primary actions, focus rings and the active nav item. */
+/**
+ * One accent. `main` is a fill (primary buttons, checked controls) and carries
+ * white text; `light` is the accent as text or an icon on a dark surface.
+ */
 export const accent = {
-  main: '#6e9fe8',
-  light: '#97bbf0',
-  dark: '#4f80c9',
-  contrastText: '#0e1622',
+  main: '#3570e6',
+  light: '#8fb4ff',
+  dark: '#2a5cc4',
+  contrastText: '#ffffff',
   /** Translucent fill for selected / hovered accent surfaces. */
-  tint: 'rgba(110, 159, 232, 0.14)',
+  tint: 'rgba(79, 134, 247, 0.16)',
+  /** Focus ring around inputs. */
+  ring: 'rgba(79, 134, 247, 0.32)',
+} as const;
+
+/** Shadows for things that float above the page. Flat panels use borders instead. */
+export const shadows = {
+  menu: '0 10px 28px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.35)',
+  dialog: '0 28px 72px rgba(0, 0, 0, 0.65), 0 4px 12px rgba(0, 0, 0, 0.4)',
 } as const;
 
 export type StatusTone = 'success' | 'warning' | 'error' | 'info' | 'neutral';
@@ -67,15 +83,15 @@ export const spacingUnit = 8;
 
 export const radii = {
   /** Chips, inputs, buttons. */
-  sm: 4,
+  sm: 6,
   /** Cards, panels, menus. */
-  md: 6,
+  md: 8,
   /** Dialogs. */
-  lg: 10,
+  lg: 12,
 } as const;
 
 export const layout = {
-  sidebarWidth: 232,
+  sidebarWidth: 236,
   railWidth: 60,
   topBarHeight: 52,
   /** Horizontal page gutter, in spacing units, per breakpoint. */
@@ -114,6 +130,7 @@ export const tokens = {
   accent,
   status,
   spacingUnit,
+  shadows,
   radii,
   layout,
   fontFamilies,

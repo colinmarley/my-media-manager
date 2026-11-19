@@ -12,7 +12,7 @@ const InfoTooltip: React.FC<InfoTooltipProps> = ({ title }) => {
       <Box
         component="span"
         sx={{
-          color: 'rgba(255,255,255,0.72)',
+          color: 'text.secondary',
           display: 'inline-flex',
           alignItems: 'center',
           lineHeight: 0,

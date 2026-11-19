@@ -3,50 +3,49 @@ import path from 'path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * Issue #19, review finding 1: the smoke walkthrough reads a card's title with
- * `card.locator('.MuiCardContent-root').getByRole('heading', { level: 6 })`.
+ * Issue #19, review finding 1: the smoke walkthrough reads a library card's title and
+ * then expects the detail page to show the same text.
  *
- * That lookup is only unique because of where the library card puts its two
- * headings: MUI renders BOTH `variant="subtitle1"` (the poster fallback, shown when the
- * poster 404s) and `variant="h6"` (the card title) as `<h6>`, so a fallback title inside
- * the card body would make the locator resolve to two nodes and fail the run.
- *
- * These tests pin that structure in the page, so a card refactor that moves the fallback
- * inside the card body — or a card-title heading that is not an `<h6>` — fails here rather
- * than in a smoke run against a live deployment.
+ * A card prints a name in two places: the catalog title under the poster, and, when the
+ * poster 404s, the folder name on the placeholder that stands in for it. Only the first
+ * is the title. The smoke therefore looks the title up by test id
+ * (`card.getByTestId('library-card-title')`), and these tests pin the markup that lookup
+ * depends on, so a card refactor fails here rather than in a smoke run against a live
+ * deployment.
  */
 
 const ROOT = path.resolve(__dirname, '../..');
+const TITLE_CARD = path.join(ROOT, 'src/app/dashboard/my-library/_components/TitleCard.tsx');
 const LIBRARY_PAGE = path.join(ROOT, 'src/app/dashboard/my-library/page.tsx');
 // The app shell's nav hrefs live in its config, not in the root layout.
 const SHELL = path.join(ROOT, 'src/components/shell/navConfig.ts');
+const TITLE_TEST_ID = 'data-testid="library-card-title"';
 
-const librarySource = readFileSync(LIBRARY_PAGE, 'utf-8');
+const cardSource = readFileSync(TITLE_CARD, 'utf-8');
 
-const linkStart = librarySource.indexOf('<CardActionArea');
-const linkEnd = librarySource.indexOf('</CardActionArea>', linkStart);
-const card = librarySource.slice(linkStart, linkEnd);
+const slicePlaceholder = (source: string) => {
+  const start = source.indexOf('export const PosterPlaceholder');
+  return source.slice(start, source.indexOf('export const posterFrameSx', start));
+};
 
-const bodyStart = card.indexOf('<CardContent');
-const bodyEnd = card.indexOf('</CardContent>', bodyStart);
-const cardBody = card.slice(bodyStart, bodyEnd);
-const outsideCardBody = card.slice(0, bodyStart);
+const countTitleIds = (source: string) => source.split(TITLE_TEST_ID).length - 1;
 
 describe('the library card title lookup the smoke walkthrough depends on (issue #19)', () => {
-  it('renders the card as a link with a card body to scope the lookup to', () => {
-    expect(linkStart, 'the library card is no longer a CardActionArea link').toBeGreaterThan(-1);
-    expect(bodyStart, 'the library card no longer has a CardContent body').toBeGreaterThan(-1);
+  it('renders the card as a link the smoke card locator can find', () => {
+    expect(cardSource).toMatch(/component=\{Link\}\s+href=\{href\}/);
+    const pageSource = readFileSync(LIBRARY_PAGE, 'utf-8');
+    expect(pageSource).toContain('<TitleCard');
+    expect(pageSource).toMatch(/href=\{`\/dashboard\/my-library\/\$\{item\.mediaType\}\//);
   });
 
-  it('puts exactly one heading in the card body, at the level the smoke asks for', () => {
-    expect(cardBody.match(/variant="h6"/g)).toHaveLength(1);
+  it('marks exactly one element in the card as the title', () => {
+    expect(countTitleIds(cardSource)).toBe(1);
   });
 
-  it('keeps the poster fallback heading outside the card body, where it cannot double-match', () => {
-    expect(outsideCardBody).toContain('posterFallbackTitle');
-    // MUI maps subtitle1 to an <h6>, which is what makes the fallback a second candidate.
-    expect(outsideCardBody).toMatch(/variant="subtitle1"/);
-    expect(cardBody).not.toMatch(/variant="subtitle1"/);
+  it('keeps the title test id off the poster placeholder, which shows the folder name', () => {
+    const placeholder = slicePlaceholder(cardSource);
+    expect(placeholder.length).toBeGreaterThan(0);
+    expect(placeholder).not.toContain(TITLE_TEST_ID);
   });
 
   it('does not let the app shell nav match the smoke card locator', () => {
@@ -64,27 +63,17 @@ describe('the library card title lookup the smoke walkthrough depends on (issue 
  * slice boundaries silently stopping matching anything.
  */
 describe('the library card guards fail when the card structure changes', () => {
-  const sliceCard = (source: string) => {
-    const start = source.indexOf('<CardActionArea');
-    const card = source.slice(start, source.indexOf('</CardActionArea>', start));
-    const bodyStart = card.indexOf('<CardContent');
-    const bodyEnd = card.indexOf('</CardContent>', bodyStart);
-    return { cardBody: card.slice(bodyStart, bodyEnd), outsideCardBody: card.slice(0, bodyStart) };
-  };
-
-  it('catches the poster fallback moving into the card body', () => {
-    const mutated = librarySource.replace(
-      '<Typography variant="h6" sx={styles.cardTitle}>',
-      '<Typography variant="subtitle1" sx={styles.posterFallbackTitle}>{folderDisplayName}</Typography>\n                    <Typography variant="h6" sx={styles.cardTitle}>',
-    );
-    expect(mutated).not.toBe(librarySource);
-    expect(sliceCard(mutated).cardBody).toMatch(/variant="subtitle1"/);
+  it('catches a second element claiming to be the title', () => {
+    const mutated = cardSource.replace('data-testid="poster-placeholder"', TITLE_TEST_ID);
+    expect(mutated).not.toBe(cardSource);
+    expect(countTitleIds(mutated)).toBe(2);
+    expect(slicePlaceholder(mutated)).toContain(TITLE_TEST_ID);
   });
 
-  it('catches the card title stopping being a level-6 heading', () => {
-    const mutated = librarySource.replace('variant="h6" sx={styles.cardTitle}', 'variant="h5" sx={styles.cardTitle}');
-    expect(mutated).not.toBe(librarySource);
-    expect(sliceCard(mutated).cardBody.match(/variant="h6"/g)).toBeNull();
+  it('catches the title losing its test id', () => {
+    const mutated = cardSource.replace(TITLE_TEST_ID, '');
+    expect(mutated).not.toBe(cardSource);
+    expect(countTitleIds(mutated)).toBe(0);
   });
 
   it('catches a trailing slash on the shell nav href', () => {

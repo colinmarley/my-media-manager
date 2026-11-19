@@ -13,6 +13,7 @@ import ReplayIcon from '@mui/icons-material/Replay';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
 import type { JobAnalysis, RipJob } from '@/types/disc-ripper/DiscRipper.type';
 import { fmtDur } from './discRipperUtils';
+import { borders, surfaces, text } from '@/theme/tokens';
 
 export default function ResultsStep({
   jobs,
@@ -347,7 +348,7 @@ export default function ResultsStep({
                   <Box
                     component="pre"
                     sx={{
-                      bgcolor: '#0d1117', color: '#c9d1d9',
+                      bgcolor: surfaces.sunken, color: text.secondary, border: `1px solid ${borders.subtle}`,
                       fontFamily: 'monospace', fontSize: '0.72rem',
                       p: 1.5, borderRadius: 1,
                       maxHeight: 200, overflowY: 'auto',

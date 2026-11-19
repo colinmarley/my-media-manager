@@ -189,7 +189,7 @@ const ReleaseForm: React.FC = () => {
             <FormSection title="Disc Associations" description="Discs included in this release." titleTooltip="List each physical disc and its format so this release can be tracked and grouped accurately.">
               <Grid container spacing={2}>
                 <Grid size={12}>
-                  <Typography variant="subtitle2" color="rgba(255,255,255,0.7)" sx={{ mb: 1 }}>Disc IDs</Typography>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Disc IDs</Typography>
                   {discIds.map((discId, index) => (
                     <Grid container spacing={1} key={index} sx={{ mb: 1 }}>
                       <Grid size={10}>
@@ -219,7 +219,7 @@ const ReleaseForm: React.FC = () => {
                   <Button onClick={handleAddDiscId} size="small" data-testid="add-disc-id-btn">Add Disc ID</Button>
                 </Grid>
                 <Grid size={12}>
-                  <Typography variant="subtitle2" color="rgba(255,255,255,0.7)" sx={{ mb: 1 }}>Disc Types</Typography>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Disc Types</Typography>
                   {discTypes.map((discType, index) => (
                     <Grid container spacing={1} key={index} sx={{ mb: 1 }}>
                       <Grid size={10}>
@@ -306,7 +306,7 @@ const ReleaseForm: React.FC = () => {
             </FormSection>
 
             <FormSection title="Media Assets" description="Images associated with this release." titleTooltip="Provide release-specific artwork like slipcovers, package photos, or menus.">
-              <Typography variant="body2" color="rgba(255,255,255,0.5)">
+              <Typography variant="body2" color="text.secondary">
                 Image management coming soon.
               </Typography>
             </FormSection>

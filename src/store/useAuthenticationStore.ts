@@ -3,6 +3,8 @@ import { api } from '@/service/api/apiClient';
 
 interface AuthState {
   authenticated: boolean;
+  /** True once the first session check has answered, either way. */
+  sessionChecked: boolean;
   loading: boolean;
   error: string | null;
   checkSession: () => Promise<void>;
@@ -12,15 +14,16 @@ interface AuthState {
 
 const useAuthenticationStore = create<AuthState>((set) => ({
   authenticated: false,
+  sessionChecked: false,
   loading: false,
   error: null,
 
   checkSession: async () => {
     try {
       await api.get('/auth/me');
-      set({ authenticated: true });
+      set({ authenticated: true, sessionChecked: true });
     } catch {
-      set({ authenticated: false });
+      set({ authenticated: false, sessionChecked: true });
     }
   },
 

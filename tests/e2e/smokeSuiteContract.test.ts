@@ -60,16 +60,12 @@ describe('e2e/smoke walkthrough (issue #19 AC1)', () => {
     });
   }
 
-  it('reads a card title from the card body, not from any heading in the card link', () => {
-    // my-library/page.tsx swaps in a poster fallback whose Typography is
-    // variant="subtitle1", and MUI maps subtitle1 to an <h6>. It sits above the
-    // real title and holds the folder name, so an unscoped
-    // getByRole('heading', { level: 6 }) inside the card link is a strict-mode
-    // violation on every card whose poster request 404s — and reads the wrong
-    // text if .first() is used instead.
-    expect(smokeSource).toMatch(
-      /MuiCardContent-root[\s\S]{0,160}getByRole\(\s*['"]heading['"]\s*,\s*\{\s*level:\s*6/,
-    );
+  it('reads a card title by its test id, not from any text in the card link', () => {
+    // A card whose poster request 404s shows a placeholder that prints the
+    // folder name above the real title, so "the first heading in the card" (or
+    // any text lookup) can read the wrong name. TitleCard marks the catalog
+    // title with a test id; tests/e2e/libraryCardTitleLocator.test.ts pins it.
+    expect(smokeSource).toMatch(/card\.getByTestId\(\s*['"]library-card-title['"]\s*\)/);
   });
 
   it('fails loudly instead of skipping when the environment has no data', () => {
