@@ -35,11 +35,14 @@ test('my library opens the detail page of one title', async ({ page }) => {
   const cardTitle = card.locator('.MuiCardContent-root').getByRole('heading', { level: 6 });
   await expect(cardTitle, 'Library card rendered no title heading in its card body.').toBeVisible();
   const title = (await cardTitle.innerText()).trim();
-  await card.click();
-
-  await expect(page).toHaveURL(/\/dashboard\/my-library\/[^/]+\/[^/]+/);
+  // Retried: a click that lands before the card has hydrated does nothing.
+  await expect(async () => {
+    await card.click();
+    await expect(page).toHaveURL(/\/dashboard\/my-library\/[^/]+\/[^/]+/, { timeout: 3000 });
+  }).toPass({ timeout: 20000 });
   await expect(
-    page.getByRole('heading', { level: 4 }).first(),
+    // The title is the page's h1 since the title page redesign.
+    page.getByRole('heading', { level: 1 }).first(),
     `Detail page for "${title}" never rendered a title — its details request probably failed.`,
   ).toContainText(title);
   await expect(page.getByRole('link', { name: 'Back to My Library' })).toBeVisible();
