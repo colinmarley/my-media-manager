@@ -49,6 +49,7 @@ class TestErrorResponses:
         from db.database import get_db
 
         db = MagicMock()
+        db.flush = AsyncMock()  # create_disc flushes the disc's loose release first
         db.commit = AsyncMock(side_effect=IntegrityError("INSERT", {}, Exception("duplicate key")))
 
         async def override_db():

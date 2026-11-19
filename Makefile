@@ -12,7 +12,7 @@
 # =============================================================================
 
 .PHONY: test test-backend test-frontend \
-        test-db-up test-db-down test-integration \
+        test-db-up test-db-down test-integration test-releases \
         dev-db \
 	reset-library-to-ingest \
         docker-up docker-down \
@@ -31,6 +31,7 @@ help:
 	@echo "  test-frontend     Run frontend (vitest) unit tests only"
 	@echo "  test-backend      Run backend (pytest) unit tests only"
 	@echo "  test-integration  Start test DB, run backend tests, stop test DB"
+	@echo "  test-releases     Run the release/catalog tests on a throwaway Postgres"
 	@echo "  test-db-up        Start the isolated test database container"
 	@echo "  test-db-down      Stop and wipe the test database container"
 	@echo ""
@@ -64,6 +65,11 @@ test-db-down:
 test-integration: test-db-up
 	cd backend && $(CURDIR)/$(PYTHON) -m pytest tests/ -v
 	$(MAKE) test-db-down
+
+# Release / catalog tests that need a real Postgres (skipped by plain pytest).
+# Starts its own throwaway postgres:16 container and removes it afterwards.
+test-releases:
+	PYTHON=$(CURDIR)/$(PYTHON) bash scripts/test-releases.sh
 
 # ── Local Development ─────────────────────────────────────────────────────────
 

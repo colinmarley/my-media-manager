@@ -35,7 +35,8 @@ test('create, edit, connect a file, disconnect, and delete a disc via the UI', a
   try {
     // --- Edit ---
     await page.getByRole('button', { name: /^Edit$/ }).click();
-    const titleField = page.getByLabel('Title', { exact: false });
+    // Scoped to the dialog: the detail page behind it has a "Titles" section that also matches the label.
+    const titleField = page.getByRole('dialog').getByRole('textbox', { name: 'Title' });
     await titleField.fill('');
     await titleField.fill(editedTitle);
     await page.getByRole('button', { name: /Save Changes/i }).click();

@@ -13,7 +13,7 @@ import shutil
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, or_, func
+from sqlalchemy import select, delete, update, or_, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from typing import Any
 
@@ -79,6 +79,9 @@ def _row_to_dict(row, id_field: str = "id") -> dict:
     """Return the raw_data blob with id guaranteed."""
     data: dict = dict(row.raw_data or {})
     data["id"] = getattr(row, id_field)
+    if isinstance(row, Disc):
+        # Always set, also for a loose disc whose record has no setId.
+        data["releaseId"] = row.set_id
     return data
 
 
@@ -87,7 +90,16 @@ def _row_to_dict(row, id_field: str = "id") -> dict:
 _STORAGE_ID_RE = re.compile(r"^[A-Za-z0-9_\-. ]{1,40}$")
 
 # Flags a client sends in the body that aren't part of the stored record.
-_CONTROL_KEYS = ("allowDuplicateBarcode",)
+# releaseId and linkedFileCount are computed into the disc DTO; a client
+# echoing a fetched record back must not get them stored.
+_CONTROL_KEYS = ("allowDuplicateBarcode", "releaseId", "linkedFileCount")
+
+# Releases (disc_sets rows) — see docs/architecture/PHYSICAL_RELEASES_AND_DISC_LINKING.md.
+PACKAGING_LOOSE = "loose"
+PACKAGINGS = ("case", "box_set", "combo_pack", PACKAGING_LOOSE)
+DISC_CONTENT_ROLES = ("feature", "episodes", "bonus", "duplicate_format", "other")
+RIP_INTENTS = ("rip", "skip")
+SOURCE_KINDS = ("disc", "tape", "digital")
 
 
 def _int_or_none(value: Any, label: str) -> int | None:
@@ -134,12 +146,75 @@ async def _normalize_physical_body(body: dict[str, Any], db: AsyncSession) -> di
             else:
                 body[key] = value
 
+    for key in ("contentRole", "content_role"):
+        if body.get(key) in ("", None):
+            body.pop(key, None)
+        elif body[key] not in DISC_CONTENT_ROLES:
+            raise HTTPException(
+                status_code=422, detail=f"Disc role must be one of: {', '.join(DISC_CONTENT_ROLES)}.",
+            )
+    for key in ("ripIntent", "rip_intent"):
+        if body.get(key) in ("", None):
+            body.pop(key, None)
+        elif body[key] not in RIP_INTENTS:
+            raise HTTPException(status_code=422, detail=f"Rip intent must be one of: {', '.join(RIP_INTENTS)}.")
+
     set_id = body.get("setId") or body.get("set_id")
     if set_id:
         exists = await db.execute(select(DiscSet.id).where(DiscSet.id == set_id))
         if exists.scalar_one_or_none() is None:
             raise HTTPException(status_code=422, detail="That boxed set no longer exists. Pick another set or remove it.")
     return body
+
+
+async def _attach_disc_release(db: AsyncSession, disc: Disc, previous_set_id: str | None = None) -> None:
+    """Every disc belongs to a release. Called after ``_apply_disc_fields``:
+    a disc the body left without a set keeps the ``loose`` release it already
+    had, or gets a new one-disc loose release.
+
+    A loose release is only ever in the ``set_id`` column, never in the
+    record's ``setId``: to clients a loose disc is "not in a set", exactly as
+    before releases existed. ``releaseId`` in the disc DTO carries it."""
+    if disc.set_id:
+        return
+    if previous_set_id:
+        previous = (await db.execute(select(DiscSet).where(DiscSet.id == previous_set_id))).scalar_one_or_none()
+        if previous is not None and previous.packaging == PACKAGING_LOOSE:
+            disc.set_id = previous_set_id
+            _mirror_disc(previous, disc)
+            return
+    release = DiscSet(id=str(uuid.uuid4()), packaging=PACKAGING_LOOSE, raw_data={})
+    _mirror_disc(release, disc)
+    db.add(release)
+    # No ORM relationship ties a disc to its release, so the unit of work does
+    # not know to insert the release first.
+    await db.flush()
+    disc.set_id = release.id
+
+
+def _mirror_disc(release: DiscSet, disc: Disc) -> None:
+    """A loose release is a wrapper around its one disc, so it mirrors the
+    disc's title, barcode and edition. Without this an edited barcode would
+    still be found under the old one through the release."""
+    release.title = disc.title or "Untitled"
+    release.barcode = disc.barcode
+    release.edition = disc.edition
+
+
+async def _drop_empty_loose_release(db: AsyncSession, set_id: str | None) -> None:
+    """Delete an auto-made loose release once its last disc has left it (the
+    disc joined a real release, or was deleted). Other releases are kept:
+    an empty box set is still something a person catalogued."""
+    if not set_id:
+        return
+    release = (await db.execute(select(DiscSet).where(DiscSet.id == set_id))).scalar_one_or_none()
+    if release is None or release.packaging != PACKAGING_LOOSE:
+        return
+    if (await db.execute(select(Disc.id).where(Disc.set_id == set_id).limit(1))).scalar_one_or_none() is not None:
+        return
+    if (await db.execute(select(Tape.id).where(Tape.set_id == set_id).limit(1))).scalar_one_or_none() is not None:
+        return
+    await db.execute(delete(DiscSet).where(DiscSet.id == set_id))
 
 
 async def _reject_duplicate_barcode(model, body: dict[str, Any], db: AsyncSession) -> None:
@@ -193,6 +268,9 @@ def _apply_disc_fields(row: Disc, body: dict[str, Any]) -> None:
     row.contains_special_features = bool(
         body.get("containsSpecialFeatures") or body.get("contains_special_features") or False
     )
+    row.content_role = body.get("contentRole") or body.get("content_role")
+    row.rip_intent = body.get("ripIntent") or body.get("rip_intent") or "rip"
+    row.rip_skip_reason = body.get("ripSkipReason") or body.get("rip_skip_reason")
     row.raw_data = body
 
 
@@ -283,6 +361,8 @@ def _media_file_to_dict(row: MediaFile, disc: Any = None, tape: Any = None) -> d
         "missingSince": _iso(row.missing_since),
         "discId": row.disc_id,
         "tapeId": row.tape_id,
+        "releaseId": row.release_id,
+        "sourceKind": row.source_kind,
         "movieId": row.movie_id,
         "seriesId": row.series_id,
         "disc": _source_summary(disc, "format"),
@@ -646,9 +726,11 @@ async def search_discs(
         conditions.append(Disc.title.ilike(f"%{title}%"))
     if barcode:
         conditions.append(Disc.barcode == barcode)
+        # The barcode of a multi-disc release is on the release, not its discs.
+        conditions.append(Disc.set_id.in_(select(DiscSet.id).where(DiscSet.barcode == barcode)))
 
     result = await db.execute(
-        select(Disc).where(or_(*conditions)).order_by(Disc.title).limit(25)
+        select(Disc).where(or_(*conditions)).order_by(Disc.title, Disc.disc_number).limit(25)
     )
     return [_row_to_dict(row) for row in result.scalars().all()]
 
@@ -677,6 +759,7 @@ async def create_disc(
     body = await _normalize_physical_body(body, db)
     row = Disc(id=str(uuid.uuid4()))
     _apply_disc_fields(row, body)
+    await _attach_disc_release(db, row)
     db.add(row)
     await db.commit()
     await db.refresh(row)
@@ -713,13 +796,30 @@ async def upsert_disc(
     result = await db.execute(select(Disc).where(Disc.id == disc_id))
     row = result.scalar_one_or_none()
 
-    if row is None:
+    previous_set_id = None
+    is_new = row is None
+    if is_new:
         row = Disc(id=disc_id)
-        db.add(row)
-    elif merge:
-        body = _merged(row, body)
+    else:
+        previous_set_id = row.set_id
+        if merge:
+            body = _merged(row, body)
+        elif "setId" not in body and "set_id" not in body:
+            # A replace that says nothing about the set (the web edit dialog)
+            # keeps the set the record names. An explicit null takes it out.
+            kept = (row.raw_data or {}).get("setId")
+            if kept:
+                body["setId"] = kept
 
     _apply_disc_fields(row, body)
+    # The release is flushed in there, so a new disc is added only afterwards.
+    await _attach_disc_release(db, row, previous_set_id)
+    if is_new:
+        db.add(row)
+    if previous_set_id and previous_set_id != row.set_id:
+        await db.flush()
+        await db.execute(update(MediaFile).where(MediaFile.disc_id == disc_id).values(release_id=row.set_id))
+        await _drop_empty_loose_release(db, previous_set_id)
 
     await db.commit()
     await db.refresh(row)
@@ -728,7 +828,9 @@ async def upsert_disc(
 
 @router.delete("/discs/{disc_id}", dependencies=[Depends(require_any_auth)])
 async def delete_disc(disc_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    set_id = (await db.execute(select(Disc.set_id).where(Disc.id == disc_id))).scalar_one_or_none()
     await db.execute(delete(Disc).where(Disc.id == disc_id))
+    await _drop_empty_loose_release(db, set_id)
     await db.commit()
     return {"deleted": disc_id}
 
@@ -749,9 +851,12 @@ async def search_disc_sets(
 ) -> list[dict]:
     """List disc sets, optionally filtered by title — backs the "join an
     existing set" picker when adding a disc."""
-    stmt = select(DiscSet).order_by(DiscSet.title)
+    # Loose releases are the automatic one-disc wrappers, not sets to join.
+    stmt = select(DiscSet).where(
+        or_(DiscSet.packaging.is_(None), DiscSet.packaging != PACKAGING_LOOSE)
+    ).order_by(DiscSet.title)
     if title:
-        stmt = select(DiscSet).where(DiscSet.title.ilike(f"%{title}%")).order_by(DiscSet.title)
+        stmt = stmt.where(DiscSet.title.ilike(f"%{title}%"))
     result = await db.execute(stmt.limit(50))
     return [_disc_set_to_dict(row) for row in result.scalars().all()]
 
@@ -818,17 +923,48 @@ async def list_disc_links(disc_id: str, db: AsyncSession = Depends(get_db)) -> l
             "mediaType": link.media_type,
             "mediaId": link.media_id,
             "title": titles.get((link.media_type, link.media_id)),
+            "seasonNumber": link.season_number,
+            "episodeStart": link.episode_start,
+            "episodeEnd": link.episode_end,
         }
         for link in links
     ]
 
 
+def content_scope(body: dict[str, Any]) -> dict[str, int | None]:
+    """The optional season / episode-range scope of a title on a release or
+    disc, validated: a range needs a season, only a series has a scope, and
+    the range must not run backwards."""
+    scope = {
+        "season_number": _int_or_none(body.get("seasonNumber"), "Season number"),
+        "episode_start": _int_or_none(body.get("episodeStart"), "First episode"),
+        "episode_end": _int_or_none(body.get("episodeEnd"), "Last episode"),
+    }
+    if any(value is not None and value < 0 for value in scope.values()):
+        raise HTTPException(status_code=422, detail="Season and episode numbers cannot be negative.")
+    has_range = scope["episode_start"] is not None or scope["episode_end"] is not None
+    if has_range and scope["season_number"] is None:
+        raise HTTPException(status_code=422, detail="An episode range needs a season number.")
+    if scope["season_number"] is not None and body.get("mediaType") != "series":
+        raise HTTPException(status_code=422, detail="Only a series can have a season or episode range.")
+    if (
+        scope["episode_start"] is not None and scope["episode_end"] is not None
+        and scope["episode_end"] < scope["episode_start"]
+    ):
+        raise HTTPException(status_code=422, detail="The last episode cannot come before the first.")
+    return scope
+
+
 @router.post("/discs/{disc_id}/links", dependencies=[Depends(require_any_auth)])
 async def add_disc_link(disc_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    """Link a disc to a title. ``seasonNumber`` / ``episodeStart`` /
+    ``episodeEnd`` optionally say which part of a series the disc holds;
+    sending them for a link that exists updates its scope."""
     media_type = body.get("mediaType")
     media_id = body.get("mediaId")
     if media_type not in ("movie", "series") or not media_id:
         raise HTTPException(status_code=400, detail="mediaType ('movie'|'series') and mediaId are required")
+    scope = content_scope(body)
 
     disc_result = await db.execute(select(Disc.id).where(Disc.id == disc_id))
     if disc_result.scalar_one_or_none() is None:
@@ -836,13 +972,22 @@ async def add_disc_link(disc_id: str, body: dict[str, Any], db: AsyncSession = D
 
     # ON CONFLICT, not check-then-insert: a retried save racing the first
     # attempt would otherwise hit the primary key and 500.
-    await db.execute(
-        pg_insert(DiscMediaLink)
-        .values(disc_id=disc_id, media_type=media_type, media_id=media_id)
-        .on_conflict_do_nothing()
-    )
+    stmt = pg_insert(DiscMediaLink).values(disc_id=disc_id, media_type=media_type, media_id=media_id, **scope)
+    if any(key in body for key in ("seasonNumber", "episodeStart", "episodeEnd")):
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[DiscMediaLink.disc_id, DiscMediaLink.media_type, DiscMediaLink.media_id],
+            set_=scope,
+        )
+    else:
+        stmt = stmt.on_conflict_do_nothing()
+    await db.execute(stmt)
     await db.commit()
-    return {"discId": disc_id, "mediaType": media_type, "mediaId": media_id}
+    return {
+        "discId": disc_id, "mediaType": media_type, "mediaId": media_id,
+        "seasonNumber": scope["season_number"],
+        "episodeStart": scope["episode_start"],
+        "episodeEnd": scope["episode_end"],
+    }
 
 
 @router.delete("/discs/{disc_id}/links/{media_type}/{media_id}", dependencies=[Depends(require_any_auth)])
@@ -1138,6 +1283,10 @@ async def link_source_media(body: dict[str, Any], db: AsyncSession = Depends(get
     if not disc_id and not tape_id:
         raise HTTPException(status_code=400, detail="discId or tapeId is required")
 
+    release_id = None
+    if disc_id:
+        release_id = (await db.execute(select(Disc.set_id).where(Disc.id == disc_id))).scalar_one_or_none()
+
     linked: list[str] = []
     for file_path in file_paths:
         # A call that arrives after the file was organized finds the organized
@@ -1148,8 +1297,12 @@ async def link_source_media(body: dict[str, Any], db: AsyncSession = Depends(get
             media_file = await media_file_index.upsert_by_path(db, file_path)
         if disc_id:
             media_file.disc_id = disc_id
+            media_file.release_id = release_id
+            media_file.source_kind = "disc"
         if tape_id:
             media_file.tape_id = tape_id
+            if not disc_id:
+                media_file.source_kind = "tape"
         linked.append(file_path)
 
     await db.commit()
@@ -1201,16 +1354,49 @@ async def link_media_file(file_id: str, body: dict[str, Any], db: AsyncSession =
     if media_file is None:
         raise HTTPException(status_code=404, detail="Media file not found")
 
+    if "sourceKind" in body:
+        source_kind = body["sourceKind"] or None
+        if source_kind is not None and source_kind not in SOURCE_KINDS:
+            raise HTTPException(status_code=422, detail=f"sourceKind must be one of: {', '.join(SOURCE_KINDS)}.")
+        media_file.source_kind = source_kind
+
+    # releaseId alone: the file came from this release, exact disc unknown.
+    if "releaseId" in body:
+        release_id = body["releaseId"]
+        if release_id:
+            release_result = await db.execute(select(DiscSet.id).where(DiscSet.id == release_id))
+            if release_result.scalar_one_or_none() is None:
+                raise HTTPException(status_code=404, detail=f"Release not found: {release_id}")
+            if media_file.disc_id and "discId" not in body:
+                # A disc of another release would contradict it; drop the disc.
+                current = await db.execute(select(Disc.set_id).where(Disc.id == media_file.disc_id))
+                if current.scalar_one_or_none() != release_id:
+                    media_file.disc_id = None
+            media_file.release_id = release_id
+            media_file.tape_id = None
+            media_file.source_kind = "disc"
+        else:
+            media_file.release_id = None
+            media_file.disc_id = None
+
     if "discId" in body:
         disc_id = body["discId"]
         if disc_id:
-            disc_result = await db.execute(select(Disc.id).where(Disc.id == disc_id))
-            if disc_result.scalar_one_or_none() is None:
+            disc_result = await db.execute(select(Disc).where(Disc.id == disc_id))
+            disc_row = disc_result.scalar_one_or_none()
+            if disc_row is None:
                 raise HTTPException(status_code=404, detail=f"Disc not found: {disc_id}")
             media_file.disc_id = disc_id
+            # The disc decides the release, whatever releaseId said.
+            media_file.release_id = disc_row.set_id
             media_file.tape_id = None
+            media_file.source_kind = "disc"
         else:
             media_file.disc_id = None
+            if "releaseId" not in body:
+                media_file.release_id = None
+            if media_file.source_kind == "disc" and not media_file.release_id and "sourceKind" not in body:
+                media_file.source_kind = None
 
     if "tapeId" in body:
         tape_id = body["tapeId"]
@@ -1220,8 +1406,12 @@ async def link_media_file(file_id: str, body: dict[str, Any], db: AsyncSession =
                 raise HTTPException(status_code=404, detail=f"Tape not found: {tape_id}")
             media_file.tape_id = tape_id
             media_file.disc_id = None
+            media_file.release_id = None
+            media_file.source_kind = "tape"
         else:
             media_file.tape_id = None
+            if media_file.source_kind == "tape" and "sourceKind" not in body:
+                media_file.source_kind = None
 
     await db.commit()
     await db.refresh(media_file)

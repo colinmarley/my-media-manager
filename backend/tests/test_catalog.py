@@ -36,6 +36,10 @@ def _make_disc(id: str = "disc1", title: str = "Test Disc", format: str = "Blu-r
     row.id = id
     row.format = format
     row.raw_data = {"title": title, "format": format}
+    # Every disc has a release. _make_db(single=row) answers every lookup with
+    # this same row, so it also stands in for its own loose release.
+    row.set_id = "loose-release-1"
+    row.packaging = "loose"
     return row
 
 
@@ -65,6 +69,8 @@ def _make_media_file(
     row.created_at = None
     row.disc_id = disc_id
     row.tape_id = tape_id
+    row.release_id = None
+    row.source_kind = None
     # Inventory columns (all unset for a file that was never scanned).
     for name in INVENTORY_FIELDS:
         setattr(row, name, None)
@@ -695,7 +701,14 @@ class TestDiscs:
             assert resp.status_code == 200
             assert resp.json()["id"] == "new-disc-id"
             assert resp.json()["title"] == "New Disc"
-            db.add.assert_called_once()
+            # The disc, plus the loose release made for a disc saved without a set.
+            added = [call.args[0] for call in db.add.call_args_list]
+            assert [type(row).__name__ for row in added] == ["DiscSet", "Disc"]
+            assert added[0].packaging == "loose"
+            assert added[1].set_id == added[0].id
+            # The loose release is in releaseId only; to clients the disc is not in a set.
+            assert resp.json()["releaseId"] == added[0].id
+            assert "setId" not in resp.json()
             db.commit.assert_awaited_once()
         finally:
             app.dependency_overrides.clear()
@@ -1479,8 +1492,11 @@ class TestMediaFileLinking:
         from api.mobile_auth import require_any_auth
 
         media_file = _make_media_file()
-        # First execute(): find the media file. Second: verify the disc exists.
-        db = _make_sequential_db(media_file, "disc1")
+        # First execute(): find the media file. Second: load the disc.
+        disc = MagicMock()
+        disc.id = "disc1"
+        disc.set_id = "release1"
+        db = _make_sequential_db(media_file, disc)
 
         async def override_db():
             yield db
@@ -1496,6 +1512,9 @@ class TestMediaFileLinking:
             assert resp.status_code == 200
             assert media_file.disc_id == "disc1"
             assert media_file.tape_id is None
+            # The disc decides the release.
+            assert media_file.release_id == "release1"
+            assert media_file.source_kind == "disc"
             db.commit.assert_awaited_once()
         finally:
             app.dependency_overrides.clear()

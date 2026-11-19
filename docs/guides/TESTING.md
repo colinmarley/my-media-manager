@@ -96,6 +96,22 @@ make test-integration
 
 The test database lives in a Docker `tmpfs` mount (RAM-backed) and is automatically wiped when the container stops — no manual cleanup required.
 
+### Release and catalog tests — start their own database
+
+`tests/test_releases.py`, `tests/test_release_client_flows.py` and the integration half of
+`tests/test_catalog_errors.py` need a real Postgres and are **skipped** by a plain `pytest`.
+They create and drop the whole schema, so they only ever run against a throwaway database:
+
+```bash
+scripts/test-releases.sh           # those files, on a throwaway postgres:16 (port 5439)
+scripts/test-releases.sh tests/    # the whole backend suite with them enabled
+make test-releases                 # the same, with the backend venv's Python
+```
+
+`test_release_client_flows.py` replays the request sequences the phone app
+(media-manager-mobile) and the web app send today. Run it after any change to the disc,
+disc-set or release endpoints: it is what keeps clients that do not know about releases working.
+
 ### End-to-end (Playwright) — needs a running app
 
 Playwright drives a **live deployment**; it does not start one, because `webServer` cannot bootstrap the Postgres + backend + frontend stack. Two env vars control it:
@@ -110,7 +126,7 @@ Two suites with very different blast radii:
 | Suite | What it touches | Safe against |
 |---|---|---|
 | `e2e/smoke/` | read-only: login, my library, one title's detail page, physical media, and opening then cancelling the disc edit dialog | any environment, including production — the dialog step fails the run if a `POST`/`PUT`/`PATCH`/`DELETE` leaves the browser |
-| `e2e/write/` | creates and deletes its own physical-media and catalog records | a local or throwaway stack only |
+| `e2e/write/` | creates and deletes its own physical-media and catalog records, including releases (`releases.spec.ts`) | a local or throwaway stack only |
 
 ```bash
 # smoke suite — read-only

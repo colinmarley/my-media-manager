@@ -102,8 +102,44 @@ class DiscSet(Base):
 
     id         = Column(Text, primary_key=True)
     title      = Column(Text, nullable=False)
+    # Release fields (migration ae2f3a4b5c6d). A row is the thing that was
+    # bought: one barcode, one case, 1..N discs, 1..M titles. The UI calls it
+    # a release; the table keeps its name so discs.set_id / tapes.set_id and
+    # the /disc-sets endpoints keep working.
+    barcode             = Column(Text, index=True)  # not unique: a second copy is allowed
+    edition             = Column(Text)
+    packaging           = Column(Text)  # case | box_set | combo_pack | loose (auto-made for a disc with no case)
+    publisher           = Column(Text)
+    release_year        = Column(Integer)
+    region_code         = Column(Text)
+    expected_disc_count = Column(Integer)
+    storage_type        = Column(Text)  # where the case is; discs keep their own location
+    storage_id          = Column(Text)
+    image_files         = Column(JSONB, default=[])
+    purchase_date       = Column(Text)
+    condition           = Column(Text)
+    notes               = Column(Text)
+    raw_data            = Column(JSONB, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ReleaseContent(Base):
+    """What a release (disc_sets row) contains: one row per movie, per series,
+    or per season of a series. ``season_number`` is null for a movie or a
+    complete series; the episode range is set only for a volume."""
+    __tablename__ = "release_contents"
+
+    id            = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
+    release_id    = Column(Text, ForeignKey("disc_sets.id", ondelete="CASCADE"), nullable=False, index=True)
+    media_type    = Column(Text, nullable=False)  # "movie" | "series"
+    media_id      = Column(Text, nullable=False)
+    season_number = Column(Integer)
+    episode_start = Column(Integer)
+    episode_end   = Column(Integer)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (sa.Index("ix_release_contents_media", "media_type", "media_id"),)
 
 
 class Disc(Base):
@@ -128,6 +164,10 @@ class Disc(Base):
     purchase_date             = Column(Text)
     condition                 = Column(Text)
     release_date              = Column(Text)
+    content_role              = Column(Text)  # feature | episodes | bonus | duplicate_format | other
+    # "skip" = never meant to be ripped (bonus disc, the DVD of a combo pack), so it is not "missing".
+    rip_intent                = Column(Text, nullable=False, default="rip", server_default=sa.text("'rip'"))
+    rip_skip_reason           = Column(Text)
     video_files               = Column(JSONB, default=[])
     image_files               = Column(JSONB, default=[])
     raw_data                  = Column(JSONB, default={})  # Full Firebase document for backward compatibility
@@ -146,6 +186,10 @@ class DiscMediaLink(Base):
     disc_id    = Column(Text, ForeignKey("discs.id", ondelete="CASCADE"), primary_key=True)
     media_type = Column(Text, primary_key=True)  # "movie" | "series"
     media_id   = Column(Text, primary_key=True)
+    # Optional scope for a series disc ("Season 3, episodes 7-12"). Null = the whole title.
+    season_number = Column(Integer)
+    episode_start = Column(Integer)
+    episode_end   = Column(Integer)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -355,6 +399,10 @@ class MediaFile(Base):
     assigned_to_id      = Column(Text)
     disc_id             = Column(Text, ForeignKey("discs.id", ondelete="SET NULL"))
     tape_id             = Column(Text, ForeignKey("tapes.id", ondelete="SET NULL"))
+    # The release (disc_sets row) the file came from, for files whose exact
+    # disc is not known. When disc_id is set this is that disc's release.
+    release_id          = Column(Text, ForeignKey("disc_sets.id", ondelete="SET NULL"), index=True)
+    source_kind         = Column(Text)  # disc | tape | digital; null = unknown
     needs_organization  = Column(Boolean, default=False)
     target_path         = Column(Text)
     organization_status = Column(Text)

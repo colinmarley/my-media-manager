@@ -30,6 +30,9 @@ def _make_link(disc_id: str = "disc1", media_type: str = "movie", media_id: str 
     row.disc_id = disc_id
     row.media_type = media_type
     row.media_id = media_id
+    row.season_number = None
+    row.episode_start = None
+    row.episode_end = None
     return row
 
 
@@ -226,9 +229,10 @@ class TestDiscLinks:
                 resp = await ac.get("/api/catalog/discs/disc1/links")
             assert resp.status_code == 200
             body = resp.json()
+            scope = {"seasonNumber": None, "episodeStart": None, "episodeEnd": None}
             assert body == [
-                {"mediaType": "movie", "mediaId": "tt1", "title": "Dumb & Dumber"},
-                {"mediaType": "movie", "mediaId": "tt2", "title": "Dumb & Dumberer"},
+                {"mediaType": "movie", "mediaId": "tt1", "title": "Dumb & Dumber", **scope},
+                {"mediaType": "movie", "mediaId": "tt2", "title": "Dumb & Dumberer", **scope},
             ]
         finally:
             app.dependency_overrides.clear()
@@ -271,7 +275,10 @@ class TestDiscLinks:
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 resp = await ac.post("/api/catalog/discs/disc1/links", json={"mediaType": "movie", "mediaId": "tt1"})
             assert resp.status_code == 200
-            assert resp.json() == {"discId": "disc1", "mediaType": "movie", "mediaId": "tt1"}
+            assert resp.json() == {
+                "discId": "disc1", "mediaType": "movie", "mediaId": "tt1",
+                "seasonNumber": None, "episodeStart": None, "episodeEnd": None,
+            }
             from sqlalchemy.dialects import postgresql
             insert_stmt = db.execute.await_args_list[1].args[0]
             sql = str(insert_stmt.compile(dialect=postgresql.dialect()))
