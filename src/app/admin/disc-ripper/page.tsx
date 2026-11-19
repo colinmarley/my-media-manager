@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Alert, Box, Chip, Container, Stack, Step, StepButton, Stepper, Typography } from '@mui/material';
+import { Alert, Box, Chip, Step, StepButton, Stepper } from '@mui/material';
+import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
 import type { DiscTitle, RipJob, StartJobRequest } from '@/types/disc-ripper/DiscRipper.type';
 import DiscScanStep from './_components/DiscScanStep';
@@ -59,18 +60,12 @@ export default function DiscRipperPage() {
   );
 
   return (
-    <Container maxWidth="xl" sx={{ py: 3 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="flex-start" sx={{ mb: 3 }}>
-        <Box>
-          <Typography variant="h5" fontWeight={600}>Disc Ripper</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Rip DVDs and Blu-rays to your Jellyfin library.
-            {activeJobs.length > 0 && (
-              <Chip label={`${activeJobs.length} active`} size="small" color="info" sx={{ ml: 1 }} />
-            )}
-          </Typography>
-        </Box>
-      </Stack>
+    <PageContainer>
+      <PageHeader
+        title="Rip Disc"
+        subtitle="Rip DVDs and Blu-rays to your Jellyfin library."
+        actions={activeJobs.length > 0 ? <Chip label={`${activeJobs.length} active`} size="small" color="info" /> : undefined}
+      />
 
       {jobsError && (
         <Alert severity="warning" sx={{ mb: 2 }}>
@@ -137,6 +132,6 @@ export default function DiscRipperPage() {
           onRetry={async (id) => { try { await DiscRipperService.retryJob(id); } catch { /* ignore */ } await loadJobs(); setResultsJobId(id); setActiveStep(2); }}
         />
       )}
-    </Container>
+    </PageContainer>
   );
 }

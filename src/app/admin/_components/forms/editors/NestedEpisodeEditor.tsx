@@ -35,14 +35,14 @@ const NestedEpisodeEditor: React.FC<NestedEpisodeEditorProps> = ({ episodes, onC
   return (
     <Stack spacing={1.5}>
       {episodes.length === 0 && (
-        <Typography variant="body2" color="rgba(255,255,255,0.5)">
+        <Typography variant="body2" color="text.secondary">
           No episodes added yet.
         </Typography>
       )}
       {episodes.map((ep, index) => (
         <Box
           key={index}
-          sx={{ p: 1.5, border: '1px solid rgba(255,255,255,0.10)', borderRadius: 1 }}
+          sx={{ p: 1.5, border: 1, borderColor: 'divider', borderRadius: 1 }}
         >
           <Grid container spacing={1.5} alignItems="center">
             <Grid size={2}>

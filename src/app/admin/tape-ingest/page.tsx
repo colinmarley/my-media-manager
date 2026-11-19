@@ -1,6 +1,7 @@
 'use client';
 import React, { useState } from 'react';
 import { Box, Button, Container, Divider, Stack, Step, StepButton, Stepper, Typography } from '@mui/material';
+import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
 import { useTapeIngestStore } from '@/store/useTapeIngestStore';
 import TapeIngestScanner from './_components/TapeIngestScanner';
 import TapeIngestFileCard from './_components/TapeIngestFileCard';
@@ -25,16 +26,12 @@ export default function TapeIngestPage() {
   const tvDialogFile = tvShowDialogFile ? items.find((i) => i.filePath === tvShowDialogFile) : null;
 
   return (
-    <Container maxWidth="lg" sx={{ py: 3 }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-        <Box>
-          <Typography variant="h5" fontWeight={600}>Tape Ingest</Typography>
-          <Typography variant="body2" color="text.secondary">
-            Digitize VHS, VHS-C, and Mini DV tapes to Jellyfin library
-          </Typography>
-        </Box>
-        <Button size="small" onClick={reset} disabled={scanStatus === 'idle'}>Reset</Button>
-      </Stack>
+    <PageContainer maxWidth={1152}>
+      <PageHeader
+        title="Tape Capture"
+        subtitle="Digitize VHS, VHS-C and Mini DV tapes into your Jellyfin library."
+        actions={<Button variant="outlined" onClick={reset} disabled={scanStatus === 'idle'}>Start over</Button>}
+      />
 
       <Stepper nonLinear activeStep={activeStep} sx={{ mb: 4 }}>
         {STEPS.map((label, i) => (
@@ -71,7 +68,7 @@ export default function TapeIngestPage() {
             <>
               <WorkflowHelpSection step="classify" />
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mt: 2, mb: 2 }}>
-                <Typography variant="h6">Step 2 — Classify Files</Typography>
+                <Typography variant="h6">Classify the files</Typography>
                 <Stack direction="row" spacing={1}>
                   <Button size="small" onClick={() => setActiveStep(0)}>Back</Button>
                   <Button variant="contained" size="small" onClick={() => setShowPreview(true)}>Review & Continue →</Button>
@@ -109,6 +106,6 @@ export default function TapeIngestPage() {
       <TvShowSearchDialog open={!!tvShowDialogFile} fileName={tvDialogFile?.fileName ?? ''}
         onClose={() => setTvShowDialogFile(null)}
         onAssign={(m: TvShowMetadata) => { if (tvShowDialogFile) updateItemTvShowMetadata(tvShowDialogFile, m); setTvShowDialogFile(null); }} />
-    </Container>
+    </PageContainer>
   );
 }

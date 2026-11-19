@@ -165,7 +165,7 @@ export default function ReassignFilesDialog({
             borderRadius: 1,
             border: '1px solid',
             borderColor: 'divider',
-            bgcolor: 'rgba(2,6,9,0.45)',
+            bgcolor: 'background.default',
             maxHeight: 120,
             overflowY: 'auto',
           }}
@@ -272,7 +272,7 @@ export default function ReassignFilesDialog({
                     variant="outlined"
                     sx={{
                       borderColor: isSelected ? 'primary.main' : 'divider',
-                      bgcolor: isSelected ? 'rgba(25,118,210,0.12)' : 'transparent',
+                      bgcolor: isSelected ? 'action.selected' : 'transparent',
                       transition: 'all 0.15s',
                     }}
                   >

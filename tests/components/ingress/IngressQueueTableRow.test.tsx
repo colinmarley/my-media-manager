@@ -61,7 +61,7 @@ describe('IngressQueueTableRow', () => {
 
     expect(screen.getByText('the.big.show.s01e02.1080p.mkv')).toBeInTheDocument();
     expect(screen.getByText('2h 05m')).toBeInTheDocument();
-    expect(screen.getByText('needs_review')).toBeInTheDocument();
+    expect(screen.getByText('Needs review')).toBeInTheDocument();
     expect(screen.getByText('TV Episode')).toBeInTheDocument();
     expect(screen.getByText('S01E02')).toBeInTheDocument();
     expect(screen.getByText('The Big Show')).toBeInTheDocument();

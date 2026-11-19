@@ -49,7 +49,7 @@ export default function TapeIngestScanner() {
 
   return (
     <Box>
-      <Typography variant="h6" gutterBottom>Step 1 — Select Source & Scan</Typography>
+      <Typography variant="h6" gutterBottom>Choose a source and scan</Typography>
       <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="flex-end">
         <FormControl sx={{ minWidth: 220 }}>
           <FormLabel sx={{ mb: 0.5, fontSize: 13 }}>Source Path</FormLabel>

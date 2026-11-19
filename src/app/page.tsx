@@ -1,21 +1,9 @@
-import styles from "./_styles/page.module.css";
-import LandingPage from "./_components/LandingPage";
+import { redirect } from 'next/navigation';
 
+/**
+ * There is no landing page: the middleware already sends a signed-in visitor
+ * to /dashboard, so anyone who reaches this needs the sign-in form.
+ */
 export default function Home() {
-  return (
-    <div className={styles.page}>
-      <LandingPage />
-    </div>
-  );
-}
-
-const Styles = {
-  page: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    height: "100vh",
-    backgroundColor: "#121212",
-  },
+  redirect('/login');
 }

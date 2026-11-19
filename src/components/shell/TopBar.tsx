@@ -3,6 +3,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { Box, Button, IconButton, Typography } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { Menu as MenuIcon } from '@mui/icons-material';
 import ProfileAccess from '@/app/_components/ProfileAccess';
 import useAuthenticationStore from '@/store/useAuthenticationStore';
@@ -18,7 +19,7 @@ export interface TopBarProps {
 }
 
 const TopBar: React.FC<TopBarProps> = ({ section, title, showMenuButton, onOpenMenu }) => {
-  const { authenticated } = useAuthenticationStore();
+  const { authenticated, sessionChecked } = useAuthenticationStore();
 
   return (
     <Box
@@ -32,7 +33,8 @@ const TopBar: React.FC<TopBarProps> = ({ section, title, showMenuButton, onOpenM
         alignItems: 'center',
         gap: 1,
         px: layout.pageGutter,
-        bgcolor: surfaces.chrome,
+        bgcolor: alpha(surfaces.canvas, 0.82),
+        backdropFilter: 'saturate(140%) blur(10px)',
         borderBottom: `1px solid ${borders.subtle}`,
       }}
     >
@@ -48,13 +50,13 @@ const TopBar: React.FC<TopBarProps> = ({ section, title, showMenuButton, onOpenM
             <Typography variant="body2" color="text.disabled" aria-hidden>/</Typography>
           </>
         )}
-        <Typography variant="body2" component="p" noWrap sx={{ fontWeight: 600 }} data-testid="shell-page-title">
+        <Typography variant="body2" component="p" noWrap sx={{ fontWeight: 500 }} data-testid="shell-page-title">
           {title}
         </Typography>
       </Box>
       {authenticated ? (
         <ProfileAccess />
-      ) : (
+      ) : sessionChecked === false ? null : (
         <Button component={Link} href="/login" variant="outlined" size="small">
           {BUTTON_LABELS.signIn}
         </Button>

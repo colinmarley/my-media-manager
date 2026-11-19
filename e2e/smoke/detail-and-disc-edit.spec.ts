@@ -16,10 +16,10 @@ test.beforeEach(async ({ page }) => {
 
 test('my library opens the detail page of one title', async ({ page }) => {
   await page.goto('/dashboard/my-library');
-  await expect(page.getByRole('heading', { level: 3, name: 'My Library' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Titles' })).toBeVisible();
 
-  // Library cards are MUI CardActionAreas rendered as <a> pointing straight at
-  // /dashboard/my-library/<mediaType>/<mediaId>. The shell's own "My Library"
+  // Library cards are links pointing straight at
+  // /dashboard/my-library/<mediaType>/<mediaId>. The shell's own "Titles"
   // nav link has no trailing slash, so it is not matched here.
   const card = page.locator('a[href^="/dashboard/my-library/"]').first();
   await expect(
@@ -27,13 +27,10 @@ test('my library opens the detail page of one title', async ({ page }) => {
     'No library cards to open: BASE_URL points at an instance with an empty library.',
   ).toBeVisible();
 
-  // Scoped to the card body on purpose. When a card's poster 404s (the poster
-  // endpoint has nothing cached), my-library/page.tsx swaps in a fallback whose
-  // Typography variant="subtitle1" is also an <h6> and comes first in the DOM,
-  // holding the folder name — an unscoped heading lookup is then a strict-mode
-  // violation (or, with .first(), reads the wrong text).
-  const cardTitle = card.locator('.MuiCardContent-root').getByRole('heading', { level: 6 });
-  await expect(cardTitle, 'Library card rendered no title heading in its card body.').toBeVisible();
+  // By test id on purpose: a card whose poster 404s shows a placeholder that
+  // also prints a name (the folder name), which is not the catalog title.
+  const cardTitle = card.getByTestId('library-card-title');
+  await expect(cardTitle, 'Library card rendered no title.').toBeVisible();
   const title = (await cardTitle.innerText()).trim();
   // Retried: a click that lands before the card has hydrated does nothing.
   await expect(async () => {

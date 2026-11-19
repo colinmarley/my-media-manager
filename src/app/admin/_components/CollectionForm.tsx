@@ -146,7 +146,7 @@ const CollectionForm: React.FC = () => {
                   />
                 </Grid>
                 <Grid size={12}>
-                  <Typography variant="subtitle2" color="rgba(255,255,255,0.7)" sx={{ mb: 1 }}>Directors</Typography>
+                  <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>Directors</Typography>
                   {directors.map((director, index) => (
                     <Grid container spacing={1} key={index} sx={{ mb: 1 }}>
                       <Grid size={10}>

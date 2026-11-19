@@ -1,5 +1,6 @@
 import React from 'react';
 import { Paper, Stack, Typography } from '@mui/material';
+import { borders, radii } from '@/theme/tokens';
 import InfoTooltip from './InfoTooltip';
 
 interface FormSectionProps {
@@ -14,22 +15,23 @@ const FormSection: React.FC<FormSectionProps> = ({ title, description, titleTool
     <Paper
       elevation={0}
       sx={{
-        p: 2,
-        backgroundColor: 'rgba(255, 255, 255, 0.03)',
-        border: '1px solid rgba(255, 255, 255, 0.12)',
-        borderRadius: 2,
+        p: 2.5,
+        bgcolor: 'background.paper',
+        border: 1,
+        borderColor: borders.default,
+        borderRadius: `${radii.md}px`,
       }}
     >
       <Stack spacing={2}>
         <Stack spacing={0.5}>
           <Stack direction="row" spacing={0.75} alignItems="center">
-            <Typography variant="h6" color="white">
+            <Typography variant="h5" component="h2">
               {title}
             </Typography>
             {titleTooltip && <InfoTooltip title={titleTooltip} />}
           </Stack>
           {description && (
-            <Typography variant="body2" color="rgba(255, 255, 255, 0.7)">
+            <Typography variant="body2" color="text.secondary">
               {description}
             </Typography>
           )}

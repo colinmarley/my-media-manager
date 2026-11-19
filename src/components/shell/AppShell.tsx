@@ -75,16 +75,23 @@ function Sidebar({ groups, activeId, collapsed, showCollapseToggle, badges, indi
           display: 'flex',
           alignItems: 'center',
           gap: 1.25,
-          px: collapsed ? 0 : 2.5,
+          px: collapsed ? 0 : 2,
           justifyContent: collapsed ? 'center' : 'flex-start',
           color: text.primary,
           textDecoration: 'none',
-          borderBottom: `1px solid ${borders.subtle}`,
-          '&:focus-visible': { outline: `2px solid ${accent.main}`, outlineOffset: -2 },
+          '&:focus-visible': { outline: `2px solid ${accent.light}`, outlineOffset: -2 },
         }}
       >
-        <VideoLibraryOutlined sx={{ color: accent.main, fontSize: 22 }} />
-        {!collapsed && <Typography variant="subtitle1" component="span" sx={{ fontWeight: 600 }}>Media Manager</Typography>}
+        <Box
+          aria-hidden
+          sx={{
+            width: 26, height: 26, flexShrink: 0, borderRadius: '7px', display: 'grid', placeItems: 'center',
+            bgcolor: accent.main, color: accent.contrastText, boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.22)',
+          }}
+        >
+          <VideoLibraryOutlined sx={{ fontSize: 16 }} />
+        </Box>
+        {!collapsed && <Typography variant="subtitle1" component="span" sx={{ fontWeight: 600, letterSpacing: '-0.01em' }}>Media Manager</Typography>}
       </Box>
       <Box component="nav" aria-label="Main" sx={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', pb: 2 }}>
         {groups.map((group) => (

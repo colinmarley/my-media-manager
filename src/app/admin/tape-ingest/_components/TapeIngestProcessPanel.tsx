@@ -28,7 +28,7 @@ export default function TapeIngestProcessPanel() {
 
   return (
     <Box>
-      <Typography variant="h6" gutterBottom>Step 3 — Process</Typography>
+      <Typography variant="h6" gutterBottom>Process</Typography>
       <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mb: 2 }}>
         <Chip label={`${movies.length} movies`} color="primary" variant="outlined" />
         <Chip label={`${tvShows.length} TV episodes`} color="info" variant="outlined" />

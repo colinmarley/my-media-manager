@@ -38,6 +38,7 @@ import {
   isQueueItemSelectable,
 } from '@/service/ingress/ingressQueueModel';
 import { IngressConfidenceWithExplanation } from './IngressMatchExplanation';
+import StatusChip from '@/components/ui/StatusChip';
 
 type Props = {
   item: IngressQueueItem;
@@ -94,11 +95,7 @@ const IngressQueueTableRow: React.FC<Props> = ({
       </Typography>
     </TableCell>
     <TableCell>
-      <Chip
-        label={item.status}
-        size="small"
-        color={STATUS_COLORS[item.status] || 'default'}
-      />
+      <StatusChip status={item.status} />
     </TableCell>
     <TableCell sx={{ minWidth: 220 }}>
       <Stack direction="row" spacing={0.5} useFlexGap flexWrap="wrap">

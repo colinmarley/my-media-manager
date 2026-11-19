@@ -27,15 +27,15 @@ export interface NavSectionProps {
 const NavSection: React.FC<NavSectionProps> = ({ group, activeId, collapsed, badges, indicators, onNavigate }) => {
   const headingId = `nav-group-${group.id}`;
   return (
-    <Box component="section" aria-labelledby={group.label ? headingId : undefined} sx={{ mt: group.label ? 2 : 1 }}>
+    <Box component="section" aria-labelledby={group.label ? headingId : undefined} sx={{ mt: group.label ? 2.5 : 1 }}>
       {group.label && (
         <Typography
           id={headingId}
           variant="caption"
           component="h2"
           sx={collapsed
-            ? { position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)' }
-            : { display: 'block', px: 2.5, pb: 0.5, color: text.disabled, fontWeight: 600 }}
+            ? { position: 'absolute', width: '1px', height: '1px', overflow: 'hidden', clip: 'rect(0 0 0 0)' }
+            : { display: 'block', px: 2.5, pb: 0.5, color: text.disabled, fontWeight: 500 }}
         >
           {group.label}
         </Typography>
@@ -68,16 +68,17 @@ const NavSection: React.FC<NavSectionProps> = ({ group, activeId, collapsed, bad
               sx={{
                 mx: 1,
                 my: 0.25,
-                minHeight: 34,
+                minHeight: 32,
                 px: collapsed ? 0 : 1.5,
                 justifyContent: collapsed ? 'center' : 'flex-start',
                 borderRadius: 1,
                 color: active ? text.primary : text.secondary,
+                transition: 'background-color 120ms ease, color 120ms ease',
                 '&:hover': { bgcolor: surfaces.raised, color: text.primary },
-                '&.Mui-selected': { bgcolor: accent.tint, color: text.primary },
-                '&.Mui-selected:hover': { bgcolor: accent.tint },
-                '&.Mui-selected .MuiListItemIcon-root': { color: accent.main },
-                '&.Mui-focusVisible': { outline: `2px solid ${accent.main}`, outlineOffset: -2 },
+                '&.Mui-selected': { bgcolor: surfaces.selected, color: text.primary },
+                '&.Mui-selected:hover': { bgcolor: surfaces.selected },
+                '&.Mui-selected .MuiListItemIcon-root': { color: accent.light },
+                '&.Mui-focusVisible': { outline: `2px solid ${accent.light}`, outlineOffset: -2 },
               }}
             >
               <ListItemIcon sx={{ minWidth: collapsed ? 0 : 32, color: 'inherit', position: 'relative' }}>
@@ -92,7 +93,7 @@ const NavSection: React.FC<NavSectionProps> = ({ group, activeId, collapsed, bad
               </ListItemIcon>
               {!collapsed && (
                 <>
-                  <ListItemText primary={item.label} slotProps={{ primary: { variant: 'body2', fontWeight: active ? 600 : 500 } }} />
+                  <ListItemText primary={item.label} slotProps={{ primary: { variant: 'body2', fontWeight: 500 } }} />
                   {indicator && (
                     <Tooltip title={indicator.label}>
                       <Box

@@ -668,7 +668,7 @@ export default function DiskReassignDialog({
                       : 'divider',
                   backgroundColor:
                     selectedTarget?.id === result.id && selectedTarget?.source === result.source
-                      ? 'rgba(33, 150, 243, 0.1)'
+                      ? 'action.selected'
                       : 'transparent',
                 }}
               >
@@ -688,7 +688,7 @@ export default function DiskReassignDialog({
                             width: 32,
                             height: 48,
                             borderRadius: 0.5,
-                            bgcolor: 'rgba(255,255,255,0.06)',
+                            bgcolor: 'action.hover',
                             flexShrink: 0,
                             display: 'flex',
                             alignItems: 'center',
