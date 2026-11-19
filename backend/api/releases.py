@@ -23,7 +23,8 @@ from api import catalog as catalog_api
 from api.catalog import PACKAGING_LOOSE, PACKAGINGS
 from api.mobile_auth import require_any_auth
 from db.database import get_db
-from db.models import Disc, DiscSet, MediaFile, ReleaseContent, Tape
+from db.models import Disc, DiscMediaLink, DiscSet, MediaFile, ReleaseContent, Series, Tape
+from services import attention_service, release_coverage
 
 router = APIRouter(prefix="/api/catalog", tags=["Catalog"])
 
@@ -377,3 +378,185 @@ async def delete_release(release_id: str, db: AsyncSession = Depends(get_db)) ->
     await db.execute(delete(DiscSet).where(DiscSet.id == release_id))
     await db.commit()
     return {"deleted": release_id}
+
+
+# ---------------------------------------------------------------------------
+# Coverage and file suggestions (phase 2)
+# ---------------------------------------------------------------------------
+
+MAX_LINK_FILES = 500
+
+# The media_files columns coverage and suggestions read. Selected as plain
+# columns: the full rows carry track-list JSON that ten thousand files do not
+# need loading for a count.
+_FILE_COLUMNS = (
+    MediaFile.id, MediaFile.file_name, MediaFile.relative_path, MediaFile.file_size,
+    MediaFile.movie_id, MediaFile.series_id, MediaFile.role,
+    MediaFile.season_number, MediaFile.episode_number, MediaFile.episode_end_number,
+    MediaFile.disc_id, MediaFile.release_id, MediaFile.tape_id, MediaFile.source_kind,
+    MediaFile.is_available, MediaFile.width, MediaFile.height, MediaFile.resolution_category,
+)
+
+
+async def load_coverage_index(db: AsyncSession) -> release_coverage.CoverageIndex:
+    """Every row coverage is derived from, in six queries."""
+    return release_coverage.CoverageIndex(
+        discs=(await db.execute(select(Disc))).scalars().all(),
+        releases=(await db.execute(select(DiscSet))).scalars().all(),
+        contents=(await db.execute(select(ReleaseContent))).scalars().all(),
+        disc_links=(await db.execute(select(DiscMediaLink))).scalars().all(),
+        files=(await db.execute(select(*_FILE_COLUMNS))).all(),
+        series=(await db.execute(select(Series.id, Series.total_episodes, Series.tmdb_data))).all(),
+    )
+
+
+def _target_to_dict(target: release_coverage.Target, titles: dict[tuple[str, str], str]) -> dict:
+    return {
+        "mediaType": target.media_type,
+        "mediaId": target.media_id,
+        "title": titles.get(target.title_key),
+        "seasonNumber": target.season_number,
+        "episodeStart": target.episode_start,
+        "episodeEnd": target.episode_end,
+    }
+
+
+def _suggested_file_to_dict(entry: dict) -> dict:
+    row = entry["row"]
+    return {
+        "id": row.id,
+        "fileName": row.file_name,
+        "relativePath": row.relative_path,
+        "fileSize": row.file_size,
+        "role": row.role,
+        "seasonNumber": row.season_number,
+        "episodeNumber": row.episode_number,
+        "episodeEndNumber": row.episode_end_number,
+        "width": row.width,
+        "height": row.height,
+        "resolutionCategory": row.resolution_category,
+        "fit": entry["fit"],
+        "preselected": entry["preselected"],
+    }
+
+
+@router.get("/coverage")
+async def get_coverage(db: AsyncSession = Depends(get_db)) -> dict:
+    """How much of the physical collection has files, and how many files have
+    a disc. All derived on request (services/release_coverage.py):
+
+    - ``discs``: ripped / covered (their release has the files) / unripped /
+      skipped (never meant to be ripped), and ``done`` = everything but unripped.
+    - ``releases``: complete / partial / none / skipped, plus how many are
+      automatic ``loose`` wrappers and how many are ``incompleteSets`` (fewer
+      discs catalogued than the release has).
+    - ``files``: main files and episodes only — linkedDisc / linkedRelease /
+      suggested (unlinked, a release holds the title) / noSource (nothing
+      catalogued holds it) / notPhysical (a download or tape).
+    - ``otherFiles``: versions, extras, other and unassigned files, not
+      counted above.
+    - ``titles``: with both files and discs, files only, discs only.
+    """
+    index = await load_coverage_index(db)
+    return release_coverage.build_coverage(index)
+
+
+@router.get("/release-suggestions")
+async def list_release_suggestions(
+    limit: int = Query(default=100, ge=1, le=1000),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """Releases that have unlinked library files which could be theirs, most
+    pre-selected first — the list a batch catalogued on the phone is confirmed
+    from afterwards. Each entry is the release with ``candidates`` and
+    ``preselected`` counts; the files come from
+    ``GET /releases/{id}/file-suggestions``."""
+    index = await load_coverage_index(db)
+    rows = []
+    for release in index.releases:
+        counts = release_coverage.suggestion_counts(index, release)
+        if counts["candidates"]:
+            rows.append((release, counts))
+    rows.sort(key=lambda pair: (-pair[1]["preselected"], -pair[1]["candidates"], (pair[0].title or "").lower()))
+    return [
+        {
+            **_release_to_dict(release),
+            "discCount": len(index.discs_by_release.get(release.id, [])),
+            "state": index.release_state(release),
+            **counts,
+        }
+        for release, counts in rows[:limit]
+    ]
+
+
+@router.get("/releases/{release_id}/file-suggestions")
+async def get_release_file_suggestions(release_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    """Library files that could have come from this release, per title it
+    holds. A file is offered when it is a main file, version or episode of
+    that title (and season / episode range), is not linked to any disc or
+    release, and is not marked as a download or tape.
+
+    ``fit`` says whether the file's resolution matches the release's disc
+    formats (``fits`` / ``mismatch`` / ``unknown``); ``preselected`` is what a
+    client should tick by default. Nothing is linked here: send the chosen
+    ids to ``POST /releases/{id}/link-files``."""
+    release = await _get_release_or_404(db, release_id)
+    index = await load_coverage_index(db)
+    groups = release_coverage.suggest_files(index, release)
+    titles = await catalog_api._titles_for_media(db, [g["target"].title_key for g in groups])
+    return {
+        "releaseId": release.id,
+        "state": index.release_state(release),
+        "formats": sorted({d.format for d in index.discs_by_release.get(release.id, []) if d.format}),
+        "groups": [
+            {
+                **_target_to_dict(group["target"], titles),
+                "have": group["progress"]["have"],
+                "expected": group["progress"]["expected"],
+                "satisfied": group["progress"]["satisfied"],
+                "files": [_suggested_file_to_dict(entry) for entry in group["files"]],
+            }
+            for group in groups
+        ],
+    }
+
+
+@router.post("/releases/{release_id}/link-files", dependencies=[Depends(require_any_auth)])
+async def link_release_files(release_id: str, body: dict[str, Any], db: AsyncSession = Depends(get_db)) -> dict:
+    """Link library files to a release in one transaction.
+
+    Body: ``{fileIds: string[], discId?: string}``. Without ``discId`` the
+    files are tied to the release only (the exact disc is not known), and a
+    file that already names one of this release's discs keeps it. With
+    ``discId`` (which must be a disc of this release) they are tied to that
+    disc. Either way a tape link is cleared and ``sourceKind`` becomes
+    ``disc``. All ids must exist, or nothing is linked."""
+    await _get_release_or_404(db, release_id)
+    file_ids = body.get("fileIds")
+    if not isinstance(file_ids, list) or not file_ids or not all(isinstance(i, str) and i for i in file_ids):
+        raise HTTPException(status_code=422, detail="fileIds must be a non-empty list of file ids.")
+    file_ids = list(dict.fromkeys(file_ids))
+    if len(file_ids) > MAX_LINK_FILES:
+        raise HTTPException(status_code=422, detail=f"At most {MAX_LINK_FILES} files can be linked at once.")
+
+    disc_id = body.get("discId") or None
+    release_disc_ids = set((await db.execute(select(Disc.id).where(Disc.set_id == release_id))).scalars().all())
+    if disc_id is not None and disc_id not in release_disc_ids:
+        raise HTTPException(status_code=422, detail="discId is not a disc of this release.")
+
+    rows = (await db.execute(select(MediaFile).where(MediaFile.id.in_(file_ids)))).scalars().all()
+    missing = sorted(set(file_ids) - {row.id for row in rows})
+    if missing:
+        raise HTTPException(status_code=404, detail={"code": "files_not_found", "message": "Some files no longer exist.", "fileIds": missing})
+
+    for row in rows:
+        if disc_id is not None:
+            row.disc_id = disc_id
+        elif row.disc_id not in release_disc_ids:
+            row.disc_id = None
+        row.release_id = release_id
+        row.tape_id = None
+        row.source_kind = "disc"
+    await db.commit()
+    attention_service.invalidate_summary()
+    return {"releaseId": release_id, "discId": disc_id, "linked": [row.id for row in rows]}
