@@ -18,11 +18,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from typing import Any
 
 from db.database import get_db
-from db.models import Movie, Series, Disc, DiscSet, DiscMediaLink, Tape, TapeMediaLink, MediaFile
+from db.models import Movie, Series, Disc, DiscSet, DiscMediaLink, Tape, TapeMediaLink, MediaFile, ReleaseContent
 from api.mobile_auth import require_any_auth
 from services.catalog_stats import RECENT_DAYS_DEFAULT, build_catalog_stats
 from config.settings import settings
-from services import media_file_index, storage_paths
+from services import media_file_index, release_coverage, storage_paths
 from utils.logging import logger
 
 router = APIRouter(prefix="/api/catalog", tags=["Catalog"])
@@ -92,7 +92,7 @@ _STORAGE_ID_RE = re.compile(r"^[A-Za-z0-9_\-. ]{1,40}$")
 # Flags a client sends in the body that aren't part of the stored record.
 # releaseId and linkedFileCount are computed into the disc DTO; a client
 # echoing a fetched record back must not get them stored.
-_CONTROL_KEYS = ("allowDuplicateBarcode", "releaseId", "linkedFileCount")
+_CONTROL_KEYS = ("allowDuplicateBarcode", "releaseId", "linkedFileCount", "ripState")
 
 # Releases (disc_sets rows) — see docs/architecture/PHYSICAL_RELEASES_AND_DISC_LINKING.md.
 PACKAGING_LOOSE = "loose"
@@ -704,7 +704,21 @@ async def list_discs(db: AsyncSession = Depends(get_db)) -> list[dict]:
     )
     counts = dict(counts_result.all())
 
-    return [{**_row_to_dict(row), "linkedFileCount": counts.get(row.id, 0)} for row in discs]
+    # ripState: ripped / covered (its release has the files) / skipped (never
+    # meant to be ripped) / unripped. linkedFileCount only knows "ripped".
+    linked_files = (await db.execute(
+        select(
+            MediaFile.id, MediaFile.disc_id, MediaFile.release_id, MediaFile.movie_id, MediaFile.series_id,
+            MediaFile.season_number, MediaFile.episode_number, MediaFile.is_available,
+        ).where(or_(MediaFile.disc_id.isnot(None), MediaFile.release_id.isnot(None)))
+    )).all()
+    disc_links = (await db.execute(select(DiscMediaLink))).scalars().all()
+    index = release_coverage.CoverageIndex(discs=discs, disc_links=disc_links, files=linked_files)
+
+    return [
+        {**_row_to_dict(row), "linkedFileCount": counts.get(row.id, 0), "ripState": index.disc_state(row)}
+        for row in discs
+    ]
 
 
 @router.get("/discs/search")
@@ -1191,8 +1205,10 @@ async def list_media_discs_and_tapes(
 ) -> dict[str, list[dict]]:
     """
     Reverse lookup: every Disc/Tape linked to a Movie/Series, via the
-    disc_media_links/tape_media_links many-to-many tables OR the legacy
-    scalar raw_data.mediaId field (set by reassign-discs). Backs the
+    disc_media_links/tape_media_links many-to-many tables, the legacy
+    scalar raw_data.mediaId field (set by reassign-discs), OR a release that
+    holds the title (release_contents: the discs of a multi-disc release
+    carry no title links of their own). Backs the
     my-library detail page's "Associated Discs and Files" section.
     """
     if media_type not in ("movie", "series"):
@@ -1208,10 +1224,17 @@ async def discs_and_tapes_for_media(db: AsyncSession, media_type: str, media_id:
             DiscMediaLink.media_type == media_type, DiscMediaLink.media_id == media_id
         )
     )).scalars().all()
+    release_ids = select(ReleaseContent.release_id).where(
+        ReleaseContent.media_type == media_type, ReleaseContent.media_id == media_id
+    )
     discs = (await db.execute(
         select(Disc).where(
-            or_(Disc.id.in_(linked_disc_ids), Disc.raw_data["mediaId"].astext == media_id)
-        ).order_by(Disc.title)
+            or_(
+                Disc.id.in_(linked_disc_ids),
+                Disc.raw_data["mediaId"].astext == media_id,
+                Disc.set_id.in_(release_ids),
+            )
+        ).order_by(Disc.title, Disc.disc_number)
     )).scalars().all()
 
     linked_tape_ids = (await db.execute(
