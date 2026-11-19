@@ -378,6 +378,69 @@ class TestWebPhysicalMedia:
         assert [(f["id"], f["discId"], f["releaseId"]) for f in found] == [("f1", None, None)]
 
 
+class TestPhysicalCopiesOfATitle:
+    @pytest.mark.asyncio
+    async def test_discs_of_a_release_are_found_through_what_the_release_holds(self, ac):
+        """Mobile's "Physical copies" and the web title page ask
+        GET /media/{type}/{id}/discs. Discs saved as part of a release have
+        no title links of their own; the release's contents name the title."""
+        release = (await ac.post("/api/catalog/releases", json={
+            "title": "Alien", "packaging": "combo_pack",
+            "contents": [{"mediaType": "movie", "mediaId": ALIEN}],
+            "discs": [{"format": "Blu-ray"}, {"format": "DVD", "ripIntent": "skip"}],
+        })).json()
+        linked = (await ac.post("/api/catalog/discs", json={"title": "Alien (VHS rip disc)", "format": "DVD"})).json()
+        await ac.post(f"/api/catalog/discs/{linked['id']}/links", json={"mediaType": "movie", "mediaId": ALIEN})
+        other = (await ac.post("/api/catalog/releases", json={"title": "Something else", "discs": [{"format": "DVD"}]})).json()
+
+        copies = (await ac.get(f"/api/catalog/media/movie/{ALIEN}/discs")).json()
+        ids = [d["id"] for d in copies["discs"]]
+        assert set(ids) == {release["discs"][0]["id"], release["discs"][1]["id"], linked["id"]}
+        assert other["discs"][0]["id"] not in ids
+        # A release's discs come in disc order.
+        titles = [d["title"] for d in copies["discs"]]
+        assert titles.index("Alien - Disc 1") < titles.index("Alien - Disc 2")
+        assert all("linkedFileCount" in d for d in copies["discs"])
+        # Nothing for a title no release holds.
+        assert (await ac.get("/api/catalog/media/movie/tt0000000/discs")).json() == {"discs": [], "tapes": []}
+
+
+class TestDiscListRipState:
+    @pytest.mark.asyncio
+    async def test_list_says_ripped_covered_skipped_or_unripped(self, ac):
+        """GET /discs carries ripState for the "Unripped" badge and filter:
+        linkedFileCount alone calls a disc unripped when its files are tied
+        to its release, or when it was never meant to be ripped."""
+        combo = (await ac.post("/api/catalog/releases", json={
+            "title": "Alien", "packaging": "combo_pack",
+            "contents": [{"mediaType": "movie", "mediaId": ALIEN}],
+            "discs": [{"format": "Blu-ray"}, {"format": "DVD", "ripIntent": "skip"}],
+        })).json()
+        loose = (await ac.post("/api/catalog/discs", json={"title": "Predator", "format": "DVD"})).json()
+
+        def states(rows):
+            return {d["title"]: (d["ripState"], d["linkedFileCount"]) for d in rows}
+
+        assert states((await ac.get("/api/catalog/discs")).json()) == {
+            "Alien - Disc 1": ("unripped", 0), "Alien - Disc 2": ("skipped", 0), "Predator": ("unripped", 0),
+        }
+        # The file is confirmed against the release, exact disc unknown.
+        await ac.post(f"/api/catalog/releases/{combo['id']}/link-files", json={"fileIds": ["f1"]})
+        assert states((await ac.get("/api/catalog/discs")).json())["Alien - Disc 1"] == ("covered", 0)
+
+        # Tied to the disc itself: ripped.
+        await ac.post(f"/api/catalog/releases/{combo['id']}/link-files",
+                      json={"fileIds": ["f1"], "discId": combo["discs"][0]["id"]})
+        listed = (await ac.get("/api/catalog/discs")).json()
+        assert states(listed)["Alien - Disc 1"] == ("ripped", 1)
+
+        # Echoed back in a full-record save (the phone's bulk update), it is not stored.
+        row = next(d for d in listed if d["id"] == loose["id"])
+        saved = await ac.put(f"/api/catalog/discs/{loose['id']}", json={**row, "ripState": "ripped"})
+        assert saved.status_code == 200 and "ripState" not in saved.json()
+        assert states((await ac.get("/api/catalog/discs")).json())["Predator"] == ("unripped", 0)
+
+
 class TestWebDiscRipper:
     @pytest.mark.asyncio
     async def test_link_panel_create_scan_and_delivery(self, ac):

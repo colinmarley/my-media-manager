@@ -29,11 +29,13 @@ def _client(app):
 # To-Do builders (no database)
 # ---------------------------------------------------------------------------
 
-def _inputs(discs, files, disc_links=()):
+def _inputs(discs, files, disc_links=(), release_contents=()):
     from services.attention_service import AttentionInputs, TitleInfo
     from services.canonical_path import TitleIdentity
 
-    inputs = AttentionInputs(files=list(files), discs=list(discs), disc_links=list(disc_links))
+    inputs = AttentionInputs(
+        files=list(files), discs=list(discs), disc_links=list(disc_links), release_contents=list(release_contents),
+    )
     inputs.titles[("movie", ALIEN)] = TitleInfo(TitleIdentity(kind="movie", id=ALIEN, title="Alien", year=1979), "movie")
     return inputs
 
@@ -91,6 +93,18 @@ class TestNoDiscLinkBuilder:
 
     def test_a_download_beside_an_unlinked_rip_still_asks(self):
         assert len(self._items([_file("web", source_kind="digital"), _file("rip")])) == 1
+
+    def test_a_title_held_by_a_release_counts_as_having_discs(self):
+        """Discs of a multi-disc release have no title links; the release's contents name the title."""
+        from services.attention_service import build_no_disc_link
+
+        content = NS(release_id="r1", media_type="movie", media_id=ALIEN, season_number=None)
+        discs = [_disc("bd", "r1"), _disc("dvd", "r1", rip_intent="skip"), _disc("unrelated", "r2")]
+        items = build_no_disc_link(_inputs(discs, [_file("f")], release_contents=[content]))
+        assert [item["mediaId"] for item in items] == [ALIEN]
+        assert "2 discs" in items[0]["detail"]
+        # Linked to the release: nothing left to ask.
+        assert build_no_disc_link(_inputs(discs, [_file("f", release_id="r1")], release_contents=[content])) == []
 
 
 class TestAuth:

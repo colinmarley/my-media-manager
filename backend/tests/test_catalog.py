@@ -607,8 +607,14 @@ class TestDiscs:
         counts_result = MagicMock()
         counts_result.all.return_value = [("disc1", 3)]
 
+        # ripState reads the files tied to a disc or release, and the disc title links.
+        files_result = MagicMock()
+        files_result.all.return_value = []
+        links_result = MagicMock()
+        links_result.scalars.return_value.all.return_value = []
+
         db = AsyncMock()
-        db.execute = AsyncMock(side_effect=[discs_result, counts_result])
+        db.execute = AsyncMock(side_effect=[discs_result, counts_result, files_result, links_result])
 
         async def override():
             yield db
@@ -621,6 +627,7 @@ class TestDiscs:
             by_id = {d["id"]: d for d in resp.json()}
             assert by_id["disc1"]["linkedFileCount"] == 3
             assert by_id["disc2"]["linkedFileCount"] == 0
+            assert by_id["disc2"]["ripState"] == "unripped"
         finally:
             app.dependency_overrides.clear()
 

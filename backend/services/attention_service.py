@@ -130,6 +130,7 @@ class AttentionInputs:
     findings: List[Any] = field(default_factory=list)  # open findings of the latest compliance scan
     discs: List[Any] = field(default_factory=list)
     disc_links: List[Any] = field(default_factory=list)  # disc_media_links rows
+    release_contents: List[Any] = field(default_factory=list)  # release_contents rows
     episode_titles: Dict[Tuple[str, int, int], str] = field(default_factory=dict)
     threshold: int = 80
 
@@ -626,7 +627,9 @@ def build_unprobed(inputs: AttentionInputs) -> List[Dict[str, Any]]:
 # -- discs --------------------------------------------------------------------
 
 def _disc_titles(inputs: AttentionInputs) -> Dict[Tuple[str, str], List[Any]]:
-    """Discs linked to each title: ``disc_media_links`` and the legacy ``raw_data.mediaId``."""
+    """Discs linked to each title: ``disc_media_links``, the legacy
+    ``raw_data.mediaId``, and every disc of a release that holds the title
+    (``release_contents``)."""
     discs_by_id = {d.id: d for d in inputs.discs}
     linked: Dict[Tuple[str, str], List[Any]] = {}
 
@@ -641,6 +644,14 @@ def _disc_titles(inputs: AttentionInputs) -> Dict[Tuple[str, str], List[Any]]:
             continue
         kind = "series" if row.media_type in ("series", "episode", "tv") else "movie"
         link((kind, row.media_id), disc)
+    by_release: Dict[str, List[Any]] = {}
+    for disc in inputs.discs:
+        if getattr(disc, "set_id", None):
+            by_release.setdefault(disc.set_id, []).append(disc)
+    for row in inputs.release_contents:
+        kind = "series" if row.media_type in ("series", "episode", "tv") else "movie"
+        for disc in by_release.get(row.release_id, []):
+            link((kind, row.media_id), disc)
     for disc in inputs.discs:
         raw = disc.raw_data if isinstance(disc.raw_data, dict) else {}
         media_id = raw.get("mediaId")
@@ -843,6 +854,7 @@ async def load_inputs(session: Any, *, threshold: Optional[int] = None) -> Atten
         MediaAssignment,
         MediaFile,
         Movie,
+        ReleaseContent,
         Series,
     )
 
@@ -884,6 +896,7 @@ async def load_inputs(session: Any, *, threshold: Optional[int] = None) -> Atten
         )
     inputs.discs = await _all(session, select(Disc))
     inputs.disc_links = await _all(session, select(DiscMediaLink))
+    inputs.release_contents = await _all(session, select(ReleaseContent))
     series_ids = sorted({f.series_id for f in inputs.files if f.series_id})
     if series_ids:
         rows = (await session.execute(
