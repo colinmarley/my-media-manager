@@ -19,7 +19,7 @@ Folder layout: `architecture/` — current-state technical references;
 
 ### Guides
 - **[Testing](./guides/TESTING.md)** — Isolated test environments, how to run tests
-- **[Beelink Migration Runbook](./guides/MIGRATION_BEELINK_RUNBOOK.md)** — Moving the stack from ai-workstation to the beelink, with checks and rollback
+- **[Homelab Deployment Notes](./homelab-deploy.md)** — The maintainer's multi-host setup (placeholders only), deploy steps, and a runbook for moving the stack between hosts
 - **[Poster Cache](./guides/POSTER_CACHE.md)** — How poster images are downloaded, cached, and served
 - **[Ingress Assignment Reference](./guides/INGRESS_ASSIGNMENT_REFERENCE.md)** — Auto-matching and confidence scoring
 - **[Grafana Dashboard](./grafana/README.md)** — Importing the media-manager metrics dashboard, plus the proposed Home Dashboard tile

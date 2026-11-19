@@ -9,8 +9,8 @@
 #   docker compose config        # check interpolation before starting
 #   docker compose up -d --build
 #
-# Hosts, NAS layout and path rules: docs/architecture/STORAGE_AND_HOSTS.md
-# Moving the stack between hosts:   docs/guides/MIGRATION_BEELINK_RUNBOOK.md
+# NAS layout and path rules:        docs/architecture/STORAGE_AND_HOSTS.md
+# Multi-host example and host moves: docs/homelab-deploy.md
 # =============================================================================
 
 services:
@@ -64,7 +64,7 @@ services:
       MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS: ${MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS:-["/ark/media/ingest"]}
       MEDIA_LIBRARY_INGRESS_AUTO_START_WATCHER: ${MEDIA_LIBRARY_INGRESS_AUTO_START_WATCHER:-true}
       MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH: ${MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH:-/ark/media}
-      # Services that stay on ai-workstation, reached over the LAN.
+      # Companion services, usually on another host, reached over the LAN.
       MEDIA_LIBRARY_DISC_RIPPER_URL: ${DISC_RIPPER_URL:?Set DISC_RIPPER_URL in .env (e.g. http://<ripper-host>:8083)}
       MEDIA_LIBRARY_LOCALAI_URL: ${LOCALAI_URL:?Set LOCALAI_URL in .env (e.g. http://<localai-host>:8080)}
       # One-time login seed for an empty auth table (ignored once a hash exists).

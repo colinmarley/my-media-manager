@@ -36,7 +36,7 @@ first, test_metrics_qa_probe.py holds the one-test-per-criterion mapping):
         test_poster_cache_gauge_counts_files_on_disk
         -> plus test_ac3_six_domain_gauges_come_from_mocked_count_queries
   AC4 the PR description carries the Prometheus scrape job
-      (job media-manager, target 192.168.0.227:8082, documented in
+      (job media-manager, target <app-host>:8082, documented in
       docs/api/endpoints.md):
         -> test_ac4_pr_summary_carries_the_prometheus_scrape_job
 """

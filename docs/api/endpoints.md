@@ -24,7 +24,7 @@ Returns service health status and availability of all components.
 GET /metrics
 ```
 Unauthenticated Prometheus text exposition (`text/plain; version=0.0.4`), scraped
-from `192.168.0.239:8082` (beelink) as job `media-manager`.
+from `<app-host>:8082` (the host running the backend) as job `media-manager`.
 
 | Metric | Type | Labels |
 | --- | --- | --- |
@@ -39,11 +39,11 @@ from `192.168.0.239:8082` (beelink) as job `media-manager`.
 recounted at most once per 60s and keep their previous value if a count query fails
 (`mm_metrics_domain_gauge_errors_total`); scrapes of `/metrics` are not instrumented.
 
-Add the scrape job to `homelab-logging/prometheus/prometheus.yml`:
+Add the scrape job to your Prometheus `prometheus.yml`:
 ```yaml
 - job_name: media-manager
   static_configs:
-    - targets: ['192.168.0.239:8082']
+    - targets: ['<app-host>:8082']
 ```
 
 ---

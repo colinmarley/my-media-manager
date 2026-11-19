@@ -182,7 +182,7 @@ alembic upgrade head
 ```
 
 The baseline revision alters an existing schema, so a brand-new database must
-be restored from a dump (see `docs/guides/MIGRATION_BEELINK_RUNBOOK.md`), not
+be restored from a dump (see `docs/homelab-deploy.md`), not
 built from Alembic alone.
 
 ## Environment Variables

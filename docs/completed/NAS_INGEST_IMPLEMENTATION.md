@@ -4,9 +4,9 @@
 
 This document details everything that must be implemented to support:
 
-1. **TrueNAS as the media destination** at `192.168.0.175/ark/media`
+1. **TrueNAS as the media destination** at `<nas-ip>/ark/media`
 2. **Separate typed media folders** (Movies, TV Shows, Documentaries, Live Performances)
-3. **NAS ingest folder** at `192.168.0.175/ark/media/ingest` as the watched input source
+3. **NAS ingest folder** at `<nas-ip>/ark/media/ingest` as the watched input source
 4. **Cross-machine operation** from either the Linux AI Workstation or the Windows Beelink Mini PC
 
 ---
@@ -51,7 +51,7 @@ This document details everything that must be implemented to support:
 ## Proposed NAS Folder Structure
 
 ```
-\\192.168.0.175\ark\media\         (SMB share root)
+\\<nas-ip>\ark\media\         (SMB share root)
 ├── ingest\                        ← Drop zone: all unprocessed media goes here
 ├── Movies\                        ← Processed movies
 │   └── The Matrix (1999) [imdbid-tt0133093]\
@@ -99,7 +99,7 @@ sudo chmod 600 /etc/samba/ark-credentials
 
 Add to `/etc/fstab` for persistent mount on boot:
 ```
-//192.168.0.175/media  /ark/media  cifs  credentials=/etc/samba/ark-credentials,uid=1000,gid=1000,file_mode=0664,dir_mode=0775,vers=3.0,nofail,_netdev  0  0
+//<nas-ip>/media  /ark/media  cifs  credentials=/etc/samba/ark-credentials,uid=1000,gid=1000,file_mode=0664,dir_mode=0775,vers=3.0,nofail,_netdev  0  0
 ```
 
 ```bash
@@ -110,12 +110,12 @@ sudo mount -a
 
 Map the network drive in Explorer or via PowerShell:
 ```powershell
-New-PSDrive -Name "A" -PSProvider FileSystem -Root "\\192.168.0.175\ark\media" -Persist -Credential (Get-Credential)
+New-PSDrive -Name "A" -PSProvider FileSystem -Root "\\<nas-ip>\ark\media" -Persist -Credential (Get-Credential)
 ```
 
 Or via `net use`:
 ```cmd
-net use A: \\192.168.0.175\ark\media /user:<nas_user> <nas_password> /persistent:yes
+net use A: \\<nas-ip>\ark\media /user:<nas_user> <nas_password> /persistent:yes
 ```
 
 The service should then be configured with `MEDIA_LIBRARY_JELLYFIN_DEST_BASE=A:\` or the UNC path.
@@ -148,7 +148,7 @@ Changes required:
 
 5. **Update `allowed_base_paths`** to include NAS paths for both platforms:
     - Linux: `/ark/media`
-   - Windows: `A:\` or `\\192.168.0.175\ark\media`
+   - Windows: `A:\` or `\\<nas-ip>\ark\media`
 
 6. **Enable `ingress_auto_start_watcher`** — should be `True` in production (can still be overridden via env).
 
@@ -167,7 +167,7 @@ media_dest_base: str = Field(
 )
 
 # NAS health check
-nas_host: str = Field(default="192.168.0.175", validation_alias="MEDIA_LIBRARY_NAS_HOST")
+nas_host: str = Field(default="<nas-ip>", validation_alias="MEDIA_LIBRARY_NAS_HOST")
 nas_mount_check_path: str = Field(
     default="/ark/media",
     validation_alias="MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH",
@@ -200,8 +200,8 @@ MEDIA_LIBRARY_MEDIA_DEST_BASE=/ark/media/jellyfin
 MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS=["/ark/media/ingest"]
 
 # On Windows Beelink, override:
-# MEDIA_LIBRARY_MEDIA_DEST_BASE=\\192.168.0.175\ark\media
-# MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS=["\\\\192.168.0.175\\ark\\media\\ingest"]
+# MEDIA_LIBRARY_MEDIA_DEST_BASE=\\<nas-ip>\ark\media
+# MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS=["\\\\<nas-ip>\\ark\\media\\ingest"]
 ```
 
 ---
@@ -359,7 +359,7 @@ This ensures that if the service restarts mid-ingest, previously detected files 
 
 The existing health check validates that the ingress path and destination base are accessible. Extend it to:
 
-1. **Ping the NAS host** (`192.168.0.175`) before relying on the mount.
+1. **Ping the NAS host** (`<nas-ip>`) before relying on the mount.
 2. **Check that the ingest subfolder exists** and is writable.
 3. **Check that each type destination subfolder exists** (`Movies/`, `TV Shows/`, etc.) and create them if missing.
 4. **Return structured health status** per mount point:
@@ -367,7 +367,7 @@ The existing health check validates that the ingress path and destination base a
 ```json
 {
   "nas_reachable": true,
-  "nas_host": "192.168.0.175",
+  "nas_host": "<nas-ip>",
   "ingest_path_accessible": true,
   "destination_paths": {
     "Movies": { "exists": true, "writable": true },
@@ -409,7 +409,7 @@ On application startup, after DB init and before starting the watcher:
 MEDIA_LIBRARY_MEDIA_DEST_BASE=/ark/media/jellyfin
 MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS=["/ark/media/ingest"]
 MEDIA_LIBRARY_POSTER_CACHE_DIR=/ark/media/.cache/posters
-MEDIA_LIBRARY_NAS_HOST=192.168.0.175
+MEDIA_LIBRARY_NAS_HOST=<nas-ip>
 MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH=/ark/media
 # Set to true since SMB polling is needed
 MEDIA_LIBRARY_INGRESS_USE_POLLING_WATCHER=true
@@ -419,11 +419,11 @@ MEDIA_LIBRARY_INGRESS_AUTO_START_WATCHER=true
 #### Windows Beelink `.env`
 
 ```dotenv
-MEDIA_LIBRARY_MEDIA_DEST_BASE=\\192.168.0.175\ark\media
-MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS=["\\\\192.168.0.175\\ark\\media\\ingest"]
-MEDIA_LIBRARY_POSTER_CACHE_DIR=\\192.168.0.175\ark\media\.cache\posters
-MEDIA_LIBRARY_NAS_HOST=192.168.0.175
-MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH=\\192.168.0.175\ark\media
+MEDIA_LIBRARY_MEDIA_DEST_BASE=\\<nas-ip>\ark\media
+MEDIA_LIBRARY_INGRESS_DEFAULT_PATHS=["\\\\<nas-ip>\\ark\\media\\ingest"]
+MEDIA_LIBRARY_POSTER_CACHE_DIR=\\<nas-ip>\ark\media\.cache\posters
+MEDIA_LIBRARY_NAS_HOST=<nas-ip>
+MEDIA_LIBRARY_NAS_MOUNT_CHECK_PATH=\\<nas-ip>\ark\media
 MEDIA_LIBRARY_INGRESS_USE_POLLING_WATCHER=true
 MEDIA_LIBRARY_INGRESS_AUTO_START_WATCHER=true
 # Point database to your Postgres instance
@@ -813,7 +813,7 @@ Add a fifth "Needs Review" tab that fetches from a new `GET /api/ingress/queue?s
 Once all tasks are implemented, every file through the ingest pipeline reaches a final state with no silent drops:
 
 ```
-User copies media file to \\192.168.0.175\ark\media\ingest\
+User copies media file to \\<nas-ip>\ark\media\ingest\
         ↓
 FileWatcherService (PollingObserver) detects + stabilises file
         ↓

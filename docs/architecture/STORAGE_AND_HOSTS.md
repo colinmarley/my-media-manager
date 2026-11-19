@@ -1,33 +1,37 @@
 # Storage and Hosts
 
 Where each part of my-media-manager runs, where its data lives, and the path
-rules that keep the database, the NAS and the other services in agreement.
-For the move itself, see [MIGRATION_BEELINK_RUNBOOK.md](../guides/MIGRATION_BEELINK_RUNBOOK.md).
+rules that keep the database, the media share and the companion services in
+agreement. A worked multi-host example (with placeholders) and a runbook for
+moving the stack between hosts are in [homelab-deploy.md](../homelab-deploy.md).
 
 ## The rule
 
-**Media lives only on the NAS. The app only tracks it.** Every video, photo and
-cover image is a file on the NAS `media` share. Postgres holds the catalog, the
-ingest queue and *pointers* to those files. Nothing in a container volume is the
-only copy of a media file, and the app never needs a local disk for media.
+**Media lives on the media share. The app only tracks it.** Every video, photo
+and cover image is a file under the media root (typically a NAS share). Postgres
+holds the catalog, the ingest queue and *pointers* to those files. Nothing in a
+container volume is the only copy of a media file, and the app never needs a
+local disk for media.
 
-## Hosts
+## Roles
 
-| Host | Address | Runs | Why there |
-|---|---|---|---|
-| **beelink** (Ubuntu 24.04 mini PC) | 192.168.0.239 | `docker-compose.yml`: `media-manager-db` (Postgres 16), `media-manager-backend` (:8082), `media-manager-frontend` (:3010). Also Jellyfin (:8096) and the homelab-logging stack (Prometheus, Grafana, Loki). | Always-on host next to Jellyfin; already mounts the NAS media share. |
-| **ai-workstation** | 192.168.0.227 | `disc-ripper-service` (:8083), LocalAI (:8080) | The ripper needs the optical drive; LocalAI needs the GPU. Both are reached over the LAN. |
-| **NAS** (TrueNAS) | 192.168.0.175 | SMB share `media` (dataset `ark/media`), backups share | Single home of all media and of the nightly DB dumps. |
+Everything can run on one machine; the roles only matter when you split them.
+
+| Role | Runs | Notes |
+|---|---|---|
+| **App host** | `docker-compose.yml`: `media-manager-db` (Postgres 16), `media-manager-backend` (:8082), `media-manager-frontend` (:3010). Often also Jellyfin and a Prometheus/Grafana stack. | Mounts the media share at `MEDIA_ROOT`. |
+| **Ripper host** (optional) | [disc-ripper-service](https://github.com/colinmarley/disc-ripper-service) (:8083), LocalAI (:8080) | The ripper needs an optical drive; LocalAI wants a GPU. Reached over the LAN. |
+| **Storage** | The media share (and somewhere for nightly DB dumps) | A NAS SMB/NFS share or a local directory. |
 
 Who talks to whom:
 
 ```
 browser ──► frontend :3010 ──► /api/backend/*     ──► backend :8082 ──► Postgres (compose network)
-                          └──► /api/disc-ripper/* ──► ripper  ai-workstation:8083
+                          └──► /api/disc-ripper/* ──► disc-ripper-service (DISC_RIPPER_URL)
 mobile app ─────────────────────────────────────────► backend :8082 ──► ripper (read-only status)
-                                                                    └──► LocalAI ai-workstation:8080
+                                                                    └──► LocalAI (LOCALAI_URL)
 disc-ripper-service ── delivers files to /ark/media/ingest, calls ──► backend :8082 (catalog links)
-Prometheus (beelink) ── scrapes ──► backend :8082/metrics
+Prometheus (optional) ── scrapes ──► backend :8082/metrics
 ```
 
 The browser never talks to the ripper directly: the frontend's
@@ -37,11 +41,13 @@ stream. Addresses of the other hosts are configuration only (`DISC_RIPPER_URL`,
 `LOCALAI_URL` in the root `.env`); nothing in the code assumes the stack and the
 ripper share a host.
 
-## NAS layout
+## Media layout
 
-The share `//192.168.0.175/media` is mounted at **`/ark/media`** on every host
-that touches media, and bind-mounted at the same `/ark/media` path in every
-container that exchanges paths with the database.
+The media root (host path `MEDIA_ROOT`, for example a NAS share mounted with
+CIFS) is bind-mounted at **`/ark/media`** inside the backend container. That
+container path is fixed: it is the prefix stored in the database, and every
+container that exchanges paths with the database (disc-ripper-service too) must
+see the share at the same `/ark/media` path.
 
 | Path | Contents | Written by |
 |---|---|---|
@@ -55,8 +61,8 @@ container that exchanges paths with the database.
 | `/ark/media/catalog-images` | Cover photos for catalog items | backend |
 
 `/ark/media/ingest` is a *sibling* of the library, not inside it, so Jellyfin
-never scans half-processed rips. (Before the beelink move it was
-`/ark/media/jellyfin/ingest`.)
+never scans half-processed rips. (Older installs used
+`/ark/media/jellyfin/ingest`; `rebase_paths.py` below moves the stored paths.)
 
 **Retired folders** — to be emptied and removed, never recreated:
 `jellyfin/_NeedsReview`, `jellyfin/Unprocessed`, `jellyfin/Series`
@@ -72,11 +78,11 @@ The single path resolver for these roots is `backend/services/storage_paths.py`
 
 | State | Location | Backed up | If lost |
 |---|---|---|---|
-| Media files | NAS `ark/media` | NAS snapshots / replication | Real loss — this is the data. |
-| Catalog, ingest queue, file pointers, settings, sessions | Postgres volume `postgres_data` on the beelink | Nightly `pg_dump -Fc` to the NAS backups share | Restore the latest dump; the inventory scan re-syncs file rows with the NAS. |
+| Media files | The media share (`MEDIA_ROOT`) | NAS snapshots / replication | Real loss — this is the data. |
+| Catalog, ingest queue, file pointers, settings, sessions | Postgres volume `postgres_data` on the app host | Nightly `pg_dump -Fc` to a backup share (recommended) | Restore the latest dump; the inventory scan re-syncs file rows with the NAS. |
 | Poster cache | Volume `poster_cache` (`/data/media_manager/posters`) | No | Re-downloaded on demand from the original poster URLs. |
 | Secrets and host config | Root `.env` beside `docker-compose.yml` (mode 600, gitignored) | Host config backup | Recreate from `.env.example` + password manager. |
-| Ripper scratch / work dirs | ai-workstation, owned by disc-ripper-service | No | In-flight rips only. |
+| Ripper scratch / work dirs | Ripper host, owned by disc-ripper-service | No | In-flight rips only. |
 
 ## Path rules
 
@@ -89,7 +95,7 @@ The single path resolver for these roots is `backend/services/storage_paths.py`
    i.e. `/ark/media/jellyfin`), e.g. `Movies/Heat (1995)/Heat (1995).mkv`. It
    survives a change of mount point; absolute paths do not.
 3. **The mount point is identical in every container that exchanges paths.**
-   The backend, and disc-ripper-service on ai-workstation, both see the share at
+   The backend, and disc-ripper-service on the ripper host, both see the share at
    `/ark/media`, and the ripper delivers to exactly `/ark/media/ingest`. A path the
    ripper reports (or a file the watcher finds) must be the same string the
    backend would use to open it. If one side mounts the share elsewhere, paths
@@ -114,7 +120,7 @@ binds it with `rslave` propagation:
 
 `rslave` lets the container see the host's remounts; without it a container
 started before (or across) a remount keeps a stale, empty or dead mount — the
-"stale mount" failure seen on ai-workstation. `create_host_path: false` makes
+classic "stale mount" failure. `create_host_path: false` makes
 `docker compose up` fail instead of silently creating an empty directory when
 the host path is missing. If a container still shows an empty `/ark/media`
 after a remount, restart it (`docker compose restart backend`) and check
@@ -135,8 +141,8 @@ missing. When the guard fails the scan is skipped and logged, nothing is marked.
 
 ## Jellyfin's view
 
-Jellyfin runs on the beelink with the host's `/ark/media` bind-mounted
-read-only at **`/media`**. The two views differ only by that prefix:
+If Jellyfin runs on the app host with the host's `/ark/media` bind-mounted
+read-only at **`/media`**, the two views differ only by that prefix:
 
 | my-media-manager (DB, backend) | Jellyfin |
 |---|---|
