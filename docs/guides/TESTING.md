@@ -98,8 +98,8 @@ The test database lives in a Docker `tmpfs` mount (RAM-backed) and is automatica
 
 ### Release and catalog tests — start their own database
 
-`tests/test_releases.py`, `tests/test_release_client_flows.py` and the integration half of
-`tests/test_catalog_errors.py` need a real Postgres and are **skipped** by a plain `pytest`.
+`tests/test_releases.py`, `tests/test_release_client_flows.py`, `tests/test_release_coverage_api.py` and the
+integration half of `tests/test_catalog_errors.py` need a real Postgres and are **skipped** by a plain `pytest`.
 They create and drop the whole schema, so they only ever run against a throwaway database:
 
 ```bash

@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from services import canonical_path, media_file_index
+from services import canonical_path, media_file_index, release_coverage
 from services.canonical_path import TitleIdentity
 
 NEEDS_ASSIGNMENT = "needs_assignment"
@@ -666,7 +666,12 @@ def build_no_disc_link(inputs: AttentionInputs) -> List[Dict[str, Any]]:
     for key, discs in linked.items():
         info = inputs.titles.get(key)
         files = mains.get(key) or []
-        if info is None or not files or any(f.disc_id for f in files):
+        # A file that names a disc or a release is linked. Downloads and tape
+        # transfers never came from a disc, so they do not ask for one.
+        candidates = [f for f in files if getattr(f, "source_kind", None) not in ("digital", "tape")]
+        if info is None or not candidates:
+            continue
+        if any(f.disc_id or getattr(f, "release_id", None) for f in candidates):
             continue
         discs = sorted(discs, key=lambda d: str(d.title or ""))
         names = ", ".join(str(d.title) for d in discs[:3]) + ("…" if len(discs) > 3 else "")
@@ -692,6 +697,9 @@ def build_no_disc_link(inputs: AttentionInputs) -> List[Dict[str, Any]]:
 
 def build_unripped_disc(inputs: AttentionInputs) -> List[Dict[str, Any]]:
     used = {f.disc_id for f in inputs.files if getattr(f, "disc_id", None)}
+    # Releases with files tied to them but to no particular disc: their discs
+    # are covered (release_coverage.DISC_COVERED), not waiting to be ripped.
+    index = release_coverage.CoverageIndex(discs=inputs.discs, disc_links=inputs.disc_links, files=inputs.files)
     title_of_disc: Dict[str, TitleInfo] = {}
     for key, discs in _disc_titles(inputs).items():
         info = inputs.titles.get(key)
@@ -701,6 +709,9 @@ def build_unripped_disc(inputs: AttentionInputs) -> List[Dict[str, Any]]:
     items = []
     for disc in inputs.discs:
         if disc.id in used:
+            continue
+        # Skipped on purpose (a bonus disc, the DVD of a combo pack), or covered by its release.
+        if index.disc_state(disc) != release_coverage.DISC_UNRIPPED:
             continue
         info = title_of_disc.get(disc.id)
         items.append(make_item(

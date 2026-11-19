@@ -30,7 +30,8 @@ done
 
 cd "$ROOT/backend"
 if [ "$#" -eq 0 ]; then
-  set -- tests/test_releases.py tests/test_release_client_flows.py tests/test_physical_releases_migration.py tests/test_catalog_errors.py
+  set -- tests/test_releases.py tests/test_release_client_flows.py tests/test_release_coverage.py \
+    tests/test_release_coverage_api.py tests/test_physical_releases_migration.py tests/test_catalog_errors.py
 fi
 CATALOG_TEST_DATABASE_URL="postgresql+asyncpg://postgres:t@127.0.0.1:${PORT}/postgres" \
   "$PYTHON" -m pytest -q -p no:cacheprovider "$@"

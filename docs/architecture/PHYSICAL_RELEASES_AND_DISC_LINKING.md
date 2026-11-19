@@ -1,7 +1,7 @@
 # Physical releases, multi-disc sets and disc-to-file linking
 
-Status: phase 1 (backend schema and release API) is built on `feat/physical-releases`; phases 2 to 5 are not.
-See "Phase 1 as built" at the end for what differs from the proposal.
+Status: phases 1 and 2 (backend) are built; phases 3 to 5 (phone, web, ripper) are not.
+See "Phase 1 as built" and "Phase 2 as built" at the end for what differs from the proposal.
 Covers `my-media-manager` (backend + web), `media-manager-mobile` and the disc-ripper link step.
 
 ## Goal
@@ -253,3 +253,39 @@ Differences from the proposal:
 - Tapes are untouched: no loose releases and no `releaseId` on tape links (open question 5).
 - `discs.barcode` is kept. Discs created through `POST /releases` leave it empty; the barcode is on the release.
 
+## Phase 2 as built
+
+Everything is derived on request by `backend/services/release_coverage.py`; nothing is stored.
+At 10,000 files and 2,000 discs each endpoint answers in about 0.3 s.
+
+| Endpoint | Notes |
+|---|---|
+| `GET /coverage` | Counts for discs (ripped / covered / unripped / skipped, and `done`), releases (complete / partial / none / skipped, plus `loose` and `incompleteSets`), files (linkedDisc / linkedRelease / suggested / noSource / notPhysical), `otherFiles` and `titles`. |
+| `GET /releases/{id}/file-suggestions` | Per title the release holds: the unlinked main files, versions and episodes, each with `fit` and `preselected`, plus `have` / `expected` / `satisfied`. |
+| `POST /releases/{id}/link-files` | `{fileIds, discId?}` in one transaction. All ids must exist or nothing is linked. |
+| `GET /release-suggestions` | Releases that have candidates, most pre-selected first: the list for the bulk review page. |
+
+Rules worth knowing:
+
+- **What a release holds** is its `release_contents`; when it has none, the title links of its discs. That is
+  what makes suggestions work for discs added with the current phone app, which links titles to discs.
+- **Counted files** are main files of movies and episodes of series that are still on disk. Versions,
+  extras and unassigned files are in `otherFiles`.
+- **Covered disc**: no file names it, but its release has linked files of the titles it holds (any linked
+  file, when the disc says nothing about what it holds).
+- **Complete season**: as many distinct episodes linked as TMDB lists for that season
+  (`series.tmdb_data.seasons`), or the size of the episode range. When the count is not known, one episode
+  is enough. Run a TMDB refresh on a series whose seasons show as complete too early.
+- **Fit** compares resolution tiers, by width as well as height (a Blu-ray rip cropped to 1920x800 is HD):
+  DVD and LaserDisc are SD, Blu-ray and HD DVD are HD, 4K is UHD. Only discs meant to be ripped count, so
+  the DVD of a combo pack does not make an SD file fit. A file never probed has `fit: unknown` and is
+  pre-selected only when nothing is known to fit.
+- **Downloads and tapes** (`sourceKind` `digital` or `tape`) are never suggested and never ask for a disc.
+
+To-Do list (`services/attention_service.py`):
+
+- `unripped_disc` no longer lists skipped discs or discs covered by their release.
+- `no_disc_link` treats a file linked to a release as linked, and ignores downloads.
+- The proposed `partial_release` and `incomplete_set` kinds are not added yet: the web To-Do page has a
+  fixed list of kinds, so they come with the web work (phase 4). Both are already in `GET /coverage`
+  and in each release's `state`.
