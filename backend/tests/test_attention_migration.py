@@ -24,11 +24,11 @@ def test_migration_follows_the_single_head():
         if "down_revision: Union[str, None] = '9c0d1e2f3a4b'" in p.read_text(encoding="utf-8")
     ]
     assert revising == [MIGRATION.name]
-    # Nothing revises this one yet: it is the head.
-    assert not [
+    # Exactly one migration revises this one (the chain has no branch).
+    assert [
         p.name for p in VERSIONS.glob("*.py")
         if "down_revision: Union[str, None] = 'ad1e2f3a4b5c'" in p.read_text(encoding="utf-8")
-    ]
+    ] == ["ae2f3a4b5c6d_physical_releases.py"]
 
 
 def test_media_file_columns_match_the_model():

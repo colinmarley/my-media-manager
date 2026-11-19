@@ -21,6 +21,8 @@ INVENTORY_KEYS = [
     "audioCodec", "audioChannels", "durationMs", "bitrate", "probedAt", "probeError",
     "isAvailable", "missingSince", "discId", "tapeId", "movieId", "seriesId", "disc", "tape",
     "needsReview", "reviewNote", "reviewedAt",
+    # Releases (additive).
+    "releaseId", "sourceKind",
 ]
 
 

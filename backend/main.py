@@ -37,6 +37,7 @@ from api.file_browser import router as file_browser_router
 from api.ingress_operations import router as ingress_router
 from api.auth import router as auth_router
 from api.catalog import router as catalog_router
+from api.releases import router as releases_router
 from api.generic_data import router as generic_data_router
 from api.library_paths import router as library_paths_router
 from api.posters import router as posters_router
@@ -481,6 +482,7 @@ app.include_router(library_router, prefix="/api/library", tags=["Library Operati
 app.include_router(metadata_router, prefix="/api/metadata", tags=["Metadata Operations"])
 app.include_router(auth_router, prefix="/api")
 app.include_router(catalog_router)
+app.include_router(releases_router)
 app.include_router(generic_data_router)
 app.include_router(library_paths_router)
 app.include_router(posters_router)
