@@ -20,7 +20,6 @@ class LibrarySettings(BaseSettings):
         "D:\\Movies",
         "D:\\TV Shows",
         "D:\\MakeMKV_Incoming",
-        "\\\\192.168.0.175\\ark\\media",
     ]
 
     # File settings
@@ -80,7 +79,7 @@ class LibrarySettings(BaseSettings):
         validation_alias=AliasChoices("MEDIA_LIBRARY_POSTER_CACHE_DIR", "POSTER_CACHE_DIR"),
     )
 
-    # Media destination — TrueNAS NAS mount or any local/network path.
+    # Media destination — a NAS mount or any local/network path.
     # Accepts MEDIA_DEST_BASE or any legacy Jellyfin alias for backward compatibility.
     jellyfin_dest_base: str = Field(
         default="/ark/media/jellyfin",
@@ -92,9 +91,10 @@ class LibrarySettings(BaseSettings):
         ),
     )
 
-    # NAS health / connectivity
+    # NAS health / connectivity. nas_host is optional: when set, the ingress
+    # health check probes SMB (TCP 445) on it; empty skips the probe.
     nas_host: str = Field(
-        default="192.168.0.175",
+        default="",
         validation_alias=AliasChoices("MEDIA_LIBRARY_NAS_HOST"),
     )
     nas_mount_check_path: str = Field(
@@ -194,8 +194,7 @@ class LibrarySettings(BaseSettings):
     tmdb_api_key: str = ""  # Set via environment variable MEDIA_LIBRARY_TMDB_API_KEY
 
     # Local vision model for the mobile "Scan cover" add-flow step, on LocalAI's
-    # OpenAI-compatible API. Default is the docker0 bridge gateway, i.e. the
-    # host's LocalAI as seen from inside the backend container on ai-workstation.
+    # OpenAI-compatible API. docker-compose.yml sets it from LOCALAI_URL.
     localai_url: str = "http://localhost:8080"  # MEDIA_LIBRARY_LOCALAI_URL (compose: LOCALAI_URL)
     localai_api_key: str = ""  # MEDIA_LIBRARY_LOCALAI_API_KEY (LocalAI requires it)
     localai_vision_model: str = "qwen2.5vl-7b"  # MEDIA_LIBRARY_LOCALAI_VISION_MODEL

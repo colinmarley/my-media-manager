@@ -1,7 +1,7 @@
 # Ingest Automation: Analysis and Redesign
 
 Date: 2026-11-08
-Scope: the automated ingest pipeline in `backend/` (watcher → queue → parser → matcher → orchestrator → organizer), the review UI that sits on top of it, and the data it has produced in the production database on ai-workstation.
+Scope: the automated ingest pipeline in `backend/` (watcher → queue → parser → matcher → orchestrator → organizer), the review UI that sits on top of it, and the data it has produced in the maintainer's production database.
 
 Companion document: [CONTENT_IDENTIFICATION_RESEARCH.md](./CONTENT_IDENTIFICATION_RESEARCH.md) covers whether a file can be identified from its *content* (fingerprinting, OCR, speech) rather than its name.
 

@@ -2,7 +2,7 @@
 
 [`media-manager.json`](./media-manager.json) charts the metrics served by
 `GET /metrics` (see [API Endpoints](../api/endpoints.md)). It needs Prometheus to
-scrape job `media-manager` (target `192.168.0.239:8082`, the beelink) first.
+scrape job `media-manager` (target `<app-host>:8082`, the host running the backend) first.
 
 | Panel | Query (abridged) |
 | --- | --- |

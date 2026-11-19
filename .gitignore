@@ -81,3 +81,6 @@ mcp_server.log
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Default local media root from .env.example (MEDIA_ROOT=./media)
+/media/

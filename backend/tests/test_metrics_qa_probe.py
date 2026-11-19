@@ -11,8 +11,8 @@ plus regression tests for the findings raised on the previous QA round.
        queries and cached for 60s
        -> test_ac3_six_domain_gauges_come_from_mocked_count_queries
   AC4  the PR description carries the scrape job for
-       homelab-logging/prometheus/prometheus.yml (job `media-manager`, target
-       192.168.0.239:8082 since the move to the beelink)
+       the Prometheus prometheus.yml (job `media-manager`, target
+       `<app-host>:8082`, a placeholder for the host running the stack)
        -> test_ac4_pr_summary_carries_the_prometheus_scrape_job, asserted
        against docs/api/endpoints.md, which is the block the summary quotes, so
        the shipped scrape config and the documented one cannot drift.
@@ -65,7 +65,7 @@ PROMETHEUS_DOCS = REPO_ROOT / "docs" / "api" / "endpoints.md"
 
 # The job block the PR summary has to hand the operator.
 SCRAPE_JOB = "job_name: media-manager"
-SCRAPE_TARGET = "192.168.0.239:8082"  # beelink; see docs/architecture/STORAGE_AND_HOSTS.md
+SCRAPE_TARGET = "<app-host>:8082"  # placeholder; see docs/homelab-deploy.md
 
 
 @pytest.fixture(autouse=True)
@@ -303,7 +303,7 @@ def test_ac4_pr_summary_carries_the_prometheus_scrape_job():
     documented = PROMETHEUS_DOCS.read_text(encoding="utf-8")
 
     assert SCRAPE_JOB in documented and SCRAPE_TARGET in documented
-    assert "homelab-logging" in documented
+    assert "prometheus.yml" in documented
     # It has to be a YAML job block with a static target, not prose.
     blocks = re.findall(r"```yaml\n(.*?)```", documented, re.DOTALL)
     job_blocks = [block for block in blocks if SCRAPE_JOB in block]

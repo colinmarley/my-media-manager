@@ -143,7 +143,7 @@ npx playwright test e2e/smoke/detail-and-disc-edit.spec.ts --headed
 
 #### Node >= 20
 
-`@playwright/test` 1.62 declares `engines.node: ">=20"`. The factory host (ai-workstation) still runs Node 18, so it has to move to Node 20 or newer before the smoke suite runs there:
+`@playwright/test` 1.62 declares `engines.node: ">=20"`. A host still on Node 18 has to move to Node 20 or newer before the smoke suite runs there:
 
 ```bash
 node --version                     # must print v20 or newer
@@ -156,13 +156,13 @@ QA usually runs on a machine that is not the app host, and the app is only reach
 
 ```bash
 # on the QA machine — no remote shell, local 3010 -> app host's 3010
-ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:3010:127.0.0.1:3010 <user>@192.168.0.239
+ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:3010:127.0.0.1:3010 <user>@<app-host>
 
 # in a second shell, run the suite through the tunnel
 BASE_URL=http://127.0.0.1:3010 E2E_PASSWORD='the-app-passphrase' npm run test:e2e:smoke
 ```
 
-- `192.168.0.239` (beelink) is the box running `docker-compose.yml` — the same host `docs/api/endpoints.md` scrapes metrics from (see `docs/architecture/STORAGE_AND_HOSTS.md`). Keep both sides of `-L` on `3010` unless `FRONTEND_PORT` is overridden.
+- `<app-host>` is the machine running `docker-compose.yml` — the same host `docs/api/endpoints.md` scrapes metrics from. Keep both sides of `-L` on `3010` unless `FRONTEND_PORT` is overridden.
 - Bind the forward to `127.0.0.1` as shown, so the tunnel does not listen on the QA machine's LAN interface.
 - Keep the tunnel up for the whole run; a dropped tunnel shows up as navigation failures, never as a pass.
 

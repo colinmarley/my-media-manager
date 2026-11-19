@@ -47,7 +47,7 @@ export default function DiscScanStep({
     <Box>
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Insert the disc and click Scan to read its contents.
-        The ripper service must be running on the ai-workstation (port 8083).
+        disc-ripper-service must be running and reachable at DISC_RIPPER_URL (port 8083 by default).
       </Typography>
       <Button
         variant="contained"

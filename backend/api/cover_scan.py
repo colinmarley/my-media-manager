@@ -7,9 +7,9 @@ disc label using a local vision model on LocalAI — for the mobile add flow's
 
   POST /api/metadata-search/cover-scan   multipart `file` -> extracted fields
 
-Runs on ai-workstation's LocalAI (OpenAI-compatible /v1 API, same engine the
-disc ripper's failure analysis uses), so no cloud OCR account and no image
-leaves the homelab.
+Runs on a self-hosted LocalAI instance (OpenAI-compatible /v1 API, set by
+MEDIA_LIBRARY_LOCALAI_URL; the same engine the disc ripper's failure analysis
+uses), so no cloud OCR account is needed and no image leaves your network.
 The result is a suggestion the app shows for confirmation, never saved as-is.
 """
 
