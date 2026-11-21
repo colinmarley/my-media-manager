@@ -13,6 +13,7 @@ from services.library_inventory_service import (
     InventoryScanRunning,
     LibraryInventoryService,
     build_title_index,
+    demote_short_versions,
     detect_moves,
     diff_inventory,
     promote_sole_mains,
@@ -137,6 +138,36 @@ def test_promote_sole_mains():
     promote_sole_mains(placements)
     assert placements["Movies/A (2000)/rip.mkv"]["role"] == "main"
     assert placements["Movies/B (2001)/x.mkv"]["role"] == "other"
+
+
+def test_demote_short_versions_needs_a_runtime_close_to_the_main():
+    folder = "Movies/T (1995) [imdbid-tt0114694]"
+    stem = "T (1995) [imdbid-tt0114694]"
+    rels = {
+        "main": f"{folder}/{stem}.mkv",
+        "cut": f"{folder}/{stem} - Director's Cut.mkv",
+        "clip": f"{folder}/{stem} - Behind the Laughter.mkv",
+        "v2": f"{folder}/{stem} - Version 2.mkv",
+        "unprobed": f"{folder}/{stem} - Being Barbara.mkv",
+        "lone": "Movies/U (2001)/U (2001) - Extended.mkv",
+    }
+    placements = {rel: parse_library_relative(rel) for rel in rels.values()}
+    assert {placements[rel]["role"] for key, rel in rels.items() if key != "main"} == {"version"}
+    durations = {
+        rels["main"]: 5_400_000,
+        rels["cut"]: 5_700_000,       # longer: a version
+        rels["clip"]: 1_620_000,      # 30%: a bonus clip
+        rels["v2"]: 4_400_000,        # 81%: under the 0.85 threshold
+        rels["unprobed"]: None,       # unknown: keeps its path role
+        rels["lone"]: 600_000,        # no main in its folder: keeps its path role
+    }
+
+    assert demote_short_versions(placements, durations, threshold=0.85) == 2
+
+    roles = {key: placements[rel]["role"] for key, rel in rels.items()}
+    assert roles == {
+        "main": "main", "cut": "version", "clip": "extra", "v2": "extra", "unprobed": "version", "lone": "version",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -482,3 +513,57 @@ async def test_inventory_api_requires_auth():
         assert resp.status_code == 401
     finally:
         app.dependency_overrides.clear()
+
+
+class DurationExtractor(FakeExtractor):
+    """Probe result per file, by the end of its name."""
+
+    def __init__(self, durations):
+        super().__init__()
+        self.durations = durations
+
+    def extract_full_metadata(self, path):
+        self.calls.append(path)
+        name = os.path.basename(path)
+        duration = next(ms for suffix, ms in self.durations.items() if name.endswith(suffix))
+        return {**GOOD_PROBE, "duration": duration}
+
+
+def test_short_versions_in_the_folder_root_are_extras(library):
+    _write(library, f"Movies/{MOVIE}/{MOVIE}.mkv")
+    _write(library, f"Movies/{MOVIE}/{MOVIE} - Theatrical Cut.mkv")
+    _write(library, f"Movies/{MOVIE}/{MOVIE} - Savini's Night.mkv")
+    session = FakeSession()
+    extractor = DurationExtractor({
+        f"{MOVIE}.mkv": 5_400_000,
+        "Theatrical Cut.mkv": 5_100_000,
+        "Savini's Night.mkv": 1_700_000,
+    })
+
+    status = _scan(_service(session, extractor=extractor))
+
+    rows = _rows(session)
+    assert rows[f"Movies/{MOVIE}/{MOVIE}.mkv"].role == "main"
+    assert rows[f"Movies/{MOVIE}/{MOVIE} - Theatrical Cut.mkv"].role == "version"
+    assert rows[f"Movies/{MOVIE}/{MOVIE} - Savini's Night.mkv"].role == "extra"
+    assert status["counts"]["shortVersions"] == 1
+
+    # Later scans read the stored durations and keep the clip an extra.
+    status = _scan(_service(session, extractor=extractor))
+    assert _rows(session)[f"Movies/{MOVIE}/{MOVIE} - Savini's Night.mkv"].role == "extra"
+    assert status["counts"]["shortVersions"] == 1 and status["counts"]["probed"] == 0
+    assert len(extractor.calls) == 3
+
+
+def test_short_version_waits_for_its_main_to_be_probed(library):
+    _write(library, f"Movies/{MOVIE}/{MOVIE} - Clip.mkv", size=10)
+    _write(library, f"Movies/{MOVIE}/{MOVIE}.mkv", size=20)
+    session = FakeSession()
+    extractor = DurationExtractor({f"{MOVIE}.mkv": 5_400_000, "Clip.mkv": 600_000})
+
+    _scan(_service(session, extractor=extractor, probe_batch=1))
+    clip = _rows(session)[f"Movies/{MOVIE}/{MOVIE} - Clip.mkv"]
+    assert clip.role == "version"  # its main has no duration yet
+
+    _scan(_service(session, extractor=extractor, probe_batch=1))
+    assert _rows(session)[f"Movies/{MOVIE}/{MOVIE} - Clip.mkv"].role == "extra"
