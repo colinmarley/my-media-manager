@@ -63,6 +63,7 @@ from services.metrics import DomainMetricsCollector
 from services.filesystem_manager import FileSystemManager
 from services.file_watcher_service import FileWatcherService
 from services.ingress_queue_service import IngressQueueService
+from services.ingest_ai_classifier import IngestAIClassifier
 from services.auto_matcher_service import AutoMatcherService
 from services.assignment_orchestrator import AssignmentOrchestrator
 from services.file_organization_service import FileOrganizationService
@@ -263,6 +264,7 @@ async def lifespan(app: FastAPI):
         assignment_orchestrator=assignment_orchestrator,
         auto_assign_threshold=settings.ingress_auto_assign_threshold,
         db_session_factory=AsyncSessionLocal,
+        ai_classifier=IngestAIClassifier.from_settings(),
     )
     # The database is the source of truth for the queue; reload unfinished items so a
     # restart neither empties the review queue nor re-creates rows on the next scan.

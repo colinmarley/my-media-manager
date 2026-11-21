@@ -324,7 +324,9 @@ describe('the Jev answer and its confidence floor (#36)', () => {
 
   it('translates "this backend has no classifier" instead of showing the raw 503 body', () => {
     expect(describeAiClassifyError(new Error('502 {"detail":{"code":"INGEST_AI_NOT_CONFIGURED"}}')))
-      .toBe('No Jev classifier on this backend — set MEDIA_LIBRARY_INGEST_AI_MODE to shadow or assist to get answers');
+      .toBe('No Jev classifier on this backend — set MEDIA_LIBRARY_INGEST_AI_BASE_URL (local decider) or an API key to get answers');
+    expect(describeAiClassifyError(new Error('422 {"detail":{"code":"INGEST_AI_NOT_APPLICABLE"}}')))
+      .toBe('Jev only labels movie folders (feature, other cut, bonus) — episodes are numbered from their file names');
     expect(describeAiClassifyError(new Error('boom'))).toBe('boom');
     expect(describeAiClassifyError(null)).toBe('Jev classification failed');
   });

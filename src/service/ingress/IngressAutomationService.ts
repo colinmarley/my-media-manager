@@ -292,7 +292,8 @@ class IngressAutomationService {
    * long budget as a bulk batch instead of the 15s a normal admin read uses. The triage UI keeps the
    * rest of the page usable while it runs.
    */
-  private static readonly AI_CLASSIFY_REQUEST_TIMEOUT_MS = 120000;
+  // Longer than the backend's 150 s decider timeout, so a slow CPU decider fails there with a reason.
+  private static readonly AI_CLASSIFY_REQUEST_TIMEOUT_MS = 180000;
 
   private async request(path: string, init?: RequestInit, timeoutMs = IngressAutomationService.REQUEST_TIMEOUT_MS): Promise<any> {
     const controller = new AbortController();
