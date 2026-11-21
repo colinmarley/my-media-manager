@@ -149,6 +149,7 @@ def test_demote_short_versions_needs_a_runtime_close_to_the_main():
         "clip": f"{folder}/{stem} - Behind the Laughter.mkv",
         "v2": f"{folder}/{stem} - Version 2.mkv",
         "unprobed": f"{folder}/{stem} - Being Barbara.mkv",
+        "disc": f"{folder}/{stem} - T D2 (1995).mkv",
         "lone": "Movies/U (2001)/U (2001) - Extended.mkv",
     }
     placements = {rel: parse_library_relative(rel) for rel in rels.values()}
@@ -159,6 +160,7 @@ def test_demote_short_versions_needs_a_runtime_close_to_the_main():
         rels["clip"]: 1_620_000,      # 30%: a bonus clip
         rels["v2"]: 4_400_000,        # 81%: under the 0.85 threshold
         rels["unprobed"]: None,       # unknown: keeps its path role
+        rels["disc"]: 1_200_000,      # one disc of a multi-disc rip: stays a version
         rels["lone"]: 600_000,        # no main in its folder: keeps its path role
     }
 
@@ -166,7 +168,8 @@ def test_demote_short_versions_needs_a_runtime_close_to_the_main():
 
     roles = {key: placements[rel]["role"] for key, rel in rels.items()}
     assert roles == {
-        "main": "main", "cut": "version", "clip": "extra", "v2": "extra", "unprobed": "version", "lone": "version",
+        "main": "main", "cut": "version", "clip": "extra", "v2": "extra", "unprobed": "version",
+        "disc": "version", "lone": "version",
     }
 
 

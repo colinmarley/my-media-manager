@@ -5,6 +5,7 @@ import pytest
 from services.library_path_parser import (
     episode_numbers,
     imdb_id_from_name,
+    is_disc_rip,
     parse_library_relative,
     season_from_folder,
     title_key,
@@ -122,3 +123,21 @@ def test_episode_numbers(stem, expected):
 ])
 def test_title_key(path, expected):
     assert title_key(path) == expected
+
+
+@pytest.mark.parametrize(
+    "name,expected",
+    [
+        ("Top Gun (1986) [imdbid-tt0092099] - Top Gun D2 (1986).mkv", True),
+        ("Joker (2019) [imdbid-tt7286456] - Joker (D2) (2019).mkv", True),
+        ("Movies/X (2008)/X (2008) - The-Dark-Knight D1 (2008).mkv", True),
+        ("X (2000) - Disc 2.mkv", True),
+        ("X (2000) - Disk1.mkv", True),
+        ("Night of the Living Dead (1990) - Savini's Night.mkv", False),
+        ("X (2000) - Ward 3.mkv", False),
+        ("X (2000) - Version 2.mkv", False),
+        ("Avatar 3D (2009).mkv", False),
+    ],
+)
+def test_is_disc_rip(name, expected):
+    assert is_disc_rip(name) is expected
