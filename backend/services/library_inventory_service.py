@@ -40,8 +40,10 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 from config.settings import settings
 from services import media_file_index, storage_paths
 from services.library_path_parser import (
+    ROLE_EXTRA,
     ROLE_MAIN,
     ROLE_OTHER,
+    ROLE_VERSION,
     parse_library_relative,
     title_key,
 )
@@ -282,6 +284,44 @@ def promote_sole_mains(placements: Dict[str, Dict[str, Any]]) -> None:
             placements[root_others[0]]["role"] = ROLE_MAIN
 
 
+def demote_short_versions(
+    placements: Dict[str, Dict[str, Any]],
+    durations: Dict[str, Any],
+    threshold: Optional[float] = None,
+) -> int:
+    """A ``version`` much shorter than its folder's main feature is a bonus clip.
+
+    The path alone cannot tell ``Title - Director's Cut.mkv`` from
+    ``Title - Behind the Scenes.mkv``, so, as ingest does, a version must run
+    at least ``threshold`` (``movie_version_duration_threshold``) of the
+    longest main in its title folder; anything shorter becomes an ``extra``.
+    Files without a known duration (or folders without a probed main) keep
+    their path role. ``durations`` maps the same relative paths to
+    ``duration_ms``. Returns how many were demoted.
+    """
+    ratio = settings.movie_version_duration_threshold if threshold is None else threshold
+    by_title: Dict[str, List[str]] = {}
+    for rel, parsed in placements.items():
+        if parsed.get("media_type") in (None, "series") or not parsed.get("title_folder"):
+            continue
+        by_title.setdefault(file_title_key(rel, parsed) or "", []).append(rel)
+    demoted = 0
+    for rels in by_title.values():
+        main_ms = max(
+            (int(durations[rel]) for rel in rels
+             if placements[rel]["role"] == ROLE_MAIN and durations.get(rel)),
+            default=0,
+        )
+        if main_ms <= 0:
+            continue
+        for rel in rels:
+            duration = durations.get(rel)
+            if placements[rel]["role"] == ROLE_VERSION and duration and int(duration) < main_ms * ratio:
+                placements[rel]["role"] = ROLE_EXTRA
+                demoted += 1
+    return demoted
+
+
 def _set(row: Any, name: str, value: Any) -> bool:
     if getattr(row, name, None) != value:
         setattr(row, name, value)
@@ -310,6 +350,7 @@ def _empty_counts() -> Dict[str, int]:
         "probed": 0,
         "probeErrors": 0,
         "probePending": 0,
+        "shortVersions": 0,
     }
 
 
@@ -490,6 +531,9 @@ class LibraryInventoryService:
             counts["probePending"] = len(reconcile["to_probe"])
         else:
             await self._probe(reconcile["to_probe"])
+            if counts["probed"]:
+                # New files had no duration when their role was set.
+                counts["shortVersions"] += await self._settle_short_versions(library_root, roots)
 
         # (g) missing
         self._progress["phase"] = "missing"
@@ -654,6 +698,9 @@ class LibraryInventoryService:
                 rel_of[path] = rel
                 placements[rel] = parse_library_relative(rel)
             promote_sole_mains(placements)
+            counts["shortVersions"] = demote_short_versions(
+                placements, {rel_of[path]: row.duration_ms for path, row in present.items() if path in rel_of}
+            )
 
             for path, row in present.items():
                 rel = rel_of.get(path)
@@ -740,6 +787,36 @@ class LibraryInventoryService:
                         counts["probeErrors"] += 1
                 row.last_scanned_date = self.clock()
                 await session.commit()
+
+    async def _settle_short_versions(self, library_root: str, roots: List[str]) -> int:
+        """Demote freshly probed short versions (see :func:`demote_short_versions`)."""
+        from sqlalchemy import select
+        from db.models import MediaFile
+
+        async with self.db_session_factory() as session:
+            result = await session.execute(
+                select(MediaFile).where(
+                    MediaFile.file_path.like(
+                        media_file_index.like_prefix(media_file_index.normalize_path(library_root)), escape="\\"
+                    )
+                )
+            )
+            rows: Dict[str, Any] = {}
+            for row in result.scalars().all():
+                path = media_file_index.normalize_path(row.file_path)
+                if row.relative_path and row.is_available is not False and any(
+                    storage_paths.is_within(path, root) for root in roots
+                ):
+                    rows[row.relative_path] = row
+            placements = {
+                rel: {**parse_library_relative(rel), "role": row.role} for rel, row in rows.items()
+            }
+            demoted = demote_short_versions(placements, {rel: row.duration_ms for rel, row in rows.items()})
+            if demoted:
+                for rel, row in rows.items():
+                    _set(row, "role", placements[rel]["role"])
+                await session.commit()
+        return demoted
 
     async def _mark_missing(self, row_ids: List[str]) -> int:
         from sqlalchemy import select
