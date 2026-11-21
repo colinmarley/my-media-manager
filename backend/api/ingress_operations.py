@@ -529,11 +529,22 @@ async def ai_classify_ingress_item(payload: QueueAIClassifyRequest, req: Request
             "message": "AI classification is not configured (set MEDIA_LIBRARY_INGEST_AI_MODE to shadow or assist)",
             "code": "INGEST_AI_NOT_CONFIGURED",
         })
-    if payload.itemId not in queue_service.items_by_id:
+    # After a restart the queue only holds what has been opened since, so load the row first.
+    item = await queue_service.hydrate_item(payload.itemId) if hasattr(queue_service, "hydrate_item") else None
+    if item is None and payload.itemId not in queue_service.items_by_id:
         raise HTTPException(status_code=404, detail={
             "type": "NotFoundError",
             "message": f"Queue item {payload.itemId} not found",
             "code": "QUEUE_ITEM_NOT_FOUND",
+        })
+    best_match = (item or {}).get("best_match") if isinstance(item, dict) else None
+    classifies = getattr(queue_service, "ai_classifies", None)
+    if isinstance(best_match, dict) and best_match and classifies is not None and not classifies(best_match):
+        raise HTTPException(status_code=422, detail={
+            "type": "ValidationError",
+            "message": "Jev labels movie folders (feature, other cut, bonus); episodes are numbered from "
+                       "their file names, so there is nothing to classify here",
+            "code": "INGEST_AI_NOT_APPLICABLE",
         })
 
     classifications = await refresh(payload.itemId)
@@ -664,6 +675,19 @@ async def update_ingress_item_classification(payload: QueueClassificationUpdateR
     return {
         "success": True,
         "data": queue_item.to_dict(),
+        "timestamp": str(int(time.time())),
+    }
+
+
+@router.get("/queue/ai-report")
+async def get_ingress_ai_report(req: Request):
+    """How often the AI had already proposed the label a reviewer corrected to."""
+    queue_service = req.app.state.ingress_queue_service
+    report = await queue_service.get_ai_agreement_report()
+    report["mode"] = queue_service.ai_classifier.mode if queue_service.ai_classifier else "off"
+    return {
+        "success": True,
+        "data": report,
         "timestamp": str(int(time.time())),
     }
 

@@ -517,7 +517,10 @@ export function getAiClassifyAnswers(result?: IngressAIClassifyResult): IngressA
 export function describeAiClassifyError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? '');
   if (message.includes('INGEST_AI_NOT_CONFIGURED')) {
-    return 'No Jev classifier on this backend — set MEDIA_LIBRARY_INGEST_AI_MODE to shadow or assist to get answers';
+    return 'No Jev classifier on this backend — set MEDIA_LIBRARY_INGEST_AI_BASE_URL (local decider) or an API key to get answers';
+  }
+  if (message.includes('INGEST_AI_NOT_APPLICABLE')) {
+    return 'Jev only labels movie folders (feature, other cut, bonus) — episodes are numbered from their file names';
   }
   return message || 'Jev classification failed';
 }

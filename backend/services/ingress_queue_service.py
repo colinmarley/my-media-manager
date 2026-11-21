@@ -33,6 +33,7 @@ from services.disc_track_mapper import (
 )
 from services.filename_parser import FilenameParser
 from services import storage_paths
+from services.ingest_ai_classifier import IngestAIClassifier
 from services.path_builder import ROLE_MAIN, ROLE_SPECIAL, ROLE_VERSION, PathBuilder
 from utils.logging import logger
 
@@ -187,12 +188,14 @@ class IngressQueueService:
         assignment_orchestrator: Optional[Any] = None,
         auto_assign_threshold: int = 80,
         db_session_factory: Optional[Any] = None,
+        ai_classifier: Optional[IngestAIClassifier] = None,
     ):
         self.parser = parser or FilenameParser()
         self.auto_matcher_service = auto_matcher_service
         self.assignment_orchestrator = assignment_orchestrator
         self.auto_assign_threshold = max(0, min(auto_assign_threshold, 100))
         self.db_session_factory = db_session_factory
+        self.ai_classifier = ai_classifier
         self.lock = threading.RLock()
 
         self.items_by_id: Dict[str, IngressQueueItem] = {}
@@ -611,6 +614,16 @@ class IngressQueueService:
                 )
                 candidate.processed_at = time.time()
 
+            # Classify before auto-assignment so assist mode can shape the path.
+            if (
+                has_best_match
+                and self.ai_classifier is not None
+                and self.ai_classifier.runs_automatically
+            ):
+                # The first file of a folder classifies the whole folder; its siblings reuse that answer
+                # unless the folder has gained files since (a CPU decider takes seconds per folder).
+                await self.refresh_ai_classification(candidate.id, force=False)
+
             if candidate.status == QUEUE_AUTO_ASSIGNED and self.assignment_orchestrator:
                 assignment_result = await self._attempt_auto_assignment(candidate)
                 with self.lock:
@@ -845,15 +858,210 @@ class IngressQueueService:
             skip_persist={item.id},
         )
         await self._persist_queue_item(item)
+        ai_classification = (item.parsed_info or {}).get("ai_classification") or {}
         await self._record_history_event(
             item,
             "classification_updated",
             {
                 "classification_override": normalized,
+                "ai_label": ai_classification.get("label"),
+                "ai_confidence": ai_classification.get("confidence"),
                 **(history_extra or {}),
             },
         )
         return item
+
+    @staticmethod
+    def _ai_title_key(best_match: Dict[str, Any]) -> Tuple[str, Any]:
+        return (str(best_match.get("title") or "").strip().lower(), best_match.get("year"))
+
+    def _ai_group_members(self, item: IngressQueueItem) -> List[IngressQueueItem]:
+        """Items from the same source folder that belong to the item's title.
+
+        Unmatched siblings, and siblings matched only to generic companion
+        labels ("Extras", "Special Features"), are included so the model sees
+        the whole disc. Caller must hold self.lock.
+        """
+        source_root = self._resolve_source_root(item)
+        title_key = self._ai_title_key(item.best_match or {})
+        members = [item]
+        for other_id in self.item_order:
+            other = self.items_by_id[other_id]
+            if other.id == item.id or other.status in (QUEUE_COMPLETED, QUEUE_FAILED, QUEUE_IGNORED):
+                continue
+            if not self._is_video_file_path(other.file_path):
+                continue
+            if self._resolve_source_root(other) != source_root:
+                continue
+            other_match = other.best_match or {}
+            if (
+                other_match
+                and self._ai_title_key(other_match) != title_key
+                and not self.parser.is_generic_companion_label(other_match.get("title") or "")
+            ):
+                continue
+            members.append(other)
+        return members
+
+    @staticmethod
+    def ai_classifies(best_match: Optional[Dict[str, Any]]) -> bool:
+        """The classifier labels movie folders (feature / other cut / bonus). Episodes are numbered from
+        their file names and disc track maps instead, so a series folder is never sent to it."""
+        media_type = str((best_match or {}).get("media_type") or "movie").lower()
+        return media_type not in ("episode", "series", "tv")
+
+    async def _hydrate_source_folder(self, source_root: str) -> int:
+        """Load the persisted, still-open queue rows under ``source_root`` into memory."""
+        if self.db_session_factory is None or not source_root:
+            return 0
+        prefix = source_root.rstrip("/\\") + os.sep
+        try:
+            async with self.db_session_factory() as session:
+                rows = (
+                    await session.execute(
+                        select(DBIngressQueueItem)
+                        .where(DBIngressQueueItem.file_path.startswith(prefix, autoescape=True))
+                        .where(DBIngressQueueItem.status.notin_(
+                            [QUEUE_COMPLETED, QUEUE_FAILED, QUEUE_IGNORED]
+                        ))
+                        .limit(500)
+                    )
+                ).scalars().all()
+        except Exception as exc:
+            logger.warning("Failed to hydrate ingest folder for AI classification", source_root=source_root,
+                           error=str(exc))
+            return 0
+        return self.hydrate_items(rows)
+
+    async def refresh_ai_classification(self, item_id: str, force: bool = True) -> Dict[str, Dict[str, Any]]:
+        """Ask the decision model to classify the item's folder group.
+
+        Each answer is stored as parsed_info["ai_classification"] on the group's
+        items. Returns item_id -> classification, or {} when skipped or failed;
+        failures are logged and recorded but never interrupt ingest. With
+        ``force=False`` (automatic ingest) a folder whose every file already has an
+        answer computed over the same number of files is not asked again.
+        """
+        if self.ai_classifier is None:
+            return {}
+
+        # The in-memory queue starts empty after a restart, so a folder reviewed days later may only be
+        # partly loaded: bring the item and every persisted sibling in its source folder in first.
+        await self.hydrate_item(item_id)
+        with self.lock:
+            anchor = self.items_by_id.get(item_id)
+        if anchor is not None:
+            await self._hydrate_source_folder(self._resolve_source_root(anchor))
+
+        with self.lock:
+            item = self.items_by_id.get(item_id)
+            if item is None or not isinstance(item.best_match, dict) or not item.best_match:
+                return {}
+            best_match = dict(item.best_match)
+            if not self.ai_classifies(best_match):
+                return {}
+            members = self._ai_group_members(item)
+            if not force:
+                answers = [(m.parsed_info or {}).get("ai_classification") for m in members]
+                if all(isinstance(a, dict) and a.get("group_size") == len(members) for a in answers):
+                    return {m.id: a for m, a in zip(members, answers)}
+
+        for member in members:
+            if member.media_duration_ms is None:
+                member.media_duration_ms = _get_file_duration(member.file_path)
+
+        main_exists, _, main_duration_ms, _ = self._scan_movie_folder_state(best_match)
+        group = [
+            {
+                "id": member.id,
+                "file_name": member.file_name,
+                "file_path": member.file_path,
+                "media_duration_ms": member.media_duration_ms,
+                "file_size": member.file_size,
+                "best_match": dict(member.best_match or {}),
+            }
+            for member in members
+        ]
+        group[0]["best_match"] = best_match
+
+        try:
+            results = await self.ai_classifier.classify_group(group, main_exists, main_duration_ms)
+        except Exception as exc:  # never let the AI break ingest
+            logger.warning("AI classification failed", item_id=item_id, error=str(exc))
+            await self._record_history_event(item, "ai_classification_failed", {"error": str(exc)})
+            return {}
+
+        updated: List[IngressQueueItem] = []
+        with self.lock:
+            for member in members:
+                result = results.get(member.id)
+                if result is None:
+                    continue
+                parsed_info = dict(member.parsed_info or {})
+                parsed_info["ai_classification"] = result
+                member.parsed_info = parsed_info
+                updated.append(member)
+
+        for member in updated:
+            await self._persist_queue_item(member)
+        await self._record_history_event(
+            item,
+            "ai_classified",
+            {
+                "ai_mode": self.ai_classifier.mode,
+                "ai_group": {
+                    member_id: {"label": r["label"], "confidence": r["confidence"]}
+                    for member_id, r in results.items()
+                },
+            },
+        )
+        return results
+
+    async def get_ai_agreement_report(self, limit: int = 5000) -> Dict[str, Any]:
+        """Compare stored AI labels with the manual corrections made in review.
+
+        Every manual override is a case where the heuristic got it wrong (or the
+        user changed their mind), so "agreed" counts corrections the AI had
+        already proposed, i.e. clicks assist mode would have saved.
+        """
+        history = await self.get_processing_history_persisted(limit=limit)
+        latest: Dict[str, Dict[str, Any]] = {}
+        for event in history:
+            if event.get("event") != "classification_updated" or not event.get("classification_override"):
+                continue
+            latest[str(event.get("item_id"))] = event
+
+        min_confidence = self.ai_classifier.min_confidence if self.ai_classifier else None
+        cases: List[Dict[str, Any]] = []
+        for event in latest.values():
+            ai_label = event.get("ai_label")
+            ai_confidence = event.get("ai_confidence")
+            if ai_label is None:
+                ai = (event.get("parsed_info") or {}).get("ai_classification") or {}
+                ai_label, ai_confidence = ai.get("label"), ai.get("confidence")
+            cases.append({
+                "item_id": event.get("item_id"),
+                "file_name": event.get("file_name"),
+                "human_label": event.get("classification_override"),
+                "ai_label": ai_label,
+                "ai_confidence": ai_confidence,
+                "agreed": ai_label == event.get("classification_override") if ai_label else None,
+            })
+
+        with_ai = [c for c in cases if c["ai_label"]]
+        confident = [
+            c for c in with_ai
+            if min_confidence is not None and (c["ai_confidence"] or 0) >= min_confidence
+        ]
+        return {
+            "manual_corrections": len(cases),
+            "corrections_with_ai_label": len(with_ai),
+            "ai_agreed": sum(1 for c in with_ai if c["agreed"]),
+            "confident_ai_labels": len(confident),
+            "confident_ai_agreed": sum(1 for c in confident if c["agreed"]),
+            "min_confidence": min_confidence,
+            "cases": cases,
+        }
 
     async def mark_complete(
         self,
@@ -1149,6 +1357,63 @@ class IngressQueueService:
             PathBuilder.spec_from_match(best_match, file_name, ROLE_SPECIAL, number)
         )
 
+    def _scan_movie_folder_state(
+        self,
+        best_match: Dict[str, Any],
+    ) -> Tuple[bool, int, Optional[float], int]:
+        """Scan the movie's Jellyfin folder on disk.
+
+        Returns (main_exists, next_special_number, main_duration_ms, next_version_number).
+        """
+        media_type = (best_match.get("media_type") or "movie").lower()
+        folder = self._folder_title(best_match)
+        subfolder = {
+            "documentary": settings.folder_documentaries,
+            "live_performance": settings.folder_live_performances,
+        }.get(media_type, settings.folder_movies)
+        dest_dir = os.path.join(storage_paths.library_root(), subfolder, folder)
+        main_exists = False
+        main_duration_ms: Optional[float] = None
+        highest_special_number = 0
+        highest_version_number = 1  # versions start at 2
+        folder_lower = folder.lower()
+        video_extensions = {ext.lower() for ext in settings.supported_video_extensions}
+
+        if os.path.isdir(dest_dir):
+            try:
+                for name in os.listdir(dest_dir):
+                    full_path = os.path.join(dest_dir, name)
+                    if not os.path.isfile(full_path):
+                        continue
+                    stem, ext = os.path.splitext(name)
+                    if ext.lower() not in video_extensions:
+                        continue
+                    if stem.lower() == folder_lower:
+                        main_exists = True
+                        main_duration_ms = _get_file_duration(full_path)
+                    special_m = re.match(r"^Special Feature\s+(\d+)$", stem, re.IGNORECASE)
+                    if special_m:
+                        highest_special_number = max(
+                            highest_special_number, int(special_m.group(1))
+                        )
+                    version_m = re.match(
+                        rf"^{re.escape(folder_lower)}\s+-\s+Version\s+(\d+)$",
+                        stem.lower(),
+                    )
+                    if version_m:
+                        highest_version_number = max(
+                            highest_version_number, int(version_m.group(1))
+                        )
+            except OSError:
+                pass
+
+        return (
+            main_exists,
+            highest_special_number + 1,
+            main_duration_ms,
+            highest_version_number + 1,
+        )
+
     def _enrich_proposed_paths(self, items: List[Dict[str, Any]]) -> None:
         """
         Assign proposed_path for each item dict in-place.
@@ -1191,56 +1456,10 @@ class IngressQueueService:
             if media_type in ("episode", "series"):
                 return False, 1, None, 2
 
-            folder = self._folder_title(best_match)
-            cache_key = folder.lower()
-            if cache_key in movie_folder_state_cache:
-                return movie_folder_state_cache[cache_key]
-
-            subfolder = _subfolder_for(media_type)
-            dest_dir = os.path.join(storage_paths.library_root(), subfolder, folder)
-            main_exists = False
-            main_duration_ms: Optional[float] = None
-            highest_special_number = 0
-            highest_version_number = 1  # versions start at 2
-            folder_lower = folder.lower()
-            video_extensions = {ext.lower() for ext in settings.supported_video_extensions}
-
-            if os.path.isdir(dest_dir):
-                try:
-                    for name in os.listdir(dest_dir):
-                        full_path = os.path.join(dest_dir, name)
-                        if not os.path.isfile(full_path):
-                            continue
-                        stem, ext = os.path.splitext(name)
-                        if ext.lower() not in video_extensions:
-                            continue
-                        if stem.lower() == folder_lower:
-                            main_exists = True
-                            main_duration_ms = _get_file_duration(full_path)
-                        special_m = re.match(r"^Special Feature\s+(\d+)$", stem, re.IGNORECASE)
-                        if special_m:
-                            highest_special_number = max(
-                                highest_special_number, int(special_m.group(1))
-                            )
-                        version_m = re.match(
-                            rf"^{re.escape(folder_lower)}\s+-\s+Version\s+(\d+)$",
-                            stem.lower(),
-                        )
-                        if version_m:
-                            highest_version_number = max(
-                                highest_version_number, int(version_m.group(1))
-                            )
-                except OSError:
-                    pass
-
-            state: Tuple[bool, int, Optional[float], int] = (
-                main_exists,
-                highest_special_number + 1,
-                main_duration_ms,
-                highest_version_number + 1,
-            )
-            movie_folder_state_cache[cache_key] = state
-            return state
+            cache_key = self._folder_title(best_match).lower()
+            if cache_key not in movie_folder_state_cache:
+                movie_folder_state_cache[cache_key] = self._scan_movie_folder_state(best_match)
+            return movie_folder_state_cache[cache_key]
 
         def _unknown_episode_state(best_match: Dict[str, Any]) -> int:
             """Return the next available unknown-episode number for this series/season."""
@@ -1298,6 +1517,12 @@ class IngressQueueService:
                 or (item.get("parsed_info") or {}).get("classification_override")
             )
             if not override:
+                # A manual override always wins; otherwise, in assist mode, a
+                # confident AI decision acts like one.
+                if self.ai_classifier is not None and self.ai_classifier.drives_decisions:
+                    return self.ai_classifier.confident_label(
+                        (item.get("parsed_info") or {}).get("ai_classification")
+                    )
                 return None
             normalized = str(override).strip().lower()
             return normalized if normalized in VALID_CLASSIFICATION_OVERRIDES else None
@@ -1479,8 +1704,17 @@ class IngressQueueService:
                 idx for idx in remaining
                 if idx != main_idx
             ]
+            # A second full-length cut on the same disc (theatrical + extended) is another version of the
+            # film, not a bonus feature: the same runtime rule as above, measured against the chosen main.
+            # On 364 library movies this took discs with several cuts from 0% to 87% fully right
+            # (docs/guides/LOCAL_DECIDER.md). Unknown durations stay special, as before.
+            chosen_main_ms = (items[main_idx].get("media_duration_ms") or 0) if main_idx is not None else 0
             for idx in auto_others:
-                _propose_special(idx, items[idx]["best_match"])
+                item_duration = items[idx].get("media_duration_ms") or 0
+                if chosen_main_ms > 0 and item_duration > 0 and item_duration >= threshold * chosen_main_ms:
+                    _propose_version(idx, items[idx]["best_match"])
+                else:
+                    _propose_special(idx, items[idx]["best_match"])
 
         # Fallback: companion files from the same source root should inherit the
         # matched movie/show anchor instead of being matched to generic titles like
@@ -1505,10 +1739,14 @@ class IngressQueueService:
             if not anchor_match:
                 continue
 
+            # Files explicitly classified as the feature or another cut of it
+            # (manually, or by the AI in assist mode) keep the path the title
+            # group gave them instead of being swept into special features.
             companion_indices = [
                 i for i in source_indices
                 if i != anchor_idx and i not in resolved and _looks_like_companion_item(items[i])
                 and not _is_mapped_track(items[i])
+                and _classification_override(items[i]) not in ("main_feature", "alternate_version")
             ]
 
             anchor_key = _folder_key(anchor_match)

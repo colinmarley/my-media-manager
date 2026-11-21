@@ -1,0 +1,56 @@
+# Local ingest decider: OneJev 1.5 9B (Apache 2.0) behind a TypeSafe-compatible POST /v1/systemone,
+# for the backend's ingest classifier (MEDIA_LIBRARY_INGEST_AI_BASE_URL=http://<decider-host>:8130/v1).
+#
+# CPU only on purpose: it never competes for a shared GPU, and ingest classification is a background
+# job where tens of seconds per disc folder is fine. See docs/guides/LOCAL_DECIDER.md.
+#
+#   cd deploy/decider && cp .env.example .env    # set DECIDER_DATA (model + tokenizer, see the guide)
+#   docker compose up -d --build
+#   curl -s localhost:8130/health
+
+name: mmm-decider
+
+services:
+  # llama.cpp serving the GGUF weights. Pinned build; threads capped so other services keep their CPU.
+  llama:
+    image: ghcr.io/ggml-org/llama.cpp:server-b11718
+    container_name: mmm-decider-llama
+    command: ["-m", "/models/OneJev1.5-9B.Q8_0.gguf",
+              "-c", "16384", "-np", "1", "-t", "${DECIDER_THREADS:-12}",
+              "--host", "0.0.0.0", "--port", "8080"]
+    volumes:
+      - ${DECIDER_DATA:-/data/mmm-decider}/models:/models:ro
+    cpus: ${DECIDER_CPUS:-12}
+    mem_limit: 16g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+    restart: unless-stopped
+
+  # OneJev's qev server: builds the System One prompts, reads the answer-slot probabilities from
+  # llama.cpp and applies OneJev's calibration. Text only (no vision projector is loaded).
+  decider:
+    build:
+      context: https://github.com/OmniJev/OneJev.git#d49ba34925e32731036dffa7571d1d7ad21d7fab
+      dockerfile: docker/Dockerfile
+      target: gguf
+      args:
+        LLAMA_IMAGE: ghcr.io/ggml-org/llama.cpp:server-b11718
+    image: mmm-decider/qev:d49ba34
+    container_name: mmm-decider
+    command: ["serve", "--llama-url", "http://llama:8080", "--tokenizer", "/tokenizer/OneJev1.5-9B",
+              "--name", "onejev-1.5-9b-q8", "--max-branch-tokens", "16384",
+              "--host", "0.0.0.0", "--port", "8130"]
+    environment:
+      QEV_DEBIAS: "1"
+      HF_HUB_OFFLINE: "1"
+    volumes:
+      - ${DECIDER_DATA:-/data/mmm-decider}/tokenizer:/tokenizer:ro
+    ports:
+      - "${DECIDER_PORT:-8130}:8130"
+    depends_on:
+      llama:
+        condition: service_healthy
+    restart: unless-stopped

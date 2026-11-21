@@ -849,7 +849,8 @@ def test_accepting_the_main_feature_turns_the_sibling_into_a_version(tmp_path, m
     other = _add_reviewed(service, tmp_path, 'Rip B', 'copy-two.mkv', 6_900_000)
 
     asyncio.run(service.refresh_proposals())
-    assert other.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+    # A near-identical runtime on the same disc is already a second cut before anything is accepted.
+    assert other.proposed_path.endswith('Some Movie (2010)/Some Movie (2010) - Version 2.mkv')
 
     persisted = []
 
@@ -870,7 +871,8 @@ def test_accepting_the_main_feature_turns_the_sibling_into_a_version(tmp_path, m
     assert other.is_alternate_version is True
     assert other.version_number == 2
     assert other.special_feature_number is None
-    assert (other.id, other.proposed_path) in persisted
+    # Its proposal was already Version 2 before the accept, so there was nothing new to store for it.
+    assert other.id not in {item_id for item_id, _ in persisted}
 
 
 def test_accept_resolves_the_role_again_within_its_group(tmp_path, monkeypatch):
@@ -1330,3 +1332,20 @@ def test_persist_adopts_the_row_that_already_tracks_the_file(tmp_path):
     assert service.path_to_item_id[item.file_path] == 'tracked-row'
     assert tracked_row.status == QUEUE_NEEDS_REVIEW, 'the adopted row takes the live state'
     assert service.persisted_paths[item.file_path] == ('tracked-row', QUEUE_NEEDS_REVIEW)
+
+
+def test_a_second_full_length_cut_on_a_fresh_disc_is_a_version_not_a_special(tmp_path, monkeypatch):
+    """Theatrical + extended on one disc, with no copy in the library yet: the shorter cut is within
+    85% of the longest, so it is a version; the 20-minute featurette stays a special feature."""
+    _use_library(tmp_path, monkeypatch)
+    monkeypatch.setattr('services.ingress_queue_service._get_file_duration', lambda path: None)
+    service = IngressQueueService()
+    extended = _add_reviewed(service, tmp_path, 'Disc', 'title_t00.mkv', 154 * 60_000)
+    theatrical = _add_reviewed(service, tmp_path, 'Disc', 'title_t01.mkv', 137 * 60_000)
+    featurette = _add_reviewed(service, tmp_path, 'Disc', 'title_t02.mkv', 20 * 60_000)
+
+    asyncio.run(service.refresh_proposals())
+
+    assert extended.proposed_path.endswith('Some Movie (2010)/Some Movie (2010).mkv')
+    assert theatrical.proposed_path.endswith('Some Movie (2010)/Some Movie (2010) - Version 2.mkv')
+    assert featurette.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')

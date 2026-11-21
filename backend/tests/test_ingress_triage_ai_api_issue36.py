@@ -165,3 +165,50 @@ class TestAIClassifyRoute:
 
         assert resp.status_code == 404
         assert resp.json()["detail"]["code"] == "QUEUE_ITEM_NOT_FOUND"
+
+
+class TestAIClassifyRouteHydration:
+    """The queue starts empty after a restart: the route loads the row before judging it."""
+
+    @pytest.mark.asyncio
+    async def test_loads_an_item_the_queue_has_not_seen_since_restart(self, app):
+        asked = []
+
+        async def _hydrate(item_id):
+            return {"id": item_id, "best_match": {"title": "Blade Runner", "media_type": "movie"}}
+
+        async def _refresh(item_id):
+            asked.append(item_id)
+            return [{"label": "main_feature", "confidence": 0.9}]
+
+        _wire(app, queue_service=SimpleNamespace(
+            items_by_id={}, ai_classifier=SimpleNamespace(mode="off"), hydrate_item=_hydrate,
+            ai_classifies=lambda bm: True, refresh_ai_classification=_refresh,
+        ))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await _post(ac, "/api/ingress/queue/ai-classify", {"itemId": "old-item"})
+
+        assert resp.status_code == 200
+        assert asked == ["old-item"]
+
+    @pytest.mark.asyncio
+    async def test_says_a_series_folder_is_not_for_the_classifier(self, app):
+        async def _hydrate(item_id):
+            return {"id": item_id, "best_match": {"title": "Archer", "media_type": "episode"}}
+
+        async def _refresh(item_id):
+            raise AssertionError("a series folder must not reach the decision model")
+
+        from services.ingress_queue_service import IngressQueueService
+
+        _wire(app, queue_service=SimpleNamespace(
+            items_by_id={}, ai_classifier=SimpleNamespace(mode="shadow"), hydrate_item=_hydrate,
+            ai_classifies=IngressQueueService.ai_classifies, refresh_ai_classification=_refresh,
+        ))
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await _post(ac, "/api/ingress/queue/ai-classify", {"itemId": "archer-s01e01"})
+
+        assert resp.status_code == 422
+        assert resp.json()["detail"]["code"] == "INGEST_AI_NOT_APPLICABLE"

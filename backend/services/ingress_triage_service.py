@@ -161,14 +161,14 @@ def source_folder_for(ingress_path: Any, file_path: Any) -> str:
 def ai_settings() -> Dict[str, Any]:
     """Classifier mode + confidence floor, as triage needs to label an answer and gate a bulk accept.
 
-    The settings fields belong to the classifier, so they are read through getattr and the environment
-    while that branch is unmerged; MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE stays a hard lower bound on
-    any threshold a client asks for.
+    The environment variable wins when it is set (it is what the classifier was configured from, and
+    tests change it at runtime), then the settings field; MEDIA_LIBRARY_INGEST_AI_MIN_CONFIDENCE stays a
+    hard lower bound on any threshold a client asks for.
     """
-    mode = str(getattr(settings, "ingest_ai_mode", None) or os.getenv(INGEST_AI_MODE_ENV, "")).strip().lower()
-    raw = getattr(settings, "ingest_ai_min_confidence", None)
-    if raw is None:
-        raw = os.getenv(INGEST_AI_MIN_CONFIDENCE_ENV, "")
+    mode = str(os.getenv(INGEST_AI_MODE_ENV) or getattr(settings, "ingest_ai_mode", None) or "").strip().lower()
+    raw: Any = os.getenv(INGEST_AI_MIN_CONFIDENCE_ENV)
+    if raw in (None, ""):
+        raw = getattr(settings, "ingest_ai_min_confidence", None)
     try:
         floor = float(raw)
     except (TypeError, ValueError):

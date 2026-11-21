@@ -280,7 +280,7 @@ describe('triage re-classifies a folder with Jev on demand (#36)', () => {
     fireEvent.click(within(groupRows()[0]).getByRole('button', { name: 'Re-classify Dune (2021) with Jev' }));
 
     await waitFor(() => expect(
-      screen.getByText('No Jev classifier on this backend — set MEDIA_LIBRARY_INGEST_AI_MODE to shadow or assist to get answers')
+      screen.getByText('No Jev classifier on this backend — set MEDIA_LIBRARY_INGEST_AI_BASE_URL (local decider) or an API key to get answers')
     ).toBeInTheDocument());
     expect(screen.getByText(/Jev did not re-classify Dune \(2021\)/)).toBeInTheDocument();
     // The rows are left alone: no answer arrived, so nothing may be accepted on one.

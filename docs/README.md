@@ -22,6 +22,7 @@ Folder layout: `architecture/` — current-state technical references;
 - **[Homelab Deployment Notes](./homelab-deploy.md)** — The maintainer's multi-host setup (placeholders only), deploy steps, and a runbook for moving the stack between hosts
 - **[Poster Cache](./guides/POSTER_CACHE.md)** — How poster images are downloaded, cached, and served
 - **[Ingress Assignment Reference](./guides/INGRESS_ASSIGNMENT_REFERENCE.md)** — Auto-matching and confidence scoring
+- **[Local Ingest Decider](./guides/LOCAL_DECIDER.md)** — Self-hosted Jev (OneJev 9B) for main / version / special labels, and its benchmark
 - **[Grafana Dashboard](./grafana/README.md)** — Importing the media-manager metrics dashboard, plus the proposed Home Dashboard tile
 - **[Collection Cataloguing Workflow](./guides/COLLECTION_CATALOGUING_WORKFLOW.md)** — User-facing walkthrough: catalogue from the mobile app, rip here, check what's unripped, find a disc physically — spans this repo, media-manager-mobile, and disc-ripper-service
 
