@@ -52,6 +52,11 @@ _NXNN_RE = re.compile(r"(?:^|[^a-z0-9])(\d{1,2})x(\d{2,3})(?![0-9])", re.IGNOREC
 _ABSOLUTE_RE = re.compile(r"(?:^|[\s._-])e(\d{1,4})(?:e(\d{1,4}))?(?=$|[\s._-])", re.IGNORECASE)
 _VERSION_RE = re.compile(r"\s-\s*version\s*(\d+)\s*$", re.IGNORECASE)
 _SPECIAL_FEATURE_RE = re.compile(r"^special\s+feature(?:\s+(\d+))?$", re.IGNORECASE)
+# A disc of a multi-disc rip at the end of a name: "Top Gun D2 (1986)",
+# "Joker (D2) (2019)", "... Disc 1".
+_DISC_RIP_RE = re.compile(
+    r"(?:^|[\s(._-])\(?d(?:is[ck])?[\s._-]*\d{1,2}\)?(?:\s*\(\d{4}\))?\s*$", re.IGNORECASE
+)
 
 
 def _category_types() -> Dict[str, str]:
@@ -94,6 +99,12 @@ def year_from_name(name: Any) -> Optional[int]:
 def strip_tags(name: Any) -> str:
     """Folder or file stem without ``[...]`` / ``{...}`` tags, spaces collapsed."""
     return re.sub(r"\s{2,}", " ", _ANY_TAG_RE.sub(" ", str(name or ""))).strip()
+
+
+def is_disc_rip(name: Any) -> bool:
+    """True for a file name / stem that ends with a disc number (``D2``, ``(D1)``, ``Disc 2``)."""
+    stem = posixpath.splitext(str(name or "").replace("\\", "/").rsplit("/", 1)[-1])[0]
+    return bool(_DISC_RIP_RE.search(strip_tags(stem)))
 
 
 def season_from_folder(name: Any) -> Optional[int]:

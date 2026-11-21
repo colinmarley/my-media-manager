@@ -44,6 +44,7 @@ from services.library_path_parser import (
     ROLE_MAIN,
     ROLE_OTHER,
     ROLE_VERSION,
+    is_disc_rip,
     parse_library_relative,
     title_key,
 )
@@ -296,7 +297,8 @@ def demote_short_versions(
     at least ``threshold`` (``movie_version_duration_threshold``) of the
     longest main in its title folder; anything shorter becomes an ``extra``.
     Files without a known duration (or folders without a probed main) keep
-    their path role. ``durations`` maps the same relative paths to
+    their path role, and so do disc rips (``Title D2 (1986)``): one disc of a
+    multi-disc movie is shorter than the whole but is not a bonus clip. ``durations`` maps the same relative paths to
     ``duration_ms``. Returns how many were demoted.
     """
     ratio = settings.movie_version_duration_threshold if threshold is None else threshold
@@ -316,7 +318,12 @@ def demote_short_versions(
             continue
         for rel in rels:
             duration = durations.get(rel)
-            if placements[rel]["role"] == ROLE_VERSION and duration and int(duration) < main_ms * ratio:
+            if (
+                placements[rel]["role"] == ROLE_VERSION
+                and duration
+                and int(duration) < main_ms * ratio
+                and not is_disc_rip(rel)
+            ):
                 placements[rel]["role"] = ROLE_EXTRA
                 demoted += 1
     return demoted
