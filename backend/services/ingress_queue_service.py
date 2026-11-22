@@ -2676,6 +2676,147 @@ class IngressQueueService:
                 restored += 1
         return restored
 
+    # Statuses a row can be closed from once its file turns out to be in the library already.
+    # `failed` is left alone: it records a reviewer's dismissal or an error worth keeping.
+    MOVED_CLOSE_STATUSES = (QUEUE_PENDING, QUEUE_NEEDS_REVIEW, QUEUE_AUTO_ASSIGNED)
+    # Below this a size match says little; such files are left for a person.
+    MOVED_MIN_SIZE_BYTES = 1024 * 1024
+
+    @staticmethod
+    def _library_files_by_size(library_root: str, wanted_sizes: Set[int]) -> Dict[int, List[str]]:
+        """Walk the library once and return size -> paths for the wanted sizes only."""
+        found: Dict[int, List[str]] = {}
+        for root, _dirs, files in os.walk(library_root):
+            for name in files:
+                full_path = os.path.join(root, name)
+                try:
+                    size = os.path.getsize(full_path)
+                except OSError:
+                    continue
+                if size in wanted_sizes:
+                    found.setdefault(size, []).append(full_path)
+        return found
+
+    async def close_moved_items(self, dry_run: bool = False) -> Dict[str, Any]:
+        """Close open rows whose file left the ingest folder and is already in the library.
+
+        A file moved into the library outside the queue (by hand, by another tool, by an
+        older version) leaves its row open forever: startup skips it because the file is
+        gone, but the review listing reads the table and keeps showing it. A row is closed
+        (status ``ignored``, with the library path recorded) only when all of these hold:
+
+        - its file is missing while its ingest root is present and not empty, so an
+          unmounted share closes nothing;
+        - the library holds a file of exactly the same size and extension.
+
+        Rows with no such library file stay open: the file may have been deleted or lost,
+        and that is for a person to decide.
+        """
+        summary: Dict[str, Any] = {
+            "dry_run": dry_run, "checked": 0, "missing": 0, "closed": 0, "unmatched": 0, "items": [],
+        }
+        if self.db_session_factory is None:
+            return summary
+        library_root = storage_paths.library_root()
+        if not library_root or not os.path.isdir(library_root):
+            summary["skipped_reason"] = "library root is not available"
+            return summary
+
+        async with self.db_session_factory() as session:
+            result = await session.execute(
+                select(DBIngressQueueItem).where(DBIngressQueueItem.status.in_(self.MOVED_CLOSE_STATUSES))
+            )
+            rows = list(result.scalars().all())
+        summary["checked"] = len(rows)
+
+        root_ok: Dict[str, bool] = {}
+
+        def _root_available(root: str) -> bool:
+            if root not in root_ok:
+                try:
+                    root_ok[root] = os.path.isdir(root) and bool(os.listdir(root))
+                except OSError:
+                    root_ok[root] = False
+            return root_ok[root]
+
+        with self.lock:
+            busy = {
+                item_id for item_id, item in self.items_by_id.items() if item.status == QUEUE_PROCESSING
+            } | set(self._organizing_ids)
+
+        candidates = []
+        for row in rows:
+            file_path = row.file_path
+            if not file_path or str(row.id) in busy or row.status not in self.MOVED_CLOSE_STATUSES:
+                continue
+            ingress_root = row.ingress_path or self._infer_ingress_root(file_path)
+            if not _root_available(ingress_root) or os.path.exists(file_path):
+                continue
+            candidates.append(row)
+        summary["missing"] = len(candidates)
+        if not candidates:
+            return summary
+
+        wanted = {
+            int(row.file_size) for row in candidates if int(row.file_size or 0) >= self.MOVED_MIN_SIZE_BYTES
+        }
+        by_size = await asyncio.to_thread(self._library_files_by_size, library_root, wanted) if wanted else {}
+
+        for row in candidates:
+            extension = os.path.splitext(file_path := str(row.file_path))[1].lower()
+            library_path = next(
+                (
+                    path for path in by_size.get(int(row.file_size or 0), [])
+                    if os.path.splitext(path)[1].lower() == extension
+                ),
+                None,
+            )
+            if library_path is None:
+                summary["unmatched"] += 1
+                continue
+            summary["closed"] += 1
+            if len(summary["items"]) < 200:
+                summary["items"].append({"id": str(row.id), "file_path": file_path, "library_path": library_path})
+            if not dry_run:
+                await self._close_moved_row(row, library_path)
+
+        logger.info(
+            "Ingress rows for files already in the library closed",
+            dry_run=dry_run,
+            checked=summary["checked"],
+            missing=summary["missing"],
+            closed=summary["closed"],
+            unmatched=summary["unmatched"],
+        )
+        return summary
+
+    async def _close_moved_row(self, row: Any, library_path: str) -> None:
+        history_extra = {"source": "moved_to_library", "library_path": library_path}
+        note = {"closed_reason": "moved_to_library", "library_path": library_path}
+        with self.lock:
+            tracked = self.items_by_id.get(str(row.id))
+            if tracked is not None:
+                tracked.parsed_info = {**(tracked.parsed_info or {}), **note}
+        if tracked is not None:
+            try:
+                await self.mark_ignored(tracked.id, history_extra=history_extra)
+            except QueueItemBusy:
+                pass  # picked up for processing meanwhile; the next run sees it again
+            return
+
+        # Not in memory (startup skipped it): close the row without loading it into the queue,
+        # where an ignored item would hold its source folder in place.
+        payload = queue_item_from_row(row)
+        if payload is None:
+            return
+        item = IngressQueueItem(**{key: value for key, value in payload.items() if key in QUEUE_ITEM_FIELDS})
+        item.parsed_info = {**(item.parsed_info or {}), **note}
+        item.status = QUEUE_IGNORED
+        item.processed_at = time.time()
+        item.proposed_path = None
+        await self._persist_queue_item(item)
+        await self._record_history_event(item, "item_ignored", history_extra)
+
     def _queue_row_payload(self, item: IngressQueueItem) -> Dict[str, Any]:
         parsed_info = dict(item.parsed_info or {})
         if item.classification_override:

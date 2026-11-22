@@ -290,6 +290,20 @@ async def lifespan(app: FastAPI):
     )
     app.state.ingress_proposal_refresh_task = ingress_proposal_refresh_task
 
+    # Rows whose file was moved into the library outside the queue would stay in review
+    # forever (the restore above skips them, the review listing does not). Close them once
+    # at startup; this walks the library, so it runs in the background too.
+    async def _close_moved_ingress_rows() -> None:
+        try:
+            await ingress_queue_service.close_moved_items()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Closing ingress rows for moved files failed", error=str(exc))
+
+    ingress_close_moved_task = asyncio.create_task(_close_moved_ingress_rows())
+    app.state.ingress_close_moved_task = ingress_close_moved_task
+
     ingress_runtime_config: dict = {
         "defaultIngressPaths": storage_paths.ingest_roots(),
         "autoProcessEnabled": settings.ingress_auto_process_enabled,
@@ -421,6 +435,13 @@ async def lifespan(app: FastAPI):
         ingress_proposal_refresh_task.cancel()
         try:
             await ingress_proposal_refresh_task
+        except asyncio.CancelledError:
+            pass
+
+    if not ingress_close_moved_task.done():
+        ingress_close_moved_task.cancel()
+        try:
+            await ingress_close_moved_task
         except asyncio.CancelledError:
             pass
 
