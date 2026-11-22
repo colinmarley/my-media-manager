@@ -1390,3 +1390,115 @@ def test_a_second_full_length_cut_on_a_fresh_disc_is_a_version_not_a_special(tmp
     assert extended.proposed_path.endswith('Some Movie (2010)/Some Movie (2010).mkv')
     assert theatrical.proposed_path.endswith('Some Movie (2010)/Some Movie (2010) - Version 2.mkv')
     assert featurette.proposed_path.endswith('Some Movie (2010)/Special Feature 1.mkv')
+
+
+# ---------------------------------------------------------------------------
+# Rows whose file was moved into the library outside the queue (2026-11)
+# ---------------------------------------------------------------------------
+
+
+class _StoreSession(_FakeSession):
+    """A session that also answers get/add/commit, so closing a row can be observed."""
+
+    added = []
+
+    async def get(self, _model, row_id):
+        return next((row for row in self.rows if row.id == row_id), None)
+
+    def add(self, obj):
+        type(self).added.append(obj)
+
+    async def commit(self):
+        return None
+
+    async def rollback(self):
+        return None
+
+
+def _sized_file(path, size):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'wb') as handle:
+        handle.truncate(size)
+    return path
+
+
+def _moved_setup(tmp_path, monkeypatch):
+    from services import storage_paths
+
+    ingest = tmp_path / 'ingest'
+    library = tmp_path / 'jellyfin'
+    monkeypatch.setattr(storage_paths, 'library_root', lambda: os.fspath(library))
+    mb = 1024 * 1024
+    # still waiting in ingest; also keeps the ingest root non-empty
+    waiting = _sized_file(ingest / 'Waiting (2001)' / 'Waiting (2001).mkv', 2 * mb)
+    _sized_file(library / 'Movies' / 'Moved (2002)' / 'Moved (2002) - Moved D1 (2002).mkv', 3 * mb)
+    _sized_file(library / 'Movies' / 'Other (2003)' / 'Other (2003).mp4', 5 * mb)
+    rows = [
+        _Row(id='waiting', file_path=os.fspath(waiting), ingress_path=os.fspath(ingest), file_size=2 * mb),
+        _Row(id='moved', file_path=os.fspath(ingest / 'Moved D1 (2002)' / 'Moved D1 (2002).mkv'),
+             ingress_path=os.fspath(ingest), file_size=3 * mb, proposed_path='Movies/Moved (2002)/x.mkv'),
+        _Row(id='lost', file_path=os.fspath(ingest / 'Lost (2004)' / 'Lost (2004).mkv'),
+             ingress_path=os.fspath(ingest), file_size=4 * mb),
+        _Row(id='other-ext', file_path=os.fspath(ingest / 'Other (2003)' / 'Other (2003).mkv'),
+             ingress_path=os.fspath(ingest), file_size=5 * mb),
+        _Row(id='dismissed', file_path=os.fspath(ingest / 'Moved D1 (2002)' / 'copy.mkv'),
+             ingress_path=os.fspath(ingest), file_size=3 * mb, status='failed'),
+    ]
+    _StoreSession.added = []
+    service = IngressQueueService(db_session_factory=lambda: _StoreSession(rows))
+    return service, {row.id: row for row in rows}, ingest
+
+
+def test_close_moved_items_closes_only_rows_with_a_library_copy(tmp_path, monkeypatch):
+    service, rows, _ingest = _moved_setup(tmp_path, monkeypatch)
+
+    summary = asyncio.run(service.close_moved_items())
+
+    assert (summary['missing'], summary['closed'], summary['unmatched']) == (3, 1, 2)
+    assert rows['moved'].status == 'ignored'
+    assert rows['moved'].proposed_path is None
+    assert rows['moved'].parsed_info['closed_reason'] == 'moved_to_library'
+    assert rows['moved'].parsed_info['library_path'].endswith('Moved (2002) - Moved D1 (2002).mkv')
+    # gone with no copy, same size but another extension, still waiting, dismissed by a reviewer
+    assert rows['lost'].status == 'needs_review'
+    assert rows['other-ext'].status == 'needs_review'
+    assert rows['waiting'].status == 'needs_review'
+    assert rows['dismissed'].status == 'failed'
+    assert 'moved' not in service.items_by_id, 'a closed row is not loaded into the live queue'
+    assert service.persisted_paths[rows['moved'].file_path] == ('moved', 'ignored')
+    assert [h.snapshot['source'] for h in _StoreSession.added] == ['moved_to_library']
+
+
+def test_close_moved_items_dry_run_changes_nothing(tmp_path, monkeypatch):
+    service, rows, _ingest = _moved_setup(tmp_path, monkeypatch)
+
+    summary = asyncio.run(service.close_moved_items(dry_run=True))
+
+    assert summary['closed'] == 1
+    assert summary['items'][0]['id'] == 'moved'
+    assert rows['moved'].status == 'needs_review'
+    assert _StoreSession.added == []
+
+
+def test_close_moved_items_does_nothing_when_the_ingest_root_is_unavailable(tmp_path, monkeypatch):
+    service, rows, ingest = _moved_setup(tmp_path, monkeypatch)
+    shutil.rmtree(ingest)  # an unmounted share: every file looks missing
+
+    summary = asyncio.run(service.close_moved_items())
+
+    assert (summary['missing'], summary['closed']) == (0, 0)
+    assert rows['moved'].status == 'needs_review'
+
+    ingest.mkdir()  # mounted but empty is treated the same way
+    assert asyncio.run(service.close_moved_items())['missing'] == 0
+
+
+def test_close_moved_items_closes_a_tracked_item_through_the_queue(tmp_path, monkeypatch):
+    service, rows, _ingest = _moved_setup(tmp_path, monkeypatch)
+    service.hydrate_items([rows['moved']])  # in the live queue; its file vanished while running
+
+    asyncio.run(service.close_moved_items())
+
+    assert service.items_by_id['moved'].status == 'ignored'
+    assert service.items_by_id['moved'].parsed_info['closed_reason'] == 'moved_to_library'
+    assert rows['moved'].status == 'ignored'

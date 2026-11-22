@@ -45,6 +45,10 @@ class QueueRetryRequest(BaseModel):
     itemId: str
 
 
+class QueueCloseMovedRequest(BaseModel):
+    dryRun: bool = Field(default=True, description="report what would be closed without changing anything")
+
+
 class QueueFailRequest(BaseModel):
     itemId: str
     reason: str
@@ -603,6 +607,18 @@ async def retry_ingress_item(payload: QueueRetryRequest, req: Request):
     return {
         "success": True,
         "data": queue_item.to_dict(),
+        "timestamp": str(int(time.time())),
+    }
+
+
+@router.post("/queue/close-moved")
+async def close_moved_ingress_items(payload: QueueCloseMovedRequest, req: Request):
+    """Close open rows whose file is gone from ingest and already in the library (same size and extension)."""
+    queue_service = req.app.state.ingress_queue_service
+    summary = await queue_service.close_moved_items(dry_run=payload.dryRun)
+    return {
+        "success": True,
+        "data": summary,
         "timestamp": str(int(time.time())),
     }
 
