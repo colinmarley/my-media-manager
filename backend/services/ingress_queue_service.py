@@ -33,6 +33,7 @@ from services.disc_track_mapper import (
 )
 from services.filename_parser import FilenameParser
 from services import storage_paths
+from services.content_verifier import ContentVerifier, claim_of, is_current
 from services.ingest_ai_classifier import IngestAIClassifier
 from services.path_builder import ROLE_MAIN, ROLE_SPECIAL, ROLE_VERSION, PathBuilder
 from utils.logging import logger
@@ -189,6 +190,7 @@ class IngressQueueService:
         auto_assign_threshold: int = 80,
         db_session_factory: Optional[Any] = None,
         ai_classifier: Optional[IngestAIClassifier] = None,
+        content_verifier: Optional[ContentVerifier] = None,
     ):
         self.parser = parser or FilenameParser()
         self.auto_matcher_service = auto_matcher_service
@@ -196,6 +198,7 @@ class IngressQueueService:
         self.auto_assign_threshold = max(0, min(auto_assign_threshold, 100))
         self.db_session_factory = db_session_factory
         self.ai_classifier = ai_classifier
+        self.content_verifier = content_verifier
         self.lock = threading.RLock()
 
         self.items_by_id: Dict[str, IngressQueueItem] = {}
@@ -1064,6 +1067,142 @@ class IngressQueueService:
             "min_confidence": min_confidence,
             "cases": cases,
         }
+
+    # ------------------------------------------------------------------
+    # Content verification (services/content_verifier.py): advisory only
+    # ------------------------------------------------------------------
+
+    async def refresh_content_verification(self, item_id: str, force: bool = True) -> Optional[Dict[str, Any]]:
+        """Check the item's proposed match against the file itself and store the result.
+
+        The result goes to parsed_info["content_verification"]; status, match and path are never
+        touched. Returns the result, or None when the file cannot be checked (gone, not a video,
+        unreadable, model down). With ``force=False`` a result computed for the current match is reused.
+        """
+        if self.content_verifier is None:
+            return None
+        await self.hydrate_item(item_id)
+        with self.lock:
+            item = self.items_by_id.get(item_id)
+            if item is None:
+                return None
+            snapshot = item.to_dict()
+        stored = (snapshot.get("parsed_info") or {}).get("content_verification")
+        if not force and is_current(stored, snapshot):
+            return stored
+        if not self._is_video_file_path(item.file_path) or not os.path.exists(item.file_path):
+            return None
+        if not snapshot.get("media_duration_ms"):
+            item.media_duration_ms = await asyncio.to_thread(_get_file_duration, item.file_path)
+            snapshot["media_duration_ms"] = item.media_duration_ms
+
+        try:
+            result = await self.content_verifier.verify(snapshot)
+        except Exception as exc:  # advisory: a failed check must never disturb the queue
+            logger.warning("Content verification failed", item_id=item_id, error=str(exc))
+            await self._record_history_event(item, "content_verification_failed", {"error": str(exc)})
+            return None
+
+        with self.lock:
+            # The match may have changed while the file was being read; the result records the one it judged.
+            parsed_info = dict(item.parsed_info or {})
+            parsed_info["content_verification"] = result
+            item.parsed_info = parsed_info
+        await self._persist_queue_item(item)
+        await self._record_history_event(
+            item,
+            "content_verified",
+            {"content_verdict": result["verdict"], "content_suggested": result.get("suggested")},
+        )
+        return result
+
+    async def _queue_rows(self, columns: Tuple[Any, ...], where: Any, limit: int) -> List[Any]:
+        if self.db_session_factory is None:
+            return []
+        async with self.db_session_factory() as session:
+            return list((await session.execute(select(*columns).where(where).limit(limit))).all())
+
+    async def content_verify_candidates(self, limit: int, exclude: Optional[Set[str]] = None) -> List[str]:
+        """Review items to check next: no current result, and the file still exists.
+
+        Films and unknowns with a match first, then those without, then episodes. Queue rows
+        outlive files that were moved by hand, so every path is tested on disk.
+        """
+        exclude = exclude or set()
+        rows: List[Dict[str, Any]] = []
+        try:
+            for row_id, path, parsed_info, best_match in await self._queue_rows(
+                (DBIngressQueueItem.id, DBIngressQueueItem.file_path, DBIngressQueueItem.parsed_info,
+                 DBIngressQueueItem.best_match),
+                DBIngressQueueItem.status == QUEUE_NEEDS_REVIEW,
+                5000,
+            ):
+                rows.append({"id": str(row_id), "file_path": str(path), "parsed_info": parsed_info or {},
+                             "best_match": best_match or {}})
+        except Exception as exc:
+            logger.warning("Could not list content verification candidates", error=str(exc))
+        with self.lock:
+            # The live item wins: it may hold a result or a match the row does not have yet.
+            live = {item.id: item.to_dict() for item in self.items_by_id.values()}
+        rows = [live.pop(row["id"], row) for row in rows]
+        rows.extend(item for item in live.values() if item["status"] == QUEUE_NEEDS_REVIEW)
+        rows = [row for row in rows if row.get("status", QUEUE_NEEDS_REVIEW) == QUEUE_NEEDS_REVIEW]
+
+        def order(row: Dict[str, Any]) -> int:
+            match = row.get("best_match") or {}
+            media_type = str(match.get("media_type") or (row.get("parsed_info") or {}).get("media_type") or "")
+            series = media_type.lower() in ("episode", "series", "tv")
+            return (2 if series else 0) + (0 if match.get("title") else 1)
+
+        picked: List[str] = []
+        for row in sorted(rows, key=order):
+            if len(picked) >= limit:
+                break
+            if row["id"] in exclude or is_current((row.get("parsed_info") or {}).get("content_verification"), row):
+                continue
+            if not self._is_video_file_path(row["file_path"]):
+                continue
+            if await asyncio.to_thread(os.path.exists, row["file_path"]):
+                picked.append(row["id"])
+        return picked
+
+    async def get_content_verify_report(self) -> Dict[str, Any]:
+        """Verdicts so far, and how each compares with what a reviewer later did.
+
+        "kept" means the item was completed with the match that was judged; "changed" means the
+        match is different now. A veto on a kept match is a false alarm; a confirm on a changed
+        one is a miss.
+        """
+        rows = await self._queue_rows(
+            (DBIngressQueueItem.id, DBIngressQueueItem.file_name, DBIngressQueueItem.status,
+             DBIngressQueueItem.parsed_info, DBIngressQueueItem.best_match),
+            DBIngressQueueItem.parsed_info.has_key("content_verification"),  # noqa: W601 (JSONB operator)
+            20000,
+        )
+        verdicts: Dict[str, Dict[str, int]] = {}
+        cases: List[Dict[str, Any]] = []
+        for row_id, file_name, status, parsed_info, best_match in rows:
+            result = (parsed_info or {}).get("content_verification") or {}
+            verdict = result.get("verdict")
+            if not verdict:
+                continue
+            current = claim_of({"best_match": best_match or {}, "parsed_info": parsed_info or {}})
+            if current != result.get("claim"):
+                outcome = "changed"
+            elif status == QUEUE_COMPLETED:
+                outcome = "kept"
+            else:
+                outcome = "open"
+            bucket = verdicts.setdefault(verdict, {"total": 0, "kept": 0, "changed": 0, "open": 0})
+            bucket["total"] += 1
+            bucket[outcome] += 1
+            if outcome != "open" or verdict in ("veto", "suggest"):
+                cases.append({
+                    "item_id": str(row_id), "file_name": file_name, "status": status, "verdict": verdict,
+                    "outcome": outcome, "claim": result.get("claim"), "current": current,
+                    "suggested": result.get("suggested"), "evidence": result.get("evidence"),
+                })
+        return {"verified": sum(b["total"] for b in verdicts.values()), "verdicts": verdicts, "cases": cases[:500]}
 
     async def mark_complete(
         self,

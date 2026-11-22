@@ -63,6 +63,7 @@ from services.metrics import DomainMetricsCollector
 from services.filesystem_manager import FileSystemManager
 from services.file_watcher_service import FileWatcherService
 from services.ingress_queue_service import IngressQueueService
+from services.content_verifier import ContentVerifier, run_content_verify_loop
 from services.ingest_ai_classifier import IngestAIClassifier
 from services.auto_matcher_service import AutoMatcherService
 from services.assignment_orchestrator import AssignmentOrchestrator
@@ -265,6 +266,7 @@ async def lifespan(app: FastAPI):
         auto_assign_threshold=settings.ingress_auto_assign_threshold,
         db_session_factory=AsyncSessionLocal,
         ai_classifier=IngestAIClassifier.from_settings(),
+        content_verifier=ContentVerifier.from_settings(),
     )
     # The database is the source of truth for the queue; reload unfinished items so a
     # restart neither empties the review queue nor re-creates rows on the next scan.
@@ -406,6 +408,13 @@ async def lifespan(app: FastAPI):
     if settings.inventory_enabled:
         inventory_task = asyncio.create_task(run_inventory_loop(library_inventory_service))
 
+    # Content verification: on demand in any mode; works through the review queue in shadow mode.
+    content_verify_task = None
+    if ingress_queue_service.content_verifier.runs_automatically:
+        content_verify_task = asyncio.create_task(
+            run_content_verify_loop(ingress_queue_service, _ingest_queue_busy)
+        )
+
     logger.info("Services initialized successfully")
     
     yield
@@ -449,6 +458,13 @@ async def lifespan(app: FastAPI):
         retention_task.cancel()
         try:
             await retention_task
+        except asyncio.CancelledError:
+            pass
+
+    if content_verify_task:
+        content_verify_task.cancel()
+        try:
+            await content_verify_task
         except asyncio.CancelledError:
             pass
 

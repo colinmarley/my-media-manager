@@ -708,6 +708,57 @@ async def get_ingress_ai_report(req: Request):
     }
 
 
+@router.post("/queue/content-verify")
+async def content_verify_ingress_item(payload: QueueAIClassifyRequest, req: Request):
+    """Check this item's proposed match against the file itself now, whatever the configured mode.
+
+    Reads frames and, for episodes, dialogue; takes one to three minutes. The result is stored at
+    parsed_info["content_verification"] and returned. Nothing else about the item changes.
+    """
+    queue_service = req.app.state.ingress_queue_service
+    refresh = getattr(queue_service, "refresh_content_verification", None)
+    if getattr(queue_service, "content_verifier", None) is None or refresh is None:
+        raise HTTPException(status_code=503, detail={
+            "type": "ServiceUnavailable",
+            "message": "Content verification is not available on this backend",
+            "code": "CONTENT_VERIFY_NOT_CONFIGURED",
+        })
+    item = await queue_service.hydrate_item(payload.itemId)
+    if item is None:
+        raise HTTPException(status_code=404, detail={
+            "type": "NotFoundError",
+            "message": f"Queue item {payload.itemId} not found",
+            "code": "QUEUE_ITEM_NOT_FOUND",
+        })
+    result = await refresh(payload.itemId)
+    if result is None:
+        raise HTTPException(status_code=422, detail={
+            "type": "ValidationError",
+            "message": "The file could not be checked: it is missing, not a video, or the vision model "
+                       "did not answer. The item's history has the reason.",
+            "code": "CONTENT_VERIFY_FAILED",
+        })
+    return {
+        "success": True,
+        "data": {"mode": queue_service.content_verifier.mode, "verification": result},
+        "timestamp": str(int(time.time())),
+    }
+
+
+@router.get("/queue/content-verify-report")
+async def get_content_verify_report(req: Request):
+    """Content verification verdicts so far, against what reviewers later decided."""
+    queue_service = req.app.state.ingress_queue_service
+    report = await queue_service.get_content_verify_report()
+    verifier = getattr(queue_service, "content_verifier", None)
+    report["mode"] = verifier.mode if verifier else "off"
+    return {
+        "success": True,
+        "data": report,
+        "timestamp": str(int(time.time())),
+    }
+
+
 @router.post("/queue/manual-assign")
 async def manual_assign_ingress_item(
     payload: QueueManualAssignRequest,

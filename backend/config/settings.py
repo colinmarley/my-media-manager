@@ -83,6 +83,28 @@ class LibrarySettings(BaseSettings):
     # 40-file box set; hosted Jev in well under a second. Kept under the UI's 180 s re-classify wait.
     ingest_ai_timeout_seconds: float = 150.0  # MEDIA_LIBRARY_INGEST_AI_TIMEOUT_SECONDS
 
+    # Content verification (services/content_verifier.py): checks the proposed match of
+    # needs_review items against the file itself: on-screen title and credits read by the
+    # LocalAI vision model above, and for episodes the dialogue matched against TMDB synopses
+    # by the decision model (MEDIA_LIBRARY_INGEST_AI_BASE_URL). Advisory only.
+    #   off    - only when asked from the review page
+    #   shadow - also works through the review queue in the background
+    content_verify_mode: str = "off"  # MEDIA_LIBRARY_CONTENT_VERIFY_MODE
+    # Files per tick, and seconds between ticks. A file takes one to three minutes.
+    content_verify_batch_size: int = 5  # MEDIA_LIBRARY_CONTENT_VERIFY_BATCH_SIZE
+    content_verify_interval_seconds: int = 300  # MEDIA_LIBRARY_CONTENT_VERIFY_INTERVAL_SECONDS
+    # Window in which the loop stays idle (the GPU host's night shift), read in the timezone
+    # below because the container clock is UTC. Empty = never idle.
+    content_verify_quiet_hours: str = "01:55-06:45"  # MEDIA_LIBRARY_CONTENT_VERIFY_QUIET_HOURS
+    content_verify_timezone: str = "America/Los_Angeles"  # MEDIA_LIBRARY_CONTENT_VERIFY_TIMEZONE
+    # Minimum probability (0-1) for a dialogue-based episode pick to count.
+    content_verify_min_confidence: float = 0.7  # MEDIA_LIBRARY_CONTENT_VERIFY_MIN_CONFIDENCE
+    content_verify_decider_timeout_seconds: float = 600.0  # MEDIA_LIBRARY_CONTENT_VERIFY_DECIDER_TIMEOUT_SECONDS
+    # OpenAI-compatible speech-to-text server for episodes without a text subtitle track
+    # (POST {url}/v1/audio/transcriptions). Empty: those episodes are checked without dialogue.
+    content_verify_whisper_url: str = ""  # MEDIA_LIBRARY_CONTENT_VERIFY_WHISPER_URL
+    content_verify_whisper_model: str = "whisper-1"  # MEDIA_LIBRARY_CONTENT_VERIFY_WHISPER_MODEL
+
     # Security settings
     enable_file_integrity_checks: bool = False  # Disabled for performance during scanning
     use_trash_for_deletes: bool = True

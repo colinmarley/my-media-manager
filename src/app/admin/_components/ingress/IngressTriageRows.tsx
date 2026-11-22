@@ -24,6 +24,7 @@ import type {
   QueueGroupBy,
 } from '@/service/ingress/IngressAutomationService';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import FactCheckOutlinedIcon from '@mui/icons-material/FactCheckOutlined';
 import { IngressConfidenceWithExplanation } from './IngressMatchExplanation';
 import { CLASSIFICATION_OPTIONS, STATUS_COLORS, isClassificationEditable, isQueueItemAssignable } from '@/service/ingress/ingressQueueModel';
 import {
@@ -40,6 +41,7 @@ import {
   getGroupStatusChips,
   getGroupSubLabel,
   getItemAiLabel,
+  getItemContentCheck,
   getAiSettings,
   getOldestAgeLabel,
   getQueueStatusLabel,
@@ -235,6 +237,10 @@ type PreviewRowProps = {
   working: boolean;
   /** Absent from a backend predating issue #36, which the UI reads as mode "off" with no answers. */
   ai?: IngressAiSettings;
+  /** A content check of this file is running (minutes); only its own control waits. */
+  verifying?: boolean;
+  /** Check the proposed match against the file itself. Absent: the control is not offered. */
+  onVerifyContent?: (item: IngressQueueItem) => void;
   onToggleExcluded: (item: IngressQueueItem, checked: boolean) => void;
   onItemAction: (action: 'accept' | 'ignore' | 'retry', item: IngressQueueItem) => void;
   /** The flat queue table's own per-item affordances, reused here rather than re-invented (#35 review). */
@@ -248,12 +254,15 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
   excluded,
   working,
   ai,
+  verifying = false,
+  onVerifyContent,
   onToggleExcluded,
   onItemAction,
   onReclassify,
   onAssign,
 }) => {
   const aiLabel = getItemAiLabel(item, getAiSettings(ai));
+  const contentCheck = getItemContentCheck(item);
   return (
     <Box
       data-testid={`triage-item-${item.id}`}
@@ -296,6 +305,31 @@ export const IngressTriagePreviewRow: React.FC<PreviewRowProps> = ({
           color={getChipColor(item.status)}
           label={getQueueStatusLabel(item.status)}
         />
+        {/* What reading the file itself said about this match. Advisory; a click runs the check (again). */}
+        {verifying ? (
+          <CircularProgress size={16} aria-label={`Checking the content of ${item.file_name}`} sx={{ flexShrink: 0 }} />
+        ) : contentCheck ? (
+          <Chip
+            data-testid={`triage-content-${item.id}`}
+            size="small"
+            variant={contentCheck.color === 'default' ? 'outlined' : 'filled'}
+            color={contentCheck.color}
+            label={contentCheck.text}
+            title={contentCheck.detail}
+            onClick={onVerifyContent ? () => onVerifyContent(item) : undefined}
+            sx={{ flexShrink: 0 }}
+          />
+        ) : onVerifyContent ? (
+          <IconButton
+            size="small"
+            onClick={() => onVerifyContent(item)}
+            aria-label={`Check the content of ${item.file_name} against its match`}
+            title="Read the file itself (title card, credits, dialogue) and compare it with this match. Takes a few minutes; changes nothing."
+            sx={{ flexShrink: 0, p: 0.25 }}
+          >
+            <FactCheckOutlinedIcon fontSize="small" />
+          </IconButton>
+        ) : null}
         {/* Same classification override the flat queue table row exposes: triage from the folder view without
             losing the row to a re-scan, and the parent posts the identical request. */}
         <FormControl size="small" sx={{ flexShrink: 0, width: 104 }}>

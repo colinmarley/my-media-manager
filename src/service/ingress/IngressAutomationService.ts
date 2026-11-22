@@ -82,7 +82,38 @@ export interface IngressQueueItem {
     ai_classification?: IngressAIClassification;
     /** Set when the model ran and failed, so "no answer" can say why. */
     ai_classification_failed?: string;
+    /** What reading the file itself said about the proposed match (services/content_verifier.py). */
+    content_verification?: IngressContentVerification;
   };
+}
+
+/** The match a content check judged, or a correction it proposes. */
+export interface IngressContentClaim {
+  title?: string | null;
+  year?: number | null;
+  media_type?: string | null;
+  season?: number | null;
+  episode?: number | null;
+  episode_title?: string | null;
+}
+
+/**
+ * Result of checking a file's content (on-screen title, credits, dialogue) against its proposed match,
+ * at the shape `parsed_info["content_verification"]` carries. Advisory: it never changes the item.
+ * `partial` = the series is confirmed but the episode could not be checked.
+ */
+export interface IngressContentVerification {
+  verdict: 'confirm' | 'veto' | 'suggest' | 'partial' | 'no_evidence';
+  /** The match that was judged; null when the item had none. A different match now means the result is stale. */
+  claim?: IngressContentClaim | null;
+  suggested?: IngressContentClaim | null;
+  /** One line per thing that was read, in plain words. */
+  evidence?: string[];
+  dialogue_source?: string | null;
+  frames?: number;
+  took_s?: number;
+  /** Epoch seconds. */
+  verified_at?: number;
 }
 
 export interface IngressScoreBreakdownEntry {
@@ -295,6 +326,9 @@ class IngressAutomationService {
   // Longer than the backend's 150 s decider timeout, so a slow CPU decider fails there with a reason.
   private static readonly AI_CLASSIFY_REQUEST_TIMEOUT_MS = 180000;
 
+  /** A content check reads dozens of frames and, for an episode, asks the CPU decider: minutes, not seconds. */
+  private static readonly CONTENT_VERIFY_REQUEST_TIMEOUT_MS = 600000;
+
   private async request(path: string, init?: RequestInit, timeoutMs = IngressAutomationService.REQUEST_TIMEOUT_MS): Promise<any> {
     const controller = new AbortController();
     const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
@@ -414,6 +448,22 @@ class IngressAutomationService {
       IngressAutomationService.AI_CLASSIFY_REQUEST_TIMEOUT_MS
     );
     return result.data;
+  }
+
+  /**
+   * POST /api/ingress/queue/content-verify: check this item's proposed match against the file itself now.
+   * The result is stored at `parsed_info.content_verification`; nothing else about the item changes.
+   */
+  async verifyQueueItemContent(itemId: string): Promise<IngressContentVerification> {
+    const result = await this.request(
+      '/queue/content-verify',
+      {
+        method: 'POST',
+        body: JSON.stringify({ itemId }),
+      },
+      IngressAutomationService.CONTENT_VERIFY_REQUEST_TIMEOUT_MS
+    );
+    return result.data.verification;
   }
 
   async processPending(maxItems: number = 25): Promise<number> {

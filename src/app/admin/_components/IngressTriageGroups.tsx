@@ -47,6 +47,7 @@ import {
   buildRowOffsets,
   buildTriageRows,
   describeAiClassifyError,
+  describeContentVerifyError,
   describeBulkResult,
   formatAiConfidence,
   formatGroupCount,
@@ -101,6 +102,8 @@ export const IngressTriageGroups: React.FC = () => {
   // Which group's folder classification is running. Separate from `working` on purpose: a folder can
   // take a while through the local model, and neither the rows nor the other groups wait on it.
   const [reclassifying, setReclassifying] = useState<string | null>(null);
+  /** Queue item ids whose content check is running; each takes minutes, so several may overlap. */
+  const [verifying, setVerifying] = useState<Set<string>>(new Set());
   const ai = getAiSettings(data?.ai);
   const [reloadToken, setReloadToken] = useState(0);
   // Per-item work started from a preview row (classification override, manual assign) belongs to the
@@ -300,6 +303,34 @@ export const IngressTriageGroups: React.FC = () => {
     },
     [ai.mode, groupBy, reclassifying]
   );
+
+  /**
+   * Check one file's content against its proposed match. Minutes long and advisory, so it stays off the
+   * batch `working` flag; the list is re-read afterwards to show the stored result.
+   */
+  const verifyItemContent = useCallback(async (item: IngressQueueItem) => {
+    setVerifying((prev) => new Set(prev).add(item.id));
+    try {
+      await IngressAutomationService.verifyQueueItemContent(item.id);
+      setReloadToken((token) => token + 1);
+    } catch (err) {
+      if (isIngressTimeoutError(err)) {
+        setReloadToken((token) => token + 1); // the check may still finish; let the server answer
+      } else {
+        setReport({
+          text: `Content check did not finish for ${item.file_name}`,
+          failures: [describeContentVerifyError(err)],
+          severity: 'warning',
+        });
+      }
+    } finally {
+      setVerifying((prev) => {
+        const next = new Set(prev);
+        next.delete(item.id);
+        return next;
+      });
+    }
+  }, []);
 
   // Single rows go through the same bulk endpoint with itemIds, so accept/ignore semantics match the group.
   const runItemAction = useCallback(
@@ -557,6 +588,8 @@ export const IngressTriageGroups: React.FC = () => {
                 excluded={(selection[queueGroupSignature(row.group)] ?? []).includes(row.item.id)}
                 working={working || perItemWorking}
                 ai={ai}
+                verifying={verifying.has(row.item.id)}
+                onVerifyContent={(item) => void verifyItemContent(item)}
                 onToggleExcluded={(item, checked) =>
                   setSelection((prev) => togglePreviewItemSelection(prev, row.group, item.id, checked))
                 }
