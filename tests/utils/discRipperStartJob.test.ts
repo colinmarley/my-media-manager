@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildStartJobRequest, startJobBlocker, type StartJobInput,
 } from '@/app/admin/disc-ripper/_components/discRipperUtils';
-import { newDiscBody } from '@/app/admin/disc-ripper/_components/DiscCatalogLinkPanel';
+import { discSavePlan, nextDiscNumber } from '@/app/admin/disc-ripper/_components/DiscCatalogLinkPanel';
 
 const base: StartJobInput = {
   discType: 'dvd',
@@ -133,19 +133,45 @@ describe('startJobBlocker', () => {
   });
 });
 
-describe('newDiscBody', () => {
-  it('builds a disc record from the create form', () => {
-    expect(newDiscBody({
-      title: ' Firefly Disc 2 ', barcode: ' 024543012345 ', discNumber: '2', edition: ' Complete Series ', format: 'DVD',
-    })).toEqual({
-      title: 'Firefly Disc 2', barcode: '024543012345', discNumber: 2, edition: 'Complete Series', format: 'DVD',
+describe('discSavePlan', () => {
+  const form = {
+    releaseTitle: ' Burn Notice: The Complete First Season ', releaseId: null, discNumber: '1',
+    discCount: '4', edition: '', format: 'DVD' as const, barcode: ' 024543519317 ',
+  };
+
+  it('names a disc of a box after the box and its number', () => {
+    expect(discSavePlan(form)).toEqual({
+      release: {
+        title: 'Burn Notice: The Complete First Season', barcode: '024543519317', edition: undefined,
+        packaging: 'box_set', expectedDiscCount: 4,
+      },
+      disc: {
+        title: 'Burn Notice: The Complete First Season - Disc 1', discNumber: 1, edition: undefined,
+        format: 'DVD', isPartOfSet: true,
+      },
     });
   });
 
-  it('leaves empty fields out', () => {
-    expect(newDiscBody({ title: '', barcode: '', discNumber: '', edition: '', format: 'BLURAY' })).toEqual({
-      title: 'Untitled Disc', barcode: undefined, discNumber: undefined, edition: undefined, format: 'BLURAY',
-    });
-    expect(newDiscBody({ title: 'x', barcode: '', discNumber: '0', edition: '', format: 'DVD' }).discNumber).toBeUndefined();
+  it('treats a disc with no count as the only disc in its case', () => {
+    const plan = discSavePlan({ ...form, releaseTitle: 'Alien (1979)', discNumber: '', discCount: '', edition: " Director's Cut " });
+    expect(plan.release).toMatchObject({ packaging: 'case', expectedDiscCount: 1, edition: "Director's Cut" });
+    expect(plan.disc).toMatchObject({ title: 'Alien (1979)', discNumber: 1, isPartOfSet: false });
+  });
+
+  it('grows the box to hold the disc number typed', () => {
+    const plan = discSavePlan({ ...form, discNumber: '3', discCount: '' });
+    expect(plan.release.expectedDiscCount).toBe(3);
+    expect(plan.disc.title).toBe('Burn Notice: The Complete First Season - Disc 3');
+  });
+
+  it('falls back to a placeholder name', () => {
+    expect(discSavePlan({ ...form, releaseTitle: ' ', discNumber: '0', discCount: '1' }).disc.title).toBe('Untitled Disc');
+  });
+});
+
+describe('nextDiscNumber', () => {
+  it('is the lowest number the box does not have', () => {
+    expect(nextDiscNumber([])).toBe(1);
+    expect(nextDiscNumber([{ discNumber: 1 }, { discNumber: 3 }, { discNumber: null }])).toBe(2);
   });
 });

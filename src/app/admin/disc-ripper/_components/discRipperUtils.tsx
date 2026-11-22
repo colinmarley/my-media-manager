@@ -1,7 +1,7 @@
 import React from 'react';
 import { Chip } from '@mui/material';
 import type {
-  Assignment, DiscStream, ExtrasCategory, RipJob, RipTitleRecord, StartJobRequest,
+  Assignment, DiscStream, DiscTitle, ExtrasCategory, RipJob, RipTitleRecord, StartJobRequest,
   StoredRip, TitleDeclaration, TmdbEpisode,
 } from '@/types/disc-ripper/DiscRipper.type';
 
@@ -224,4 +224,125 @@ export function describeStoredRip(rip: StoredRip): string {
     : '';
   const partial = rip.status === 'partial' ? ' (some titles failed)' : '';
   return `${title}${season}${dated}${partial}`;
+}
+
+// ── Reading a scan ──────────────────────────────────────────────────────────
+
+/** Why a scanned title is probably not something to rip as its own file. */
+export type TitleHint =
+  | { kind: 'duplicate'; of: number }
+  | { kind: 'play_all'; of: number[] }
+  | { kind: 'short' };
+
+/** Shorter than this, a title is a clip: a short extra, an ad or a preview. */
+export const SHORT_CLIP_SECONDS = 300;
+/** Shorter than this, a title on a TV disc is not an episode. */
+export const MIN_EPISODE_SECONDS = 600;
+
+type ScannedTitle = Pick<DiscTitle, 'index' | 'duration_seconds' | 'file_size_bytes'>;
+
+function sameContent(a: ScannedTitle, b: ScannedTitle): boolean {
+  if (Math.abs(a.duration_seconds - b.duration_seconds) > 1) return false;
+  if (!a.file_size_bytes || !b.file_size_bytes) return true;
+  const larger = Math.max(a.file_size_bytes, b.file_size_bytes);
+  return Math.abs(a.file_size_bytes - b.file_size_bytes) / larger < 0.01;
+}
+
+/** The fewest titles (two or more) whose lengths add up to `target`, or null. */
+function partsSummingTo(target: ScannedTitle, parts: ScannedTitle[]): number[] | null {
+  if (parts.length < 2 || parts.length > 16) return null;
+  let best: number[] | null = null;
+  for (let mask = 3; mask < 1 << parts.length; mask++) {
+    const chosen = parts.filter((_, i) => mask & (1 << i));
+    if (chosen.length < 2 || (best && chosen.length >= best.length)) continue;
+    const total = chosen.reduce((sum, t) => sum + t.duration_seconds, 0);
+    if (Math.abs(total - target.duration_seconds) <= chosen.length) best = chosen.map((t) => t.index);
+  }
+  return best;
+}
+
+/**
+ * Hints for a disc's titles, keyed by title index. A DVD lists the same
+ * programme several ways: each episode on its own, the same episode again
+ * from the "play all" menu, and one long title that is all of them joined.
+ * Titles without a hint are the ones worth ripping.
+ */
+export function analyzeTitles(titles: ScannedTitle[]): Record<number, TitleHint> {
+  const hints: Record<number, TitleHint> = {};
+  const sorted = [...titles].sort((a, b) => a.index - b.index);
+
+  const originals: ScannedTitle[] = [];
+  for (const t of sorted) {
+    const twin = originals.find((o) => sameContent(o, t));
+    if (twin) hints[t.index] = { kind: 'duplicate', of: twin.index };
+    else originals.push(t);
+  }
+
+  const long = originals.filter((t) => t.duration_seconds >= MIN_EPISODE_SECONDS);
+  for (const t of long) {
+    const shorter = long.filter((o) => o.index !== t.index && o.duration_seconds < t.duration_seconds);
+    const parts = partsSummingTo(t, shorter);
+    if (parts) hints[t.index] = { kind: 'play_all', of: parts };
+  }
+
+  for (const t of originals) {
+    if (!hints[t.index] && t.duration_seconds < SHORT_CLIP_SECONDS) hints[t.index] = { kind: 'short' };
+  }
+  return hints;
+}
+
+export function titleHintLabel(hint: TitleHint): string {
+  if (hint.kind === 'duplicate') return `Same as title ${hint.of}`;
+  if (hint.kind === 'play_all') return `Play-all of titles ${hint.of.join(' + ')}`;
+  return 'Short clip: an extra, ad or preview';
+}
+
+/** "dvd" or "bluray" from MakeMKV's own name for the disc ("DVD disc"), else null. */
+export function discTypeFromScan(reported: string | null | undefined): 'dvd' | 'bluray' | null {
+  const text = (reported ?? '').toLowerCase();
+  if (text.includes('blu')) return 'bluray';
+  if (text.includes('dvd')) return 'dvd';
+  return null;
+}
+
+// ── Naming a disc record ────────────────────────────────────────────────────
+
+/** A starting name for the box: "Burn Notice: Season 1", "Alien (1979)". */
+export function suggestReleaseTitle(
+  mediaType: 'movie' | 'show', title: string, year: number, season: number,
+): string {
+  const name = title.trim();
+  if (!name) return '';
+  if (mediaType === 'show') return `${name}: Season ${season}`;
+  return year ? `${name} (${year})` : name;
+}
+
+/** The disc record's own title: the box name, plus the disc number in a multi-disc box. */
+export function discRecordTitle(releaseTitle: string, discNumber: number | null, discCount: number | null): string {
+  const name = releaseTitle.trim() || 'Untitled Disc';
+  if (discNumber && (discCount ?? 0) > 1) return `${name} - Disc ${discNumber}`;
+  return name;
+}
+
+/** The disc number a volume label ends with: "BURNNOTICE_S1_D1" → 1. */
+export function discNumberFromLabel(label: string | null | undefined): number | null {
+  const match = /(?:^|[_\s-])D(?:ISC)?[_\s-]?(\d{1,2})$/i.exec((label ?? '').trim());
+  if (!match) return null;
+  const n = parseInt(match[1], 10);
+  return n > 0 ? n : null;
+}
+
+/** One line for a catalogued disc in a pick list. */
+export function describeCatalogDisc(disc: {
+  title: string; discNumber?: number | null; edition?: string | null; format?: string | null;
+}): string {
+  const parts = [disc.title];
+  if (disc.discNumber != null && !new RegExp(`disc\\s*${disc.discNumber}\\b`, 'i').test(disc.title)) {
+    parts.push(`Disc ${disc.discNumber}`);
+  }
+  if (disc.edition) parts.push(disc.edition);
+  if (disc.format) {
+    parts.push(disc.format === 'BLURAY' ? 'Blu-ray' : disc.format === 'UHD_BLURAY' ? '4K UHD' : disc.format);
+  }
+  return parts.join(' · ');
 }

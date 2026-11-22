@@ -26,6 +26,9 @@ export interface CatalogDisc extends AuditFields {
   discNumber?: number | null;
   edition?: string | null;
   setId?: string | null;
+  // The release (box or case) this disc belongs to. The API always sets it,
+  // also for a loose disc, whose release is an automatic one-disc wrapper.
+  releaseId?: string | null;
   barcode?: string | null;
   purchaseDate?: string | null;
   condition?: DiscCondition | null;
@@ -39,4 +42,16 @@ export interface CatalogDisc extends AuditFields {
   loanedTo?: string | null;
   loanedAt?: string | null;
   returnedAt?: string | null;
+}
+
+/** The thing that was bought: one box or case, holding one or more discs. */
+export interface CatalogRelease {
+  id: string;
+  title: string;
+  barcode?: string | null;
+  edition?: string | null;
+  // "loose" is the automatic wrapper of a disc catalogued on its own.
+  packaging?: 'case' | 'box_set' | 'combo_pack' | 'loose' | null;
+  expectedDiscCount?: number | null;
+  discs?: CatalogDisc[];
 }
