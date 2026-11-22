@@ -524,3 +524,96 @@ export function describeAiClassifyError(error: unknown): string {
   }
   return message || 'Jev classification failed';
 }
+
+// --- Content verification, as triage reads it ----------------------------------------------------
+// The backend reads the file itself (on-screen title, credits, dialogue) and stores what that says
+// about the proposed match at parsed_info["content_verification"]. Advisory only.
+
+export type ContentCheckLabel = {
+  text: string;
+  color: 'success' | 'error' | 'info' | 'default';
+  /** Evidence lines for the tooltip, one per line. */
+  detail: string;
+};
+
+const sameNumber = (a?: number | null, b?: number | null) => (a ?? null) === (b ?? null);
+
+/**
+ * The stored content check for this item, or null when there is none or it judged a match the item no
+ * longer has (a re-match or manual assignment since): a stale verdict must not sit next to a new match.
+ */
+export function getItemContentCheck(item: IngressQueueItem): ContentCheckLabel | null {
+  const result = item.parsed_info?.content_verification;
+  if (!result?.verdict) {
+    return null;
+  }
+  const match = item.best_match;
+  const claim = result.claim ?? null;
+  const isSeries = ['episode', 'series', 'tv'].includes(String(match?.media_type || '').toLowerCase());
+  const current = claim
+    ? claim.title === match?.title &&
+      (!isSeries ||
+        (sameNumber(claim.season, match?.season ?? item.parsed_info?.season) &&
+          sameNumber(claim.episode, match?.episode ?? item.parsed_info?.episode)))
+    : !match?.title;
+  if (!current) {
+    return null;
+  }
+
+  const suggested = result.suggested;
+  const episodeName = suggested?.episode_title ? `, "${suggested.episode_title}"` : '';
+  const suggestion = suggested?.episode != null
+    ? `E${String(suggested.episode).padStart(2, '0')}`
+    : suggested?.title || '';
+  const lines = [...(result.evidence || [])];
+  let text: string;
+  let color: ContentCheckLabel['color'];
+  switch (result.verdict) {
+    case 'confirm':
+      text = 'content ✓';
+      color = 'success';
+      lines.unshift('The file itself agrees with this match.');
+      break;
+    case 'partial':
+      text = 'title ✓';
+      color = 'success';
+      lines.unshift('The file is this series; which episode could not be checked.');
+      break;
+    case 'veto':
+      text = suggestion ? `content ✗ ${suggestion}` : 'content ✗';
+      color = 'error';
+      lines.unshift(
+        suggested?.episode != null
+          ? `The file looks like episode ${suggested.episode}${episodeName}, not this match.`
+          : 'The file itself disagrees with this match.'
+      );
+      break;
+    case 'suggest':
+      text = suggestion ? `looks like ${suggestion}` : 'content ?';
+      color = 'info';
+      lines.unshift(
+        suggested?.episode != null
+          ? `The file looks like episode ${suggested.episode}${episodeName}.`
+          : `The file looks like ${suggested?.title ?? 'another title'}${suggested?.year ? ` (${suggested.year})` : ''}.`
+      );
+      break;
+    default:
+      text = 'content ?';
+      color = 'default';
+      lines.unshift('Nothing read from the file settles this either way.');
+  }
+  lines.push('Advisory only: nothing was changed. Click to check again.');
+  return { text, color, detail: lines.join('\n') };
+}
+
+/** A failed or refused content check, in words a reviewer can act on. */
+export function describeContentVerifyError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  if (message.includes('CONTENT_VERIFY_FAILED')) {
+    return 'The file could not be checked: it is missing, not a video, or the vision model did not answer';
+  }
+  if (message.includes('CONTENT_VERIFY_NOT_CONFIGURED')) {
+    return 'This backend has no content verification';
+  }
+  return message || 'Content check failed';
+}

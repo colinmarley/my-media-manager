@@ -13,17 +13,15 @@ uses), so no cloud OCR account is needed and no image leaves your network.
 The result is a suggestion the app shows for confirmation, never saved as-is.
 """
 
-import base64
-import io
-import json
 import re
 
 import httpx
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from PIL import Image, ImageOps
 
 from api.mobile_auth import require_any_auth
-from config.settings import settings
+from config.settings import settings  # noqa: F401  (tests patch cover_scan.settings)
+from services import localai_vision
+from services.localai_vision import is_grounded
 
 router = APIRouter(prefix="/api/metadata-search", tags=["Metadata Search"])
 
@@ -65,32 +63,13 @@ Respond with this exact JSON structure:
 
 
 def _prepare_image(data: bytes) -> str:
-    """Normalize rotation, downscale, and re-encode as base64 JPEG."""
     try:
-        image = Image.open(io.BytesIO(data))
-        image = ImageOps.exif_transpose(image)  # phone photos carry rotation in EXIF
-        image.thumbnail((_MAX_DIMENSION, _MAX_DIMENSION))
-        if image.mode not in ("RGB", "L"):
-            image = image.convert("RGB")
-        out = io.BytesIO()
-        image.save(out, format="JPEG", quality=85)
-    except Exception as exc:  # PIL raises a zoo of exception types for bad input
+        return localai_vision.prepare_image(data, _MAX_DIMENSION)
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail="That file couldn't be read as an image.") from exc
-    return base64.b64encode(out.getvalue()).decode("ascii")
 
 
-def _parse_model_json(content: str) -> dict:
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError:
-        # Models occasionally wrap the JSON in prose despite json_object mode.
-        match = re.search(r"\{.*\}", content, re.DOTALL)
-        if match:
-            try:
-                return json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
-    return {}
+_parse_model_json = localai_vision.parse_model_json
 
 
 def _clean_str(value) -> str | None:
@@ -98,24 +77,6 @@ def _clean_str(value) -> str | None:
         return None
     value = value.strip()
     return value if value and value.lower() not in ("null", "none", "n/a", "unknown") else None
-
-
-_STOPWORDS = {"the", "a", "an", "of", "and", "&", "in", "on", "to"}
-
-
-def _tokens(text: str) -> set[str]:
-    return {t for t in re.findall(r"[a-z0-9]+", text.lower()) if t not in _STOPWORDS}
-
-
-def is_grounded(title: str, visible_text: list[str]) -> bool:
-    """True if most of the title's words appear in the text the model says it
-    read. Guards against a vision model confidently inventing a title from a
-    photo that doesn't show one (observed: an empty room read as "The Hulk")."""
-    title_tokens = _tokens(title)
-    if not title_tokens:
-        return False
-    seen = _tokens(" ".join(visible_text))
-    return len(title_tokens & seen) / len(title_tokens) >= 0.6
 
 
 def normalize_scan(parsed: dict) -> dict:
@@ -174,30 +135,8 @@ async def scan_cover(file: UploadFile = File(...)) -> dict:
         raise HTTPException(status_code=400, detail="Empty upload.")
 
     image_b64 = _prepare_image(data)
-    payload = {
-        "model": settings.localai_vision_model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": _USER_PROMPT},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
-                ],
-            },
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0,
-        "max_tokens": 1024,
-    }
-    headers = {"Authorization": f"Bearer {settings.localai_api_key}"} if settings.localai_api_key else {}
-
     try:
-        async with httpx.AsyncClient(timeout=_VISION_TIMEOUT) as client:
-            response = await client.post(
-                f"{settings.localai_url.rstrip('/')}/v1/chat/completions", json=payload, headers=headers
-            )
-            response.raise_for_status()
+        content = await localai_vision.ask(_USER_PROMPT, image_b64, system=_SYSTEM_PROMPT, timeout=_VISION_TIMEOUT)
     except httpx.ConnectError as exc:
         raise HTTPException(status_code=503, detail="Cover scanning is unavailable (vision model host unreachable).") from exc
     except httpx.TimeoutException as exc:
@@ -205,6 +144,4 @@ async def scan_cover(file: UploadFile = File(...)) -> dict:
     except httpx.HTTPError as exc:
         raise HTTPException(status_code=502, detail=f"Cover scan failed: {exc}") from exc
 
-    choices = response.json().get("choices") or [{}]
-    content = choices[0].get("message", {}).get("content") or ""
-    return normalize_scan(_parse_model_json(content))
+    return normalize_scan(localai_vision.parse_model_json(content))
