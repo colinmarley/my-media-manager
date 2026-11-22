@@ -2,11 +2,33 @@
 
 import React, { useRef, useState } from 'react';
 import {
-  Alert, Autocomplete, Button, Chip, CircularProgress,
+  Alert, Autocomplete, Button, Chip, CircularProgress, Collapse, MenuItem,
   Paper, Stack, TextField, Typography,
 } from '@mui/material';
 import { searchDiscs, createDisc } from '@/service/catalog/DiscCatalogService';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
+import type { DiscFormat } from '@/types/catalog/Common.type';
+
+const FORMAT_OPTIONS: { value: DiscFormat; label: string }[] = [
+  { value: 'DVD', label: 'DVD' },
+  { value: 'BLURAY', label: 'Blu-ray' },
+  { value: 'UHD_BLURAY', label: '4K UHD Blu-ray' },
+  { value: 'HD_DVD', label: 'HD DVD' },
+];
+
+/** The fields of a new disc record, from the create form. */
+export function newDiscBody(form: {
+  title: string; barcode: string; discNumber: string; edition: string; format: DiscFormat;
+}): Partial<CatalogDisc> {
+  const discNumber = parseInt(form.discNumber, 10);
+  return {
+    title: form.title.trim() || 'Untitled Disc',
+    barcode: form.barcode.trim() || undefined,
+    discNumber: Number.isFinite(discNumber) && discNumber > 0 ? discNumber : undefined,
+    edition: form.edition.trim() || undefined,
+    format: form.format,
+  };
+}
 
 /**
  * Search for or create the physical Disc catalog record this rip belongs to.
@@ -14,16 +36,23 @@ import { CatalogDisc } from '@/types/catalog/Disc.type';
  * disc entity (see backend/api/catalog.py) — disc-ripper-service has no disc
  * identity of its own, it just stores the linked catalog_disc_id on the job.
  *
- * Linking is optional: a rip can be started without a pre-logged or newly
- * created disc, in which case catalog_disc_id stays unset.
+ * Linking is required: Start Rip stays disabled until a disc is picked or
+ * created here, so every ripped file knows the physical disc (and through it
+ * the release) it came from.
  */
 export default function DiscCatalogLinkPanel({
   discTitle,
+  discType,
+  volumeLabel,
   linkedDisc,
   onLink,
   onUnlink,
 }: {
   discTitle: string;
+  /** The rip's disc type, used as the new record's default format. */
+  discType?: 'dvd' | 'bluray';
+  /** The disc's own label from the scan, shown as a hint while picking. */
+  volumeLabel?: string | null;
   linkedDisc: CatalogDisc | null;
   onLink: (disc: CatalogDisc) => void;
   onUnlink: () => void;
@@ -39,6 +68,14 @@ export default function DiscCatalogLinkPanel({
   const [barcodeResults, setBarcodeResults] = useState<CatalogDisc[]>([]);
   const [barcodeSearching, setBarcodeSearching] = useState(false);
   const barcodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // New-record form
+  const [showCreate, setShowCreate] = useState(false);
+  const [newTitle, setNewTitle] = useState('');
+  const [newDiscNumber, setNewDiscNumber] = useState('');
+  const [newEdition, setNewEdition] = useState('');
+  const [newFormat, setNewFormat] = useState<DiscFormat | ''>('');
+  const format: DiscFormat = newFormat || (discType === 'bluray' ? 'BLURAY' : 'DVD');
 
   const runSearch = async (query: string) => {
     if (!query.trim()) { setResults([]); return; }
@@ -86,10 +123,13 @@ export default function DiscCatalogLinkPanel({
     setCreating(true);
     setError('');
     try {
-      const disc = await createDisc({
-        title: discTitle || searchInput || 'Untitled Disc',
-        barcode: barcodeInput.trim() || undefined,
-      });
+      const disc = await createDisc(newDiscBody({
+        title: newTitle || discTitle || searchInput,
+        barcode: barcodeInput,
+        discNumber: newDiscNumber,
+        edition: newEdition,
+        format,
+      }));
       onLink(disc);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to create disc record');
@@ -105,6 +145,12 @@ export default function DiscCatalogLinkPanel({
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography variant="body2">Linked to disc:</Typography>
             <Chip label={linkedDisc.title} size="small" color="primary" />
+            {linkedDisc.discNumber != null && (
+              <Typography variant="caption" color="text.secondary">Disc {linkedDisc.discNumber}</Typography>
+            )}
+            {linkedDisc.edition && (
+              <Typography variant="caption" color="text.secondary">{linkedDisc.edition}</Typography>
+            )}
           </Stack>
           <Button size="small" onClick={onUnlink}>Unlink</Button>
         </Stack>
@@ -115,10 +161,11 @@ export default function DiscCatalogLinkPanel({
   return (
     <Paper variant="outlined" sx={{ p: 1.5, mb: 2 }}>
       <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Physical Disc (optional)
+        Physical Disc (required)
       </Typography>
       <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
         Link this rip to a disc in your physical media catalog, or create a new record for it.
+        {volumeLabel ? ` The disc in the drive calls itself “${volumeLabel}”.` : ''}
       </Typography>
       <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
         <TextField
@@ -181,14 +228,64 @@ export default function DiscCatalogLinkPanel({
         <Button
           variant="outlined"
           size="small"
-          disabled={creating}
-          startIcon={creating ? <CircularProgress size={14} /> : undefined}
-          onClick={handleCreate}
+          onClick={() => { setShowCreate((v) => !v); if (!newTitle) setNewTitle(discTitle || searchInput); }}
           sx={{ alignSelf: 'center' }}
         >
-          {creating ? 'Creating…' : 'Create New Disc Record'}
+          {showCreate ? 'Cancel New Record' : 'Create New Disc Record'}
         </Button>
       </Stack>
+      <Collapse in={showCreate} unmountOnExit>
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
+          <TextField
+            size="small"
+            label="Disc title"
+            value={newTitle}
+            onChange={(e) => setNewTitle(e.target.value)}
+            sx={{ flex: '2 1 220px' }}
+          />
+          <TextField
+            size="small"
+            label="Disc #"
+            type="number"
+            value={newDiscNumber}
+            onChange={(e) => setNewDiscNumber(e.target.value)}
+            sx={{ width: 90 }}
+            slotProps={{ htmlInput: { min: 1 } }}
+          />
+          <TextField
+            size="small"
+            label="Edition"
+            placeholder="Director's Cut"
+            value={newEdition}
+            onChange={(e) => setNewEdition(e.target.value)}
+            sx={{ flex: '1 1 160px' }}
+          />
+          <TextField
+            select
+            size="small"
+            label="Format"
+            value={format}
+            onChange={(e) => setNewFormat(e.target.value as DiscFormat)}
+            sx={{ width: 170 }}
+          >
+            {FORMAT_OPTIONS.map((opt) => (
+              <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+            ))}
+          </TextField>
+          <Button
+            variant="contained"
+            size="small"
+            disabled={creating}
+            startIcon={creating ? <CircularProgress size={14} /> : undefined}
+            onClick={handleCreate}
+          >
+            {creating ? 'Creating…' : 'Create and Link'}
+          </Button>
+        </Stack>
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+          The barcode above, if entered, is saved on the new record.
+        </Typography>
+      </Collapse>
       {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}
     </Paper>
   );

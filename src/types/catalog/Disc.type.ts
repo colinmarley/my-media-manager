@@ -24,6 +24,7 @@ export interface CatalogDisc extends AuditFields {
   regionCode?: string;
   format?: DiscFormat;
   discNumber?: number | null;
+  edition?: string | null;
   setId?: string | null;
   barcode?: string | null;
   purchaseDate?: string | null;

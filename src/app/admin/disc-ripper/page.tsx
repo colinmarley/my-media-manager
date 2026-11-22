@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Chip, Step, StepButton, Stepper } from '@mui/material';
 import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
-import type { DiscTitle, RipJob, StartJobRequest } from '@/types/disc-ripper/DiscRipper.type';
+import type { DiscScanInfo, DiscTitle, RipJob, StartJobRequest } from '@/types/disc-ripper/DiscRipper.type';
 import DiscScanStep from './_components/DiscScanStep';
 import ConfigureStep from './_components/ConfigureStep';
 import MonitorStep from './_components/MonitorStep';
@@ -15,6 +15,8 @@ const STEPS = ['Scan Disc', 'Configure', 'Monitor', 'Results'];
 export default function DiscRipperPage() {
   const [activeStep, setActiveStep] = useState(0);
   const [titles, setTitles] = useState<DiscTitle[]>([]);
+  // The stored scan the titles came from: sent with the job so it is tied to this exact disc.
+  const [scanInfo, setScanInfo] = useState<DiscScanInfo | null>(null);
   const [scanError, setScanError] = useState('');
   const [jobs, setJobs] = useState<RipJob[]>([]);
   const [jobsError, setJobsError] = useState('');
@@ -102,6 +104,7 @@ export default function DiscRipperPage() {
           setTitles={setTitles}
           scanError={scanError}
           setScanError={setScanError}
+          onScanned={setScanInfo}
           onContinue={() => setActiveStep(1)}
         />
       )}
@@ -109,7 +112,12 @@ export default function DiscRipperPage() {
       {activeStep === 1 && (
         <Box>
           {submitError && <Alert severity="error" sx={{ mb: 2 }}>{submitError}</Alert>}
-          <ConfigureStep titles={titles} onSubmit={handleStart} />
+          <ConfigureStep
+            titles={titles}
+            scanId={scanInfo?.scan_id}
+            discInfo={scanInfo}
+            onSubmit={handleStart}
+          />
         </Box>
       )}
 

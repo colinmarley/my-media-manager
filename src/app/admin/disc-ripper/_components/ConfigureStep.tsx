@@ -2,8 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Dialog, DialogActions,
-  DialogContent, DialogContentText, DialogTitle, Divider,
+  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Divider,
   FormControl, FormControlLabel, InputLabel, MenuItem,
   Paper, Radio, RadioGroup, Select, Stack,
   TextField, Typography,
@@ -11,19 +10,26 @@ import {
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
 import TmdbService from '@/service/tmdb/TmdbService';
 import type {
-  Assignment, DiscTitle, ExtrasCategory, StartJobRequest,
+  Assignment, DiscScanInfo, DiscTitle, ExtrasCategory, StartJobRequest,
   TmdbEpisode, TmdbResult, TmdbSeason,
 } from '@/types/disc-ripper/DiscRipper.type';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
-import { epCode, POSTER_BASE, previewFilenames } from './discRipperUtils';
+import {
+  buildStartJobRequest, epCode, POSTER_BASE, previewFilenames, startJobBlocker,
+} from './discRipperUtils';
 import ExtrasTypeSelector from './ExtrasTypeSelector';
 import DiscCatalogLinkPanel from './DiscCatalogLinkPanel';
 
 export default function ConfigureStep({
   titles,
+  scanId,
+  discInfo,
   onSubmit,
 }: {
   titles: DiscTitle[];
+  /** The stored scan these titles came from; ties the job to this exact disc. */
+  scanId?: string;
+  discInfo?: DiscScanInfo | null;
   onSubmit: (req: StartJobRequest) => void;
 }) {
   // Search
@@ -35,6 +41,7 @@ export default function ConfigureStep({
 
   // TMDB data
   const [tmdbSeriesId, setTmdbSeriesId] = useState<number | null>(null);
+  const [tmdbMovieId, setTmdbMovieId] = useState<number | null>(null);
   const [tmdbSeasons, setTmdbSeasons] = useState<TmdbSeason[]>([]);
   const [episodes, setEpisodes] = useState<TmdbEpisode[]>([]);
   const [episodesLoading, setEpisodesLoading] = useState(false);
@@ -56,7 +63,6 @@ export default function ConfigureStep({
   const [contentTypes, setContentTypes] = useState<Record<number, ExtrasCategory | ''>>({});
   const [linkedDisc, setLinkedDisc] = useState<CatalogDisc | null>(null);
   const [error, setError] = useState('');
-  const [showUnlinkedConfirm, setShowUnlinkedConfirm] = useState(false);
 
   // Auto-detect disc type from video width
   useEffect(() => {
@@ -120,8 +126,10 @@ export default function ConfigureStep({
     try {
       const data = await TmdbService.getSeasonDetails(seriesId, seasonNum);
       const eps: TmdbEpisode[] = (data.episodes ?? []).map((e: {
-        episode_number: number; name: string; runtime?: number;
-      }) => ({ episodeNumber: e.episode_number, name: e.name, runtime: e.runtime ?? undefined }));
+        id?: number; episode_number: number; name: string; runtime?: number;
+      }) => ({
+        episodeNumber: e.episode_number, name: e.name, runtime: e.runtime ?? undefined, tmdbId: e.id,
+      }));
       setEpisodes(eps);
       // Auto-assign in order
       const newAssignments: Record<number, Assignment> = {};
@@ -145,6 +153,9 @@ export default function ConfigureStep({
     setTmdbSeasons([]);
     setEpisodes([]);
     setAssignments({});
+    // The ids belong to the picked result; none picked means none known.
+    setTmdbSeriesId(null);
+    setTmdbMovieId(null);
     if (!result) return;
 
     setTitle(result.name);
@@ -174,7 +185,7 @@ export default function ConfigureStep({
         }
       } catch { /* fall through to manual entry */ }
     } else {
-      setTmdbSeriesId(null);
+      setTmdbMovieId(result.tmdbId);
       try {
         const details = await TmdbService.getMovieDetails(result.tmdbId);
         if (details.imdb_id) setImdbId(details.imdb_id);
@@ -197,6 +208,7 @@ export default function ConfigureStep({
     setEpisodes([]);
     setAssignments({});
     setTmdbSeriesId(null);
+    setTmdbMovieId(null);
   };
 
   // ── Title selection ───────────────────────────────────────────────────────
@@ -259,62 +271,18 @@ export default function ConfigureStep({
 
   // ── Submit ────────────────────────────────────────────────────────────────
 
-  const doSubmit = () => {
-    const episodeMap = mediaType === 'show' ? buildEpisodeMapExcludingExtras() : undefined;
-
-    const titleContentTypes = Object.fromEntries(
-      Object.entries(contentTypes).filter(([, v]) => v !== '')
-    );
-
-    onSubmit({
-      disc_type: discType,
-      media_type: mediaType,
-      title: title.trim(),
-      year,
-      imdb_id: imdbId.trim() || undefined,
-      season: mediaType === 'show' ? season : undefined,
-      mkv_title_indices: selectedIndices,
-      episode_map: episodeMap && Object.keys(episodeMap).length ? episodeMap : undefined,
-      catalog_disc_id: linkedDisc?.id,
-      title_content_types: Object.keys(titleContentTypes).length ? titleContentTypes : undefined,
-    });
-  };
-
   const submit = () => {
-    if (!title.trim()) { setError('Title is required'); return; }
-    if (!year || year < 1888 || year > 2100) { setError('Enter a valid year'); return; }
-    if (!selectedIndices.length) { setError('Select at least one title to rip'); return; }
+    const blocker = startJobBlocker({ title, year, selectedIndices, linkedDiscId: linkedDisc?.id });
+    if (blocker || !linkedDisc) { setError(blocker ?? ''); return; }
     setError('');
-
-    if (!linkedDisc) {
-      setShowUnlinkedConfirm(true);
-      return;
-    }
-    doSubmit();
+    onSubmit(buildStartJobRequest({
+      discType, mediaType, title, year, imdbId,
+      tmdbId: mediaType === 'show' ? tmdbSeriesId : tmdbMovieId,
+      season, selectedIndices, assignments, contentTypes, episodes,
+      catalogDiscId: linkedDisc.id,
+      scanId,
+    }));
   };
-
-  // Titles tagged with an extras content_type are routed by the backend via
-  // that suffix instead of episode naming, so exclude them from episode_map
-  // to avoid sending a redundant/conflicting episode code for the same title.
-  function buildEpisodeMapExcludingExtras(): Record<string, string> {
-    const map: Record<string, string> = {};
-    let specialN = 0;
-    for (const idx of [...selectedIndices].sort((a, b) => a - b)) {
-      if (contentTypes[idx]) continue;
-      const a = assignments[idx];
-      if (!a) continue;
-      if (a.type === 'episode') {
-        const code = epCode(season, a.episodeNumber);
-        map[String(idx)] = a.episodeName ? `${code} - ${a.episodeName}` : code;
-      } else if (a.type === 'special') {
-        specialN++;
-        map[String(idx)] = `SpecialFeature${String(specialN).padStart(3, '0')}`;
-      } else if (a.type === 'custom' && a.name.trim()) {
-        map[String(idx)] = a.name.trim();
-      }
-    }
-    return map;
-  }
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -476,6 +444,8 @@ export default function ConfigureStep({
       {/* ── Physical disc catalog link ─────────────────────────────────── */}
       <DiscCatalogLinkPanel
         discTitle={title}
+        discType={discType}
+        volumeLabel={discInfo?.volume_label ?? discInfo?.disc_name ?? null}
         linkedDisc={linkedDisc}
         onLink={setLinkedDisc}
         onUnlink={() => setLinkedDisc(null)}
@@ -690,28 +660,16 @@ export default function ConfigureStep({
         );
       })()}
 
-      <Button variant="contained" size="large" onClick={submit}>
-        Start Rip
-      </Button>
-
-      <Dialog open={showUnlinkedConfirm} onClose={() => setShowUnlinkedConfirm(false)}>
-        <DialogTitle>Start rip without a linked disc?</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            This rip isn&apos;t linked to a catalog disc — the delivered files won&apos;t be
-            traceable back to a physical disc afterward. Continue anyway?
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setShowUnlinkedConfirm(false)}>Cancel</Button>
-          <Button
-            variant="contained"
-            onClick={() => { setShowUnlinkedConfirm(false); doSubmit(); }}
-          >
-            Start Rip Anyway
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <Stack direction="row" spacing={2} alignItems="center">
+        <Button variant="contained" size="large" onClick={submit} disabled={!linkedDisc}>
+          Start Rip
+        </Button>
+        {!linkedDisc && (
+          <Typography variant="caption" color="text.secondary">
+            Link this rip to a disc in your catalog (or create one) to start.
+          </Typography>
+        )}
+      </Stack>
     </Box>
   );
 }

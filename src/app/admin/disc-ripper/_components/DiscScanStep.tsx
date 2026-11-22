@@ -7,7 +7,7 @@ import {
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
-import type { DiscTitle } from '@/types/disc-ripper/DiscRipper.type';
+import type { DiscScanInfo, DiscTitle } from '@/types/disc-ripper/DiscRipper.type';
 import { fmtDur } from './discRipperUtils';
 
 export default function DiscScanStep({
@@ -15,12 +15,15 @@ export default function DiscScanStep({
   setTitles,
   scanError,
   setScanError,
+  onScanned,
   onContinue,
 }: {
   titles: DiscTitle[];
   setTitles: (t: DiscTitle[]) => void;
   scanError: string;
   setScanError: (e: string) => void;
+  /** Disc identity of the scan just made (null when the scan failed or the ripper is an older build). */
+  onScanned?: (info: DiscScanInfo | null) => void;
   onContinue: () => void;
 }) {
   const [scanning, setScanning] = useState(false);
@@ -29,12 +32,14 @@ export default function DiscScanStep({
     setScanning(true);
     setScanError('');
     setTitles([]);
+    onScanned?.(null);
     try {
       const info = await DiscRipperService.getDiscInfo();
       if (info.error) {
         setScanError(info.error);
       } else {
         setTitles(info.titles);
+        onScanned?.(info.disc ?? null);
       }
     } catch (e: unknown) {
       setScanError(e instanceof Error ? e.message : 'Scan failed — is the ripper service running?');

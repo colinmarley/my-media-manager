@@ -8,11 +8,57 @@ export interface DiscTitle {
   width: number;
   height: number;
   codec: string;
+  // Present from disc-ripper-service builds that keep the full scan.
+  source_file?: string;
+  segment_map?: string;
+  streams?: DiscStream[];
+}
+
+export interface DiscStream {
+  index: number;
+  type: string;             // "video" | "audio" | "subtitles"
+  codec: string;
+  lang_code: string;
+  lang_name: string;
+  name: string;
+  channels: number;
+  channel_layout: string;
+  default: boolean;
+  forced: boolean;
+}
+
+/** What the disc and drive reported about themselves on a scan. */
+export interface DiscScanInfo {
+  scan_id: string;
+  scanned_at: string | null;
+  fingerprint: string | null;
+  disc_type: string | null;      // as MakeMKV names it, e.g. "DVD disc"
+  disc_name: string | null;
+  volume_label: string | null;
+  drive_model: string | null;
+  makemkv_version: string | null;
+  title_count: number;
+  skipped_short?: number;
 }
 
 export interface DiscInfoResponse {
   titles: DiscTitle[];
   error: string | null;
+  scan_id?: string;
+  disc?: DiscScanInfo;
+}
+
+/** What one selected disc title is, as declared when the rip is set up. */
+export interface TitleDeclaration {
+  title_index: number;
+  content_type?: string;     // "main_feature" | "episode" | "special_feature" | an extras category
+  is_main_feature?: boolean;
+  season?: number;
+  episode?: number;
+  episode_end?: number;
+  tmdb_episode_id?: number;
+  episode_name?: string;
+  custom_name?: string;
 }
 
 export interface RipJob {
@@ -34,6 +80,9 @@ export interface RipJob {
   output_paths: string[];
   catalog_disc_id: string | null;
   title_content_types: Record<string, string> | null;
+  tmdb_id?: number | null;
+  scan_id?: string | null;
+  fingerprint?: string | null;
 }
 
 export interface JobAnalysis {
@@ -60,6 +109,9 @@ export interface StartJobRequest {
   episode_map?: Record<string, string>;
   catalog_disc_id?: string;              // links this rip to a my-media-manager Disc record
   title_content_types?: Record<string, string>;  // {"0": "trailer", "2": "deleted_scene"}
+  tmdb_id?: number;                      // TMDB movie id or series id
+  scan_id?: string;                      // the scan this job was configured from
+  titles?: TitleDeclaration[];           // structured form of episode_map / title_content_types
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +136,7 @@ export interface TmdbEpisode {
   episodeNumber: number;
   name: string;
   runtime?: number;
+  tmdbId?: number;
 }
 
 export type Assignment =
