@@ -234,7 +234,7 @@ export type TitleHint =
   | { kind: 'play_all'; of: number[] }
   | { kind: 'short' };
 
-/** Shorter than this, a title is a clip: usually an ad or a preview. */
+/** Shorter than this, a title is a clip: a short extra, an ad or a preview. */
 export const SHORT_CLIP_SECONDS = 300;
 /** Shorter than this, a title on a TV disc is not an episode. */
 export const MIN_EPISODE_SECONDS = 600;
@@ -294,7 +294,7 @@ export function analyzeTitles(titles: ScannedTitle[]): Record<number, TitleHint>
 export function titleHintLabel(hint: TitleHint): string {
   if (hint.kind === 'duplicate') return `Same as title ${hint.of}`;
   if (hint.kind === 'play_all') return `Play-all of titles ${hint.of.join(' + ')}`;
-  return 'Short clip: likely an ad or preview';
+  return 'Short clip: an extra, ad or preview';
 }
 
 /** "dvd" or "bluray" from MakeMKV's own name for the disc ("DVD disc"), else null. */

@@ -243,7 +243,7 @@ export default function ConfigureStep({
       const length = titles.find((t) => t.index === idx)?.duration_seconds ?? 0;
       if (length < SHORT_CLIP_SECONDS) {
         // A clip is an extra, not an episode: start it off as one.
-        setContentTypes((prev) => ({ ...prev, [idx]: prev[idx] || 'trailer' }));
+        setContentTypes((prev) => ({ ...prev, [idx]: prev[idx] || 'clip' }));
       } else if (episodes.length) {
         const usedEps = new Set(
           Object.values(assignments)
@@ -511,8 +511,8 @@ export default function ConfigureStep({
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
             {titles.length - Object.keys(titleHints).length} of {titles.length} titles are selected. The
             rest are repeats of a selected title, a play-all title that joins several of them, or short
-            clips (usually ads and previews). Click any of them to rip it as well. A commentary is an
-            audio track of its episode, not a title of its own: it comes along with the episode.
+            clips (extras such as commentary scenes, or ads and previews). Click any of them to rip it
+            as well, and say what kind of extra it is.
           </Typography>
         )}
 
