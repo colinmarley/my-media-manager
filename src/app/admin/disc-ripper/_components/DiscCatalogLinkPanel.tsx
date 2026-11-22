@@ -1,13 +1,18 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert, Autocomplete, Button, Chip, CircularProgress, Collapse, MenuItem,
+  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, MenuItem,
   Paper, Stack, TextField, Typography,
 } from '@mui/material';
-import { searchDiscs, createDisc } from '@/service/catalog/DiscCatalogService';
-import { CatalogDisc } from '@/types/catalog/Disc.type';
+import {
+  createDisc, createRelease, getRelease, mergeDisc, searchDiscs, searchReleases, updateRelease,
+} from '@/service/catalog/DiscCatalogService';
+import { CatalogDisc, CatalogRelease } from '@/types/catalog/Disc.type';
 import type { DiscFormat } from '@/types/catalog/Common.type';
+import {
+  describeCatalogDisc, discNumberFromLabel, discRecordTitle, suggestReleaseTitle,
+} from './discRipperUtils';
 
 const FORMAT_OPTIONS: { value: DiscFormat; label: string }[] = [
   { value: 'DVD', label: 'DVD' },
@@ -16,19 +21,66 @@ const FORMAT_OPTIONS: { value: DiscFormat; label: string }[] = [
   { value: 'HD_DVD', label: 'HD DVD' },
 ];
 
-/** The fields of a new disc record, from the create form. */
-export function newDiscBody(form: {
-  title: string; barcode: string; discNumber: string; edition: string; format: DiscFormat;
-}): Partial<CatalogDisc> {
-  const discNumber = parseInt(form.discNumber, 10);
+/** The disc details form, as typed. */
+export interface DiscForm {
+  /** The name on the box or case. */
+  releaseTitle: string;
+  /** Set when the box is one already in the catalog. */
+  releaseId: string | null;
+  discNumber: string;
+  /** How many discs the box holds. */
+  discCount: string;
+  edition: string;
+  format: DiscFormat;
+  barcode: string;
+}
+
+function positiveInt(text: string): number | null {
+  const n = parseInt(text, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * The two records a filled-in form describes: the box (release) and the
+ * disc in it. The disc is named after the box, with its number when the box
+ * holds more than one, so nobody has to invent a separate disc title.
+ */
+export function discSavePlan(form: DiscForm): {
+  release: Partial<CatalogRelease>;
+  disc: Partial<CatalogDisc>;
+} {
+  const releaseTitle = form.releaseTitle.trim() || 'Untitled Disc';
+  const typedNumber = positiveInt(form.discNumber);
+  const discCount = Math.max(positiveInt(form.discCount) ?? 1, typedNumber ?? 1);
+  const discNumber = typedNumber ?? (discCount > 1 ? null : 1);
+  const edition = form.edition.trim() || undefined;
   return {
-    title: form.title.trim() || 'Untitled Disc',
-    barcode: form.barcode.trim() || undefined,
-    discNumber: Number.isFinite(discNumber) && discNumber > 0 ? discNumber : undefined,
-    edition: form.edition.trim() || undefined,
-    format: form.format,
+    release: {
+      title: releaseTitle,
+      barcode: form.barcode.trim() || undefined,
+      edition,
+      packaging: discCount > 1 ? 'box_set' : 'case',
+      expectedDiscCount: discCount,
+    },
+    disc: {
+      title: discRecordTitle(releaseTitle, discNumber, discCount),
+      discNumber: discNumber ?? undefined,
+      edition,
+      format: form.format,
+      isPartOfSet: discCount > 1,
+    },
   };
 }
+
+/** The lowest disc number a box does not have yet. */
+export function nextDiscNumber(discs: Pick<CatalogDisc, 'discNumber'>[]): number {
+  const used = new Set(discs.map((d) => d.discNumber).filter((n): n is number => n != null));
+  let n = 1;
+  while (used.has(n)) n++;
+  return n;
+}
+
+type ReleaseOption = Pick<CatalogRelease, 'id' | 'title'>;
 
 /**
  * Search for or create the physical Disc catalog record this rip belongs to.
@@ -39,28 +91,44 @@ export function newDiscBody(form: {
  * Linking is required: Start Rip stays disabled until a disc is picked or
  * created here, so every ripped file knows the physical disc (and through it
  * the release) it came from.
+ *
+ * A disc record is two things: the release (the box or case that was bought)
+ * and the disc's place in it. The form asks for exactly those. The season and
+ * episodes are not disc fields: they are saved with the rip.
  */
 export default function DiscCatalogLinkPanel({
   discTitle,
   discType,
+  mediaType = 'movie',
+  year = 0,
+  season = 1,
   volumeLabel,
   linkedDisc,
   onLink,
   onUnlink,
 }: {
+  /** The movie or show picked above; discs matching it are offered straight away. */
   discTitle: string;
   /** The rip's disc type, used as the new record's default format. */
   discType?: 'dvd' | 'bluray';
+  mediaType?: 'movie' | 'show';
+  year?: number;
+  season?: number;
   /** The disc's own label from the scan, shown as a hint while picking. */
   volumeLabel?: string | null;
   linkedDisc: CatalogDisc | null;
   onLink: (disc: CatalogDisc) => void;
   onUnlink: () => void;
 }) {
+  // Discs already catalogued under the picked title
+  const [matches, setMatches] = useState<CatalogDisc[]>([]);
+  const [matching, setMatching] = useState(false);
+  const [matchedFor, setMatchedFor] = useState('');
+
   const [searchInput, setSearchInput] = useState('');
   const [results, setResults] = useState<CatalogDisc[]>([]);
   const [searching, setSearching] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -69,13 +137,45 @@ export default function DiscCatalogLinkPanel({
   const [barcodeSearching, setBarcodeSearching] = useState(false);
   const barcodeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // New-record form
-  const [showCreate, setShowCreate] = useState(false);
-  const [newTitle, setNewTitle] = useState('');
-  const [newDiscNumber, setNewDiscNumber] = useState('');
-  const [newEdition, setNewEdition] = useState('');
+  // Details form (new record, or editing the linked one)
+  const [formMode, setFormMode] = useState<'closed' | 'create' | 'edit'>('closed');
+  const [releaseTitle, setReleaseTitle] = useState('');
+  const [releaseId, setReleaseId] = useState<string | null>(null);
+  const [releaseOptions, setReleaseOptions] = useState<ReleaseOption[]>([]);
+  const [discNumber, setDiscNumber] = useState('');
+  const [discCount, setDiscCount] = useState('');
+  const [edition, setEdition] = useState('');
   const [newFormat, setNewFormat] = useState<DiscFormat | ''>('');
   const format: DiscFormat = newFormat || (discType === 'bluray' ? 'BLURAY' : 'DVD');
+  const releaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The box the linked disc is in, for "Disc 1 of 4".
+  const [linkedRelease, setLinkedRelease] = useState<CatalogRelease | null>(null);
+  const linkedReleaseId = linkedDisc?.releaseId ?? linkedDisc?.setId ?? null;
+  useEffect(() => {
+    setLinkedRelease(null);
+    if (!linkedReleaseId) return;
+    let cancelled = false;
+    getRelease(linkedReleaseId).then((release) => { if (!cancelled) setLinkedRelease(release); });
+    return () => { cancelled = true; };
+  }, [linkedReleaseId, linkedDisc?.title, linkedDisc?.discNumber]);
+
+  // Offer the discs already catalogued under the picked title without making
+  // the user type it again.
+  useEffect(() => {
+    const query = discTitle.trim();
+    if (query.length < 2) { setMatches([]); setMatchedFor(''); return; }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      setMatching(true);
+      const found = await searchDiscs({ title: query });
+      if (cancelled) return;
+      setMatches(found);
+      setMatchedFor(query);
+      setMatching(false);
+    }, 400);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [discTitle]);
 
   const runSearch = async (query: string) => {
     if (!query.trim()) { setResults([]); return; }
@@ -119,55 +219,273 @@ export default function DiscCatalogLinkPanel({
     runBarcodeSearch(barcodeInput);
   };
 
-  const handleCreate = async () => {
-    setCreating(true);
+  // ── Details form ──────────────────────────────────────────────────────────
+
+  const openCreate = () => {
+    setError('');
+    setReleaseId(null);
+    setReleaseTitle(suggestReleaseTitle(mediaType, discTitle || searchInput, year, season));
+    setDiscNumber(String(discNumberFromLabel(volumeLabel) ?? ''));
+    setDiscCount('');
+    setEdition('');
+    setFormMode('create');
+  };
+
+  const openEdit = () => {
+    if (!linkedDisc) return;
+    setError('');
+    const loose = !linkedRelease || linkedRelease.packaging === 'loose';
+    setReleaseId(linkedReleaseId);
+    setReleaseTitle(linkedRelease?.title ?? linkedDisc.title);
+    setDiscNumber(linkedDisc.discNumber != null ? String(linkedDisc.discNumber) : '');
+    const count = linkedRelease?.expectedDiscCount ?? (loose ? null : linkedRelease?.discs?.length ?? null);
+    setDiscCount(count ? String(count) : '');
+    setEdition(linkedDisc.edition ?? linkedRelease?.edition ?? '');
+    setNewFormat(linkedDisc.format ?? '');
+    setFormMode('edit');
+  };
+
+  const handleReleaseInput = (value: string, reason: string) => {
+    setReleaseTitle(value);
+    // Typing a name is a new box (or a rename, when editing); picking one is not.
+    if (reason === 'input' && formMode === 'create') setReleaseId(null);
+    if (formMode !== 'create') return;
+    if (releaseTimer.current) clearTimeout(releaseTimer.current);
+    releaseTimer.current = setTimeout(async () => setReleaseOptions(await searchReleases(value)), 300);
+  };
+
+  // A box already in the catalog: take its size and offer the next free number.
+  const pickRelease = async (option: ReleaseOption) => {
+    setReleaseId(option.id);
+    setReleaseTitle(option.title);
+    const release = await getRelease(option.id);
+    if (!release) return;
+    const discs = release.discs ?? [];
+    const count = release.expectedDiscCount ?? discs.length;
+    if (count) setDiscCount(String(Math.max(count, discs.length + 1)));
+    const fromLabel = discNumberFromLabel(volumeLabel);
+    const taken = discs.some((d) => d.discNumber === fromLabel);
+    setDiscNumber(String(fromLabel && !taken ? fromLabel : nextDiscNumber(discs)));
+    if (release.edition) setEdition(release.edition);
+  };
+
+  const plan = discSavePlan({
+    releaseTitle, releaseId, discNumber, discCount, edition, format, barcode: barcodeInput,
+  });
+
+  const handleSave = async () => {
+    setSaving(true);
     setError('');
     try {
-      const disc = await createDisc(newDiscBody({
-        title: newTitle || discTitle || searchInput,
-        barcode: barcodeInput,
-        discNumber: newDiscNumber,
-        edition: newEdition,
-        format,
-      }));
-      onLink(disc);
+      if (formMode === 'edit' && linkedDisc) {
+        // Naming the packaging is what turns the automatic one-disc wrapper
+        // of a loose disc into a box other discs can join.
+        const keepPackaging = !!linkedRelease?.packaging && linkedRelease.packaging !== 'loose';
+        let targetReleaseId = linkedReleaseId;
+        if (targetReleaseId) {
+          await updateRelease(targetReleaseId, {
+            title: plan.release.title,
+            edition: plan.release.edition ?? null,
+            expectedDiscCount: plan.release.expectedDiscCount,
+            packaging: keepPackaging ? linkedRelease?.packaging : plan.release.packaging,
+          });
+        } else {
+          targetReleaseId = (await createRelease({ ...plan.release, discs: [] })).id;
+        }
+        onLink(await mergeDisc(linkedDisc.id, {
+          ...plan.disc,
+          edition: plan.disc.edition ?? null,
+          discNumber: plan.disc.discNumber ?? null,
+          setId: targetReleaseId,
+        }));
+      } else if (releaseId) {
+        // The barcode stays on the box: a box's discs share it.
+        onLink(await createDisc({ ...plan.disc, setId: releaseId, isPartOfSet: true }));
+      } else {
+        const release = await createRelease({ ...plan.release, discs: [plan.disc] });
+        const disc = release.discs?.[0];
+        if (!disc) throw new Error('The disc record was not created');
+        onLink(disc);
+      }
+      setFormMode('closed');
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to create disc record');
+      setError(e instanceof Error ? e.message : 'Failed to save the disc record');
     } finally {
-      setCreating(false);
+      setSaving(false);
     }
   };
 
+  const detailsForm = (
+    <Box sx={{ mt: 1.5 }}>
+      <Stack direction="row" spacing={1} alignItems="flex-start" flexWrap="wrap" useFlexGap>
+        <Autocomplete
+          freeSolo
+          size="small"
+          sx={{ flex: '3 1 300px' }}
+          options={formMode === 'create' ? releaseOptions : []}
+          getOptionLabel={(opt) => (typeof opt === 'string' ? opt : opt.title)}
+          filterOptions={(x) => x}
+          inputValue={releaseTitle}
+          onInputChange={(_, value, reason) => handleReleaseInput(value, reason)}
+          onChange={(_, value) => { if (value && typeof value !== 'string') pickRelease(value); }}
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label="Name on the box"
+              helperText={
+                mediaType === 'show'
+                  ? 'As printed on the case, e.g. “Burn Notice: The Complete First Season”. One name for the whole box.'
+                  : 'As printed on the case, e.g. “Alien (1979)” or “Alien Anthology”.'
+              }
+            />
+          )}
+        />
+        <TextField
+          size="small"
+          label="Disc"
+          type="number"
+          value={discNumber}
+          onChange={(e) => setDiscNumber(e.target.value)}
+          sx={{ width: 80 }}
+          slotProps={{ htmlInput: { min: 1 } }}
+        />
+        <TextField
+          size="small"
+          label="of (discs in box)"
+          type="number"
+          placeholder="1"
+          value={discCount}
+          onChange={(e) => setDiscCount(e.target.value)}
+          sx={{ width: 140 }}
+          slotProps={{ htmlInput: { min: 1 } }}
+        />
+        <TextField
+          select
+          size="small"
+          label="Format"
+          value={format}
+          onChange={(e) => setNewFormat(e.target.value as DiscFormat)}
+          sx={{ width: 170 }}
+        >
+          {FORMAT_OPTIONS.map((opt) => (
+            <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+          ))}
+        </TextField>
+      </Stack>
+      <Stack direction="row" spacing={1} alignItems="flex-start" flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
+        <TextField
+          size="small"
+          label="Special version (optional)"
+          placeholder="Director's Cut"
+          value={edition}
+          onChange={(e) => setEdition(e.target.value)}
+          helperText="Only when the box says so: Director's Cut, Extended Edition, Collector's Edition. Otherwise leave blank."
+          sx={{ flex: '1 1 300px' }}
+        />
+        <Button
+          variant="contained"
+          size="small"
+          disabled={saving || !releaseTitle.trim()}
+          startIcon={saving ? <CircularProgress size={14} /> : undefined}
+          onClick={handleSave}
+          sx={{ mt: 0.25 }}
+        >
+          {saving ? 'Saving…' : formMode === 'edit' ? 'Save' : 'Create and Link'}
+        </Button>
+        <Button size="small" onClick={() => setFormMode('closed')} sx={{ mt: 0.25 }}>Cancel</Button>
+      </Stack>
+      <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+        This disc will be saved as “{plan.disc.title}”
+        {formMode === 'create' && releaseId ? ', added to the box already in your catalog' : ''}.
+        {formMode === 'create' && !releaseId && barcodeInput.trim() ? ' The barcode above is saved on the box.' : ''}
+        {mediaType === 'show'
+          ? ' The season and episodes are not typed here: they are saved with the rip, from the season and titles you pick on this page.'
+          : ''}
+      </Typography>
+    </Box>
+  );
+
+  // ── Linked ────────────────────────────────────────────────────────────────
+
   if (linkedDisc) {
+    const count = linkedRelease?.packaging === 'loose' ? null : linkedRelease?.expectedDiscCount;
+    const looseInBox = mediaType === 'show' && linkedRelease?.packaging === 'loose';
     return (
       <Paper variant="outlined" sx={{ p: 1.5, mb: 2 }}>
-        <Stack direction="row" alignItems="center" justifyContent="space-between">
-          <Stack direction="row" spacing={1} alignItems="center">
+        <Stack direction="row" alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap spacing={1}>
+          <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
             <Typography variant="body2">Linked to disc:</Typography>
             <Chip label={linkedDisc.title} size="small" color="primary" />
             {linkedDisc.discNumber != null && (
-              <Typography variant="caption" color="text.secondary">Disc {linkedDisc.discNumber}</Typography>
+              <Typography variant="caption" color="text.secondary">
+                Disc {linkedDisc.discNumber}{count && count > 1 ? ` of ${count}` : ''}
+              </Typography>
             )}
             {linkedDisc.edition && (
               <Typography variant="caption" color="text.secondary">{linkedDisc.edition}</Typography>
             )}
           </Stack>
-          <Button size="small" onClick={onUnlink}>Unlink</Button>
+          <Stack direction="row" spacing={0.5}>
+            <Button size="small" onClick={formMode === 'edit' ? () => setFormMode('closed') : openEdit}>
+              {formMode === 'edit' ? 'Close' : 'Edit details'}
+            </Button>
+            <Button size="small" onClick={() => { setFormMode('closed'); onUnlink(); }}>Unlink</Button>
+          </Stack>
         </Stack>
+        {looseInBox && formMode !== 'edit' && (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+            This disc is catalogued on its own. If it came in a box with other discs, use Edit details to
+            say how many, so the others can be added to the same box.
+          </Typography>
+        )}
+        <Collapse in={formMode === 'edit'} unmountOnExit>{detailsForm}</Collapse>
+        {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}
       </Paper>
     );
   }
 
+  // ── Not linked ────────────────────────────────────────────────────────────
+
+  const knownTitle = matchedFor && matchedFor === discTitle.trim();
   return (
     <Paper variant="outlined" sx={{ p: 1.5, mb: 2 }}>
-      <Typography variant="subtitle2" sx={{ mb: 1 }}>
-        Physical Disc (required)
+      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
+        Which physical disc is this? (required)
       </Typography>
-      <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'block' }}>
-        Link this rip to a disc in your physical media catalog, or create a new record for it.
+      <Typography variant="caption" color="text.secondary" sx={{ mb: 1.5, display: 'block' }}>
+        Every rip is tied to a disc in your catalog, so each file knows the disc and box it came from.
         {volumeLabel ? ` The disc in the drive calls itself “${volumeLabel}”.` : ''}
       </Typography>
-      <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 1 }}>
+
+      {/* Discs already catalogued under the title picked above */}
+      {matching && <CircularProgress size={14} sx={{ mb: 1 }} />}
+      {knownTitle && matches.length > 0 && (
+        <Box sx={{ mb: 1.5 }}>
+          <Typography variant="caption" sx={{ display: 'block', mb: 0.5 }}>
+            Already in your catalog for “{matchedFor}” — click the one in the drive:
+          </Typography>
+          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+            {matches.map((disc) => (
+              <Chip
+                key={disc.id}
+                label={describeCatalogDisc(disc)}
+                variant="outlined"
+                color="primary"
+                clickable
+                onClick={() => onLink(disc)}
+              />
+            ))}
+          </Stack>
+        </Box>
+      )}
+      {knownTitle && !matching && matches.length === 0 && (
+        <Alert severity="info" sx={{ mb: 1.5, py: 0 }}>
+          No disc in your catalog is named “{matchedFor}” yet. Add this one with “New disc record”,
+          or find it by barcode or another name below.
+        </Alert>
+      )}
+
+      <Stack direction="row" spacing={1} alignItems="flex-start" flexWrap="wrap" useFlexGap>
         <TextField
           size="small"
           label="Scan or type barcode"
@@ -175,42 +493,29 @@ export default function DiscCatalogLinkPanel({
           inputMode="numeric"
           onChange={(e) => handleBarcodeInputChange(e.target.value)}
           onKeyDown={handleBarcodeKeyDown}
-          sx={{ minWidth: 220 }}
+          sx={{ minWidth: 200 }}
           slotProps={{
             input: {
               endAdornment: barcodeSearching ? <CircularProgress size={16} /> : undefined,
             },
           }}
         />
-        {barcodeResults.length > 1 && (
-          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
-            {barcodeResults.map((disc) => (
-              <Chip
-                key={disc.id}
-                label={disc.title}
-                size="small"
-                variant="outlined"
-                clickable
-                onClick={() => onLink(disc)}
-              />
-            ))}
-          </Stack>
-        )}
-      </Stack>
-      <Stack direction="row" spacing={1} alignItems="flex-start" flexWrap="wrap" useFlexGap>
         <Autocomplete
           size="small"
           sx={{ minWidth: 260, flex: '1 1 260px' }}
           options={results}
           loading={searching}
-          getOptionLabel={(opt) => opt.title}
+          noOptionsText={searchInput.trim() ? 'No disc with that name' : 'Type a disc or box name'}
+          getOptionLabel={(opt) => describeCatalogDisc(opt)}
+          isOptionEqualToValue={(a, b) => a.id === b.id}
+          filterOptions={(x) => x}
           inputValue={searchInput}
           onInputChange={(_, value) => handleInputChange(value)}
           onChange={(_, value) => { if (value) onLink(value); }}
           renderInput={(params) => (
             <TextField
               {...params}
-              label="Search existing discs"
+              label="Search your catalog by name"
               slotProps={{
                 input: {
                   ...params.InputProps,
@@ -226,66 +531,29 @@ export default function DiscCatalogLinkPanel({
           )}
         />
         <Button
-          variant="outlined"
+          variant={knownTitle && matches.length === 0 ? 'contained' : 'outlined'}
           size="small"
-          onClick={() => { setShowCreate((v) => !v); if (!newTitle) setNewTitle(discTitle || searchInput); }}
-          sx={{ alignSelf: 'center' }}
+          onClick={formMode === 'create' ? () => setFormMode('closed') : openCreate}
+          sx={{ mt: 0.5 }}
         >
-          {showCreate ? 'Cancel New Record' : 'Create New Disc Record'}
+          {formMode === 'create' ? 'Cancel new record' : 'New disc record'}
         </Button>
       </Stack>
-      <Collapse in={showCreate} unmountOnExit>
-        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
-          <TextField
-            size="small"
-            label="Disc title"
-            value={newTitle}
-            onChange={(e) => setNewTitle(e.target.value)}
-            sx={{ flex: '2 1 220px' }}
-          />
-          <TextField
-            size="small"
-            label="Disc #"
-            type="number"
-            value={newDiscNumber}
-            onChange={(e) => setNewDiscNumber(e.target.value)}
-            sx={{ width: 90 }}
-            slotProps={{ htmlInput: { min: 1 } }}
-          />
-          <TextField
-            size="small"
-            label="Edition"
-            placeholder="Director's Cut"
-            value={newEdition}
-            onChange={(e) => setNewEdition(e.target.value)}
-            sx={{ flex: '1 1 160px' }}
-          />
-          <TextField
-            select
-            size="small"
-            label="Format"
-            value={format}
-            onChange={(e) => setNewFormat(e.target.value as DiscFormat)}
-            sx={{ width: 170 }}
-          >
-            {FORMAT_OPTIONS.map((opt) => (
-              <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
-            ))}
-          </TextField>
-          <Button
-            variant="contained"
-            size="small"
-            disabled={creating}
-            startIcon={creating ? <CircularProgress size={14} /> : undefined}
-            onClick={handleCreate}
-          >
-            {creating ? 'Creating…' : 'Create and Link'}
-          </Button>
+      {barcodeResults.length > 1 && (
+        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+          {barcodeResults.map((disc) => (
+            <Chip
+              key={disc.id}
+              label={describeCatalogDisc(disc)}
+              size="small"
+              variant="outlined"
+              clickable
+              onClick={() => onLink(disc)}
+            />
+          ))}
         </Stack>
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
-          The barcode above, if entered, is saved on the new record.
-        </Typography>
-      </Collapse>
+      )}
+      <Collapse in={formMode === 'create'} unmountOnExit>{detailsForm}</Collapse>
       {error && <Alert severity="error" sx={{ mt: 1 }}>{error}</Alert>}
     </Paper>
   );

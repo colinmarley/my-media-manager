@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
-  audioSummary, describeStoredRip, ripTitleProblems, subtitleSummary, syncStatus,
+  analyzeTitles, audioSummary, describeCatalogDisc, describeStoredRip, discNumberFromLabel,
+  discRecordTitle, discTypeFromScan, ripTitleProblems, subtitleSummary, suggestReleaseTitle,
+  syncStatus, titleHintLabel,
 } from '@/app/admin/disc-ripper/_components/discRipperUtils';
 import type { DiscStream, RipTitleRecord, StoredRip } from '@/types/disc-ripper/DiscRipper.type';
 
@@ -93,5 +95,84 @@ describe('describeStoredRip', () => {
       .toBe('Untitled rip');
     expect(describeStoredRip({ ...rip, status: 'partial', deliveredAt: 'not a date' }))
       .toBe('Firefly (2002), season 1 (some titles failed)');
+  });
+});
+describe('analyzeTitles', () => {
+  // Burn Notice season 1, disc 1, as MakeMKV listed it.
+  const disc = [
+    [0, 3974, 3472046080], [1, 2529, 2225668096], [2, 2513, 2204901376], [3, 3974, 3472035840],
+    [4, 5042, 4430559232], [5, 147, 115271680], [6, 167, 150294528], [7, 162, 132608000],
+    [8, 195, 166565888], [9, 154, 138203136], [10, 140, 118222848], [11, 157, 136898560],
+    [12, 147, 115271680], [13, 167, 150294528], [14, 162, 132608000], [15, 195, 166565888],
+    [16, 154, 138203136], [17, 140, 118222848], [18, 157, 136898560],
+  ].map(([index, duration_seconds, file_size_bytes]) => ({ index, duration_seconds, file_size_bytes }));
+
+  it('leaves only the three episodes without a hint', () => {
+    const hints = analyzeTitles(disc);
+    expect(disc.filter((t) => !hints[t.index]).map((t) => t.index)).toEqual([0, 1, 2]);
+    expect(hints[3]).toEqual({ kind: 'duplicate', of: 0 });
+    expect(hints[4]).toEqual({ kind: 'play_all', of: [1, 2] });
+    expect(hints[5]).toEqual({ kind: 'short' });
+    expect(hints[12]).toEqual({ kind: 'duplicate', of: 5 });
+    expect(titleHintLabel(hints[4])).toBe('Play-all of titles 1 + 2');
+    expect(titleHintLabel(hints[3])).toBe('Same as title 0');
+  });
+
+  it('finds a play-all title listed before its episodes', () => {
+    const hints = analyzeTitles([
+      { index: 0, duration_seconds: 7800, file_size_bytes: 0 },
+      { index: 1, duration_seconds: 2600, file_size_bytes: 0 },
+      { index: 2, duration_seconds: 2590, file_size_bytes: 0 },
+      { index: 3, duration_seconds: 2611, file_size_bytes: 0 },
+    ]);
+    expect(hints).toEqual({ 0: { kind: 'play_all', of: [1, 2, 3] } });
+  });
+
+  it('does not call two different episodes of the same length duplicates', () => {
+    expect(analyzeTitles([
+      { index: 0, duration_seconds: 2600, file_size_bytes: 2_000_000_000 },
+      { index: 1, duration_seconds: 2600, file_size_bytes: 2_100_000_000 },
+    ])).toEqual({});
+  });
+
+  it('gives a film and its extras no hints', () => {
+    expect(analyzeTitles([
+      { index: 0, duration_seconds: 7000, file_size_bytes: 30_000_000_000 },
+      { index: 1, duration_seconds: 900, file_size_bytes: 1_000_000_000 },
+    ])).toEqual({});
+  });
+});
+
+describe('disc record naming', () => {
+  it('reads the disc type MakeMKV reports', () => {
+    expect(discTypeFromScan('DVD disc')).toBe('dvd');
+    expect(discTypeFromScan('Blu-ray disc')).toBe('bluray');
+    expect(discTypeFromScan(null)).toBeNull();
+  });
+
+  it('suggests a box name from the picked title', () => {
+    expect(suggestReleaseTitle('show', ' Burn Notice ', 2007, 1)).toBe('Burn Notice: Season 1');
+    expect(suggestReleaseTitle('movie', 'Alien', 1979, 1)).toBe('Alien (1979)');
+    expect(suggestReleaseTitle('movie', '', 1979, 1)).toBe('');
+  });
+
+  it('numbers a disc only inside a multi-disc box', () => {
+    expect(discRecordTitle('Firefly', 2, 4)).toBe('Firefly - Disc 2');
+    expect(discRecordTitle('Alien (1979)', 1, 1)).toBe('Alien (1979)');
+    expect(discRecordTitle('  ', null, null)).toBe('Untitled Disc');
+  });
+
+  it('reads the disc number off a volume label', () => {
+    expect(discNumberFromLabel('BURNNOTICE_S1_D1')).toBe(1);
+    expect(discNumberFromLabel('FIREFLY_DISC_3')).toBe(3);
+    expect(discNumberFromLabel('GONE_GIRL')).toBeNull();
+    expect(discNumberFromLabel('DVD')).toBeNull();
+  });
+
+  it('describes a catalogued disc on one line', () => {
+    expect(describeCatalogDisc({ title: 'Burn Notice Season 1', discNumber: 1, edition: 'The Complete First Season', format: 'DVD' }))
+      .toBe('Burn Notice Season 1 · Disc 1 · The Complete First Season · DVD');
+    expect(describeCatalogDisc({ title: 'Firefly - Disc 2', discNumber: 2, format: 'BLURAY' }))
+      .toBe('Firefly - Disc 2 · Blu-ray');
   });
 });

@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert, Autocomplete, Box, Button, Chip, CircularProgress, Divider,
-  FormControl, FormControlLabel, InputLabel, MenuItem,
-  Paper, Radio, RadioGroup, Select, Stack,
-  TextField, Typography,
+  FormControl, InputLabel, MenuItem,
+  Paper, Select, Stack,
+  TextField, ToggleButton, ToggleButtonGroup, Typography,
 } from '@mui/material';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
 import TmdbService from '@/service/tmdb/TmdbService';
@@ -16,7 +16,8 @@ import type {
 import { CatalogDisc } from '@/types/catalog/Disc.type';
 import { getDisc } from '@/service/catalog/DiscCatalogService';
 import {
-  buildStartJobRequest, epCode, POSTER_BASE, previewFilenames, startJobBlocker,
+  analyzeTitles, buildStartJobRequest, discTypeFromScan, epCode, MIN_EPISODE_SECONDS, POSTER_BASE,
+  previewFilenames, SHORT_CLIP_SECONDS, startJobBlocker, titleHintLabel,
 } from './discRipperUtils';
 import ExtrasTypeSelector from './ExtrasTypeSelector';
 import DiscCatalogLinkPanel from './DiscCatalogLinkPanel';
@@ -78,17 +79,20 @@ export default function ConfigureStep({
     return () => { cancelled = true; };
   }, [suggestedDiscId]);
 
-  // Auto-detect disc type from video width
+  // The disc says what it is; the video width is the fallback for older scans.
+  const detectedDiscType = discTypeFromScan(discInfo?.disc_type);
   useEffect(() => {
+    if (detectedDiscType) { setDiscType(detectedDiscType); return; }
     const first = titles.find((t) => t.width > 0);
     if (first) setDiscType(first.width > 1280 ? 'bluray' : 'dvd');
-  }, [titles]);
+  }, [titles, detectedDiscType]);
 
-  // Default-select all non-short titles
+  // Duplicates, play-all titles and short clips are pointed out and left
+  // unselected: a DVD lists each episode more than once.
+  const titleHints = useMemo(() => analyzeTitles(titles), [titles]);
   useEffect(() => {
-    const long = titles.filter((t) => t.duration_seconds >= 120).map((t) => t.index);
-    setSelectedIndices(long);
-  }, [titles]);
+    setSelectedIndices(titles.filter((t) => !titleHints[t.index]).map((t) => t.index));
+  }, [titles, titleHints]);
 
   // ── Search ────────────────────────────────────────────────────────────────
 
@@ -145,11 +149,12 @@ export default function ConfigureStep({
         episodeNumber: e.episode_number, name: e.name, runtime: e.runtime ?? undefined, tmdbId: e.id,
       }));
       setEpisodes(eps);
-      // Auto-assign in order
+      // Auto-assign in order. A clip of a few minutes is never an episode.
       const newAssignments: Record<number, Assignment> = {};
       let epIdx = 0;
       for (const idx of [...currentSelectedIndices].sort((a, b) => a - b)) {
-        const ep = epIdx < eps.length ? eps[epIdx++] : null;
+        const length = titles.find((t) => t.index === idx)?.duration_seconds ?? 0;
+        const ep = length >= MIN_EPISODE_SECONDS && epIdx < eps.length ? eps[epIdx++] : null;
         newAssignments[idx] = ep
           ? { type: 'episode', episodeNumber: ep.episodeNumber, episodeName: ep.name }
           : { type: 'special' };
@@ -160,7 +165,7 @@ export default function ConfigureStep({
     } finally {
       setEpisodesLoading(false);
     }
-  }, []);
+  }, [titles]);
 
   const handleSelectResult = async (result: TmdbResult | null) => {
     setSearchValue(result);
@@ -235,7 +240,11 @@ export default function ConfigureStep({
       setContentTypes((prev) => { const n = { ...prev }; delete n[idx]; return n; });
     } else {
       setSelectedIndices((prev) => [...prev, idx].sort((a, b) => a - b));
-      if (episodes.length) {
+      const length = titles.find((t) => t.index === idx)?.duration_seconds ?? 0;
+      if (length < SHORT_CLIP_SECONDS) {
+        // A clip is an extra, not an episode: start it off as one.
+        setContentTypes((prev) => ({ ...prev, [idx]: prev[idx] || 'trailer' }));
+      } else if (episodes.length) {
         const usedEps = new Set(
           Object.values(assignments)
             .filter((a): a is Extract<Assignment, { type: 'episode' }> => a.type === 'episode')
@@ -304,47 +313,40 @@ export default function ConfigureStep({
     <Box>
       {/* ── Search & Metadata ──────────────────────────────────────────── */}
       <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-        <Stack direction="row" spacing={2} sx={{ mb: 2 }} alignItems="center">
-          <FormControl>
-            <RadioGroup
-              row
+        <Stack direction="row" spacing={4} sx={{ mb: 2 }} alignItems="flex-start" flexWrap="wrap" useFlexGap>
+          {/* Two separate questions, each with its own label and its own answer. */}
+          <Box>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+              1. What is on this disc?
+            </Typography>
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              color="primary"
               value={mediaType}
-              onChange={(e) => handleMediaTypeChange(e.target.value as 'show' | 'movie')}
+              aria-label="What is on this disc"
+              onChange={(_, value) => { if (value) handleMediaTypeChange(value as 'show' | 'movie'); }}
             >
-              <FormControlLabel value="show" control={<Radio size="small" />} label="TV Show" />
-              <FormControlLabel value="movie" control={<Radio size="small" />} label="Movie" />
-            </RadioGroup>
-          </FormControl>
-          <FormControl>
-            <RadioGroup
-              row
+              <ToggleButton value="show">TV show</ToggleButton>
+              <ToggleButton value="movie">Movie</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
+          <Box>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+              2. Disc format{detectedDiscType ? ' (read from the disc)' : ''}
+            </Typography>
+            <ToggleButtonGroup
+              exclusive
+              size="small"
+              color="primary"
               value={discType}
-              onChange={(e) => setDiscType(e.target.value as 'dvd' | 'bluray')}
+              aria-label="Disc format"
+              onChange={(_, value) => { if (value) setDiscType(value as 'dvd' | 'bluray'); }}
             >
-              <FormControlLabel
-                value="dvd"
-                control={<Radio size="small" />}
-                label={
-                  <span>DVD{' '}
-                    <Typography component="span" variant="caption" color="text.secondary">
-                      (H.265)
-                    </Typography>
-                  </span>
-                }
-              />
-              <FormControlLabel
-                value="bluray"
-                control={<Radio size="small" />}
-                label={
-                  <span>Blu-ray{' '}
-                    <Typography component="span" variant="caption" color="text.secondary">
-                      (remux)
-                    </Typography>
-                  </span>
-                }
-              />
-            </RadioGroup>
-          </FormControl>
+              <ToggleButton value="dvd">DVD</ToggleButton>
+              <ToggleButton value="bluray">Blu-ray</ToggleButton>
+            </ToggleButtonGroup>
+          </Box>
         </Stack>
 
         <Autocomplete
@@ -459,6 +461,9 @@ export default function ConfigureStep({
       <DiscCatalogLinkPanel
         discTitle={title}
         discType={discType}
+        mediaType={mediaType}
+        year={year}
+        season={season}
         volumeLabel={discInfo?.volume_label ?? discInfo?.disc_name ?? null}
         linkedDisc={linkedDisc}
         onLink={setLinkedDisc}
@@ -502,10 +507,20 @@ export default function ConfigureStep({
           )}
         </Stack>
 
+        {Object.keys(titleHints).length > 0 && (
+          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+            {titles.length - Object.keys(titleHints).length} of {titles.length} titles are selected. The
+            rest are repeats of a selected title, a play-all title that joins several of them, or short
+            clips (usually ads and previews). Click any of them to rip it as well. A commentary is an
+            audio track of its episode, not a title of its own: it comes along with the episode.
+          </Typography>
+        )}
+
         <Stack spacing={0.75}>
           {titles.map((t) => {
             const isSelected = selectedIndices.includes(t.index);
-            const isShort = t.duration_seconds < 120;
+            const hint = titleHints[t.index];
+            const isShort = !!hint;
             const a = assignments[t.index];
             const preview = getAssignmentPreview(t.index);
             const isExtra = !!contentTypes[t.index];
@@ -525,7 +540,7 @@ export default function ConfigureStep({
                 }}
               >
                 <Stack direction="row" justifyContent="space-between" alignItems="center">
-                  <Typography variant="body2" fontWeight={isSelected ? 600 : 400}>
+                  <Typography variant="body2" component="div" fontWeight={isSelected ? 600 : 400}>
                     <Typography component="span" variant="caption" color="text.secondary" sx={{ mr: 0.75 }}>
                       [{t.index}]
                     </Typography>
@@ -550,8 +565,14 @@ export default function ConfigureStep({
                         {' '}· {DiscRipperService.formatBytes(t.file_size_bytes)}
                       </Typography>
                     )}
-                    {isShort && (
-                      <Chip label="short" size="small" sx={{ ml: 1, height: 16, fontSize: 10 }} />
+                    {hint && (
+                      <Chip
+                        label={titleHintLabel(hint)}
+                        size="small"
+                        color={hint.kind === 'short' ? 'default' : 'warning'}
+                        variant="outlined"
+                        sx={{ ml: 1, height: 18, fontSize: 11 }}
+                      />
                     )}
                   </Typography>
                   {isSelected && !isExtra && preview && (
