@@ -1,7 +1,8 @@
 import React from 'react';
 import { Chip } from '@mui/material';
 import type {
-  Assignment, ExtrasCategory, StartJobRequest, TitleDeclaration, TmdbEpisode,
+  Assignment, DiscStream, ExtrasCategory, RipJob, RipTitleRecord, StartJobRequest,
+  StoredRip, TitleDeclaration, TmdbEpisode,
 } from '@/types/disc-ripper/DiscRipper.type';
 
 export const POSTER_BASE = 'https://image.tmdb.org/t/p/w92';
@@ -160,4 +161,67 @@ export function startJobBlocker(input: {
   if (!input.selectedIndices.length) return 'Select at least one title to rip';
   if (!input.linkedDiscId) return 'Link this rip to a disc in your catalog (or create one) before starting';
   return null;
+}
+
+/** "eng 5.1, eng 2.0" for a title's audio streams ("—" when the scan has none). */
+export function audioSummary(streams: DiscStream[] | undefined): string {
+  const audio = (streams ?? []).filter((s) => s.type === 'audio');
+  if (!audio.length) return '—';
+  return audio.map((s) => {
+    const lang = s.lang_code || '?';
+    const layout = s.channels === 6 ? '5.1' : s.channels === 8 ? '7.1' : s.channels ? `${s.channels}.0` : '';
+    return layout ? `${lang} ${layout}` : lang;
+  }).join(', ');
+}
+
+/** "eng, spa, fre (1 forced)" for a title's subtitle streams. */
+export function subtitleSummary(streams: DiscStream[] | undefined): string {
+  const subs = (streams ?? []).filter((s) => s.type.startsWith('sub'));
+  if (!subs.length) return '—';
+  const langs = [...new Set(subs.map((s) => s.lang_code || '?'))].join(', ');
+  const forced = subs.filter((s) => s.forced).length;
+  return forced ? `${langs} (${forced} forced)` : langs;
+}
+
+/** One line per title that failed or had disc read errors. */
+export function ripTitleProblems(titles: RipTitleRecord[]): string[] {
+  const out: string[] = [];
+  for (const t of titles) {
+    const name = t.dest_path ? t.dest_path.split(/[\\/]/).pop() : `disc title ${t.title_index}`;
+    if (t.status === 'failed') {
+      out.push(`Disc title ${t.title_index} was not ripped${t.error ? ` (${t.error})` : ''}`);
+    } else if (t.read_errors > 0) {
+      out.push(`${name}: ${t.read_errors} disc read error${t.read_errors === 1 ? '' : 's'}`);
+    }
+  }
+  return out;
+}
+
+/** Whether a finished job's rip record reached the library; null when not applicable. */
+export function syncStatus(
+  job: Pick<RipJob, 'status' | 'library_sync_state' | 'library_sync_error'>,
+): { severity: 'success' | 'warning' | 'info'; label: string; detail?: string } | null {
+  if (job.status !== 'done' || !job.library_sync_state) return null;
+  if (job.library_sync_state === 'synced') return { severity: 'success', label: 'Rip record is in the library' };
+  if (job.library_sync_state === 'pending') {
+    return { severity: 'info', label: 'Rip record is waiting to be sent to the library' };
+  }
+  return {
+    severity: 'warning',
+    label: 'Rip record has not reached the library yet (the ripper keeps retrying)',
+    detail: job.library_sync_error ?? undefined,
+  };
+}
+
+/** "Firefly (2002), season 1 — ripped 22 Nov 2026" for an earlier rip of the same disc. */
+export function describeStoredRip(rip: StoredRip): string {
+  const when = rip.deliveredAt ?? rip.ripStartedAt;
+  const date = when ? new Date(when) : null;
+  const title = rip.title ? `${rip.title}${rip.year ? ` (${rip.year})` : ''}` : 'Untitled rip';
+  const season = rip.season != null ? `, season ${rip.season}` : '';
+  const dated = date && !Number.isNaN(date.getTime())
+    ? ` — ripped ${date.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`
+    : '';
+  const partial = rip.status === 'partial' ? ' (some titles failed)' : '';
+  return `${title}${season}${dated}${partial}`;
 }

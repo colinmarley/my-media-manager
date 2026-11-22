@@ -83,6 +83,36 @@ export interface RipJob {
   tmdb_id?: number | null;
   scan_id?: string | null;
   fingerprint?: string | null;
+  // Whether the rip record reached my-media-manager: synced | failed | pending.
+  library_sync_state?: string | null;
+  library_sync_error?: string | null;
+}
+
+/** One output file of a job (GET /jobs/{id}/titles). */
+export interface RipTitleRecord {
+  title_index: number;
+  file_seq: number;
+  status: string;            // ripped | delivered | failed
+  error: string | null;
+  makemkv_filename: string | null;
+  dest_path: string | null;
+  size_bytes: number | null;
+  read_errors: number;
+  messages: string[];
+  duration_seconds: number | null;
+}
+
+/** A rip already stored in the library (GET /api/rips). */
+export interface StoredRip {
+  id: string;
+  status: string;
+  discId: string | null;
+  title: string | null;
+  year: number | null;
+  season: number | null;
+  volumeLabel: string | null;
+  deliveredAt: string | null;
+  ripStartedAt: string | null;
 }
 
 export interface JobAnalysis {

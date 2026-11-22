@@ -8,14 +8,19 @@ import {
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
 import type { DiscScanInfo, DiscTitle } from '@/types/disc-ripper/DiscRipper.type';
-import { fmtDur } from './discRipperUtils';
+import { findRipsByFingerprint } from '@/service/catalog/DiscCatalogService';
+import type { StoredRip } from '@/types/disc-ripper/DiscRipper.type';
+import { audioSummary, describeStoredRip, fmtDur, subtitleSummary } from './discRipperUtils';
 
 export default function DiscScanStep({
   titles,
   setTitles,
   scanError,
   setScanError,
+  scanInfo,
+  previousRips,
   onScanned,
+  onPreviousRips,
   onContinue,
 }: {
   titles: DiscTitle[];
@@ -24,6 +29,10 @@ export default function DiscScanStep({
   setScanError: (e: string) => void;
   /** Disc identity of the scan just made (null when the scan failed or the ripper is an older build). */
   onScanned?: (info: DiscScanInfo | null) => void;
+  /** The last scan's disc identity and earlier rips of that disc (held by the page). */
+  scanInfo?: DiscScanInfo | null;
+  previousRips?: StoredRip[];
+  onPreviousRips?: (rips: StoredRip[]) => void;
   onContinue: () => void;
 }) {
   const [scanning, setScanning] = useState(false);
@@ -33,6 +42,7 @@ export default function DiscScanStep({
     setScanError('');
     setTitles([]);
     onScanned?.(null);
+    onPreviousRips?.([]);
     try {
       const info = await DiscRipperService.getDiscInfo();
       if (info.error) {
@@ -40,6 +50,9 @@ export default function DiscScanStep({
       } else {
         setTitles(info.titles);
         onScanned?.(info.disc ?? null);
+        if (info.disc?.fingerprint) {
+          onPreviousRips?.(await findRipsByFingerprint(info.disc.fingerprint));
+        }
       }
     } catch (e: unknown) {
       setScanError(e instanceof Error ? e.message : 'Scan failed — is the ripper service running?');
@@ -67,6 +80,22 @@ export default function DiscScanStep({
 
       {titles.length > 0 && (
         <Box sx={{ mt: 2 }}>
+          {scanInfo && (
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              <strong>{scanInfo.volume_label || scanInfo.disc_name || 'Unlabelled disc'}</strong>
+              {[scanInfo.disc_type, scanInfo.makemkv_version,
+                scanInfo.skipped_short ? `${scanInfo.skipped_short} short title(s) skipped` : null]
+                .filter(Boolean).map((part) => ` · ${part}`).join('')}
+            </Typography>
+          )}
+          {(previousRips?.length ?? 0) > 0 && (
+            <Alert severity="warning" sx={{ mb: 1.5 }}>
+              <strong>This disc has been ripped before.</strong>
+              <ul style={{ margin: '4px 0 0', paddingLeft: 18 }}>
+                {previousRips!.map((rip) => <li key={rip.id}>{describeStoredRip(rip)}</li>)}
+              </ul>
+            </Alert>
+          )}
           <Typography variant="subtitle2" sx={{ mb: 1 }}>
             Found {titles.length} title(s) — select the episodes/content in the next step
           </Typography>
@@ -80,6 +109,8 @@ export default function DiscScanStep({
                   <TableCell>Codec</TableCell>
                   <TableCell>Chapters</TableCell>
                   <TableCell>Size</TableCell>
+                  <TableCell>Audio</TableCell>
+                  <TableCell>Subtitles</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -96,6 +127,8 @@ export default function DiscScanStep({
                     <TableCell>{t.codec || '—'}</TableCell>
                     <TableCell>{t.chapter_count || '—'}</TableCell>
                     <TableCell>{DiscRipperService.formatBytes(t.file_size_bytes)}</TableCell>
+                    <TableCell>{audioSummary(t.streams)}</TableCell>
+                    <TableCell>{subtitleSummary(t.streams)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

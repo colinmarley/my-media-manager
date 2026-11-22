@@ -4,6 +4,7 @@ import type {
   DiscInfoResponse,
   JobAnalysis,
   RipJob,
+  RipTitleRecord,
   StartJobRequest,
 } from '@/types/disc-ripper/DiscRipper.type';
 
@@ -75,6 +76,16 @@ export const DiscRipperService = {
       return data.duration ?? null;
     } catch {
       return null;
+    }
+  },
+
+  /** Per-file records of a job; empty on a ripper build that does not keep them. */
+  async getJobTitles(jobId: string): Promise<RipTitleRecord[]> {
+    try {
+      const { data } = await api.get<RipTitleRecord[]>(`/jobs/${jobId}/titles`);
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
     }
   },
 

@@ -15,7 +15,7 @@ import ReplayIcon from '@mui/icons-material/Replay';
 import StopIcon from '@mui/icons-material/Stop';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
 import type { JobAnalysis, RipJob } from '@/types/disc-ripper/DiscRipper.type';
-import { StatusChip } from './discRipperUtils';
+import { StatusChip, syncStatus } from './discRipperUtils';
 import { borders, surfaces, text } from '@/theme/tokens';
 
 export default function MonitorStep({ jobs, serviceError, onRefresh, onViewResults, onRetry }: {
@@ -130,7 +130,23 @@ export default function MonitorStep({ jobs, serviceError, onRefresh, onViewResul
               return (
                 <React.Fragment key={job.id}>
                   <TableRow hover>
-                    <TableCell><StatusChip status={job.status} /></TableCell>
+                    <TableCell>
+                      <StatusChip status={job.status} />
+                      {(() => {
+                        const sync = syncStatus(job);
+                        if (!sync) return null;
+                        return (
+                          <Chip
+                            label={sync.severity === 'success' ? 'in library' : 'not in library yet'}
+                            title={sync.detail ? `${sync.label}: ${sync.detail}` : sync.label}
+                            size="small"
+                            variant="outlined"
+                            color={sync.severity === 'success' ? 'success' : 'warning'}
+                            sx={{ ml: 0.5, height: 18, fontSize: 10 }}
+                          />
+                        );
+                      })()}
+                    </TableCell>
                     <TableCell>
                       <Typography variant="body2" fontWeight={500}>{job.title}</Typography>
                       <Typography variant="caption" color="text.secondary">
