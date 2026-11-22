@@ -218,7 +218,26 @@ Two deliberate departures from the rest of this document:
 A rip also fixes the ignored-path trap: a path whose queue row was closed as `ignored` (its file was
 organized away) is queued again when a rip announces or delivers a new file there.
 
-Not built yet: matching from the declaration (the queue still matches from names and ids).
+### Matching from the declaration (built)
+
+When the queue processes a file that a rip delivered (`disc_rip_titles.delivered_path`, same size), what
+the rip declared replaces what would be parsed from the name
+(`rip_records.apply_declaration`, called from `process_next_item`):
+
+- the title's TMDB / IMDb id, title and year, so the matcher resolves it by id;
+- season, episode and episode range for a declared episode;
+- `special_feature` for a declared extra and `main_feature` for the one declared feature. A reviewer's
+  own choice is never overwritten.
+
+A declared extra, or a file on disc 2+, is no longer held just because its title came from the folder.
+The match's score breakdown gains a zero-point `ripper_manifest` entry naming the rip and disc title.
+
+Still held for review: a show title ripped without an episode assignment (its file name carries only
+its position on the disc), a title that had disc read errors, and a file whose duration differs from
+what the ripper measured by more than 2%.
+
+If no record arrived by API, the `_rip_manifest.*.json` the ripper left in the folder is read once and
+used the same way. With no record at all, processing is exactly as before.
 
 ## Build order
 
