@@ -6,6 +6,7 @@ operations for processing, retrying, and tracking status transitions.
 """
 
 import asyncio
+import glob
 import os
 import re
 import shutil
@@ -212,6 +213,8 @@ class IngressQueueService:
         # a new file even when the path's old row was closed as ignored: the file that row was about
         # has since been organized away, and the ripper never overwrites an existing file.
         self.rip_expected_paths: Set[str] = set()
+        # Manifest files already read while looking for a rip record that never arrived by API.
+        self._rip_manifests_seen: Set[str] = set()
         self.processing_history: List[Dict[str, Any]] = []
 
         # Match each stored proposal was resolved with, when it differs from the
@@ -384,6 +387,38 @@ class IngressQueueService:
         )
         return queue_item
 
+    async def _rip_declaration_for(self, candidate: IngressQueueItem, source_root: str) -> Optional[Dict[str, Any]]:
+        """What a rip declared this file to be, or None.
+
+        The record normally arrives by API before the file does. When it did not (the library was
+        down while the ripper delivered), the manifest the ripper left in the folder is read instead.
+        A lookup that fails is logged and treated as "no record": matching falls back to the name.
+        """
+        if self.db_session_factory is None:
+            return None
+        from services import rip_records
+        try:
+            async with self.db_session_factory() as session:
+                declaration = await rip_records.declaration_for_path(session, candidate.file_path, candidate.file_size)
+                if declaration is not None:
+                    return declaration
+                # Ingest folders are named "Title (Year) [imdbid-tt...]": the brackets must not be
+                # read as a glob character class.
+                manifests = [
+                    path for path in glob.glob(os.path.join(glob.escape(source_root), rip_records.MANIFEST_GLOB))
+                    if path not in self._rip_manifests_seen
+                ]
+                if not manifests:
+                    return None
+                self._rip_manifests_seen.update(manifests)
+                imported = await rip_records.import_manifest_files(session, manifests)
+                await session.commit()
+                logger.info("Rip manifest read from the ingest folder", folder=source_root, rips=imported)
+                return await rip_records.declaration_for_path(session, candidate.file_path, candidate.file_size)
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning("Rip record lookup failed", file_path=candidate.file_path, error=str(exc))
+            return None
+
     def expect_rip_paths(self, paths: Iterable[str]) -> None:
         """Announce paths a rip is about to deliver to (see ``rip_expected_paths``)."""
         # The watcher reports paths in the OS's own form; a rip record carries them with forward slashes.
@@ -552,6 +587,21 @@ class IngressQueueService:
             inferred_media_type = self._infer_source_media_type(source_root)
             if inferred_media_type == "episode":
                 parsed_info["media_type"] = "episode"
+            # What the ripper declared this file to be (title ids, episode, feature or extra) beats
+            # anything read back out of its name.
+            rip_declaration = await self._rip_declaration_for(candidate, source_root)
+            rip_review_reason: Optional[str] = None
+            if rip_declaration is not None:
+                from services import rip_records
+                rip_review_reason = rip_records.apply_declaration(
+                    parsed_info,
+                    rip_declaration,
+                    media_duration_ms=candidate.media_duration_ms,
+                    keep_classification=existing_override in VALID_CLASSIFICATION_OVERRIDES,
+                )
+                declared_class = parsed_info.get("classification_override")
+                if declared_class in VALID_CLASSIFICATION_OVERRIDES:
+                    candidate.classification_override = declared_class
             # A disc-set folder ("Top Gun D2 (1986)", "The.Matrix.Disc.2") needs nothing here: the
             # parser strips the disc marker from the title and reports it as disc_number.
             # A folder of MakeMKV track files (B1_t00.mkv ...) that is a TV disc
@@ -573,16 +623,29 @@ class IngressQueueService:
             # auto-assigned: the same forced-review path as a track-set guess.
             if hold_reason and not force_review_reason:
                 force_review_reason = f"held for review: {hold_reason}"
+            if rip_review_reason and not force_review_reason:
+                force_review_reason = rip_review_reason
             # Matched on the folder title alone (no runtime check), so never auto-assigned.
             if (
                 not force_review_reason
                 and track_result is None
+                # A declared extra is known to be one; there is no title guess to distrust.
+                and rip_declaration is None
                 and (match_result or {}).get("best_match")
                 and AutoMatcherService.titled_by_folder_only(parsed_info)
             ):
                 force_review_reason = "extra or later disc of a set: matched on the folder title, runtime not compared"
             best_match = match_result.get("best_match") if match_result else None
             has_best_match = isinstance(best_match, dict) and bool(best_match)
+            if has_best_match and rip_declaration is not None:
+                best_match.setdefault("score_breakdown", []).append({
+                    "rule": "ripper_manifest",
+                    "points": 0,
+                    "note": (
+                        f"declared when ripped (rip {str(rip_declaration.get('rip_id'))[:8]}, "
+                        f"disc title {rip_declaration.get('title_index')})"
+                    ),
+                })
             ambiguous = bool(match_result.get("ambiguous")) if match_result else False
 
             # `confidence_score` is the *match* confidence only. How well the filename

@@ -307,8 +307,9 @@ def find_manifests(roots: Optional[Iterable[str]] = None) -> List[str]:
     """Manifest files in the top-level folders of the ingest roots."""
     found: List[str] = []
     for root in (roots if roots is not None else storage_paths.ingest_roots()):
-        found.extend(glob.glob(os.path.join(root, "*", MANIFEST_GLOB)))
-        found.extend(glob.glob(os.path.join(root, MANIFEST_GLOB)))
+        base = glob.escape(str(root))
+        found.extend(glob.glob(os.path.join(base, "*", MANIFEST_GLOB)))
+        found.extend(glob.glob(os.path.join(base, MANIFEST_GLOB)))
     return sorted(set(found))
 
 
@@ -334,6 +335,139 @@ async def import_manifests(db: Any, roots: Optional[Iterable[str]] = None) -> Di
         await upsert_rip(db, record)
         imported.append(record.job_id)
     return {"found": len(paths), "imported": imported, "unreadable": unreadable}
+
+
+# ── Declarations (what the queue matches from) ──────────────────────────────
+
+# Content types that are neither the feature nor an episode.
+_NOT_EXTRAS = (None, "", "main_feature", "episode")
+# How far a file's measured duration may differ from what the ripper measured.
+DURATION_TOLERANCE = 0.02
+
+
+async def declaration_for_path(db: Any, path: Any, file_size: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """What a rip declared the file at ``path`` to be, or None.
+
+    Only a delivered title counts, and only while the file is still the one
+    the rip delivered: a different size means another file now sits at that
+    path, and the record says nothing about it.
+    """
+    normalized = media_file_index.normalize_path(path)
+    if not normalized:
+        return None
+    rows = (await db.execute(
+        select(DiscRipTitle).where(DiscRipTitle.delivered_path == normalized)
+    )).scalars().all()
+    rows = [row for row in rows if row.status == DELIVERED]
+    if file_size and any(row.size_bytes for row in rows):
+        rows = [row for row in rows if not row.size_bytes or row.size_bytes == file_size]
+    if not rows:
+        return None
+    title = max(rows, key=lambda row: (row.created_at is not None, row.created_at))
+    rip = (await db.execute(select(DiscRip).where(DiscRip.id == title.rip_id))).scalar_one_or_none()
+    if rip is None:
+        return None
+    return {
+        "rip_id": rip.id,
+        "disc_id": rip.disc_id,
+        "media_type": rip.media_type,
+        "title": rip.title,
+        "year": rip.year,
+        "imdb_id": rip.imdb_id,
+        "tmdb_id": rip.tmdb_id,
+        "rip_season": rip.season,
+        "title_index": title.title_index,
+        "content_type": title.content_type,
+        "is_main_feature": title.is_main_feature,
+        "season": title.season,
+        "episode": title.episode,
+        "episode_end": title.episode_end,
+        "tmdb_episode_id": title.tmdb_episode_id,
+        "episode_name": title.episode_name,
+        "custom_name": title.custom_name,
+        "read_errors": title.read_errors or 0,
+        "duration_seconds": title.duration_seconds,
+    }
+
+
+def apply_declaration(
+    parsed_info: Dict[str, Any],
+    declaration: Dict[str, Any],
+    *,
+    media_duration_ms: Optional[float] = None,
+    keep_classification: bool = False,
+) -> Optional[str]:
+    """Put what the rip declared into ``parsed_info`` (in place).
+
+    The declared ids, season and episode replace what was parsed from the
+    file name, so the matcher resolves the title by id. Returns a reason to
+    hold the file for review, or None when the declaration can be trusted as
+    it stands. ``keep_classification`` leaves a reviewer's own
+    main/special/alternate choice alone.
+    """
+    content_type = declaration.get("content_type")
+    is_show = declaration.get("media_type") == "show"
+    is_extra = content_type not in _NOT_EXTRAS
+
+    parsed_info["rip"] = {
+        "rip_id": declaration.get("rip_id"),
+        "disc_id": declaration.get("disc_id"),
+        "title_index": declaration.get("title_index"),
+        "content_type": content_type,
+        "read_errors": declaration.get("read_errors") or 0,
+    }
+    if declaration.get("imdb_id"):
+        parsed_info["imdb_id"] = declaration["imdb_id"]
+    if declaration.get("tmdb_id") is not None:
+        parsed_info["tmdb_id"] = str(declaration["tmdb_id"])
+    if declaration.get("title"):
+        parsed_info["title"] = declaration["title"]
+        parsed_info["title_source"] = "rip"
+    if declaration.get("year"):
+        parsed_info["year"] = declaration["year"]
+
+    reason: Optional[str] = None
+    if is_show and not is_extra:
+        parsed_info["media_type"] = "episode"
+        if declaration.get("episode") is not None:
+            season = declaration.get("season")
+            parsed_info["season"] = season if season is not None else declaration.get("rip_season")
+            parsed_info["episode"] = declaration["episode"]
+            parsed_info["episode_end"] = declaration.get("episode_end")
+            if declaration.get("episode_name"):
+                parsed_info["episode_title"] = declaration["episode_name"]
+        else:
+            # The ripper numbers an unassigned title by its position on the disc.
+            reason = "ripped without an episode assignment: the episode number in the name is only its position on the disc"
+    elif not is_show:
+        parsed_info["media_type"] = "movie"
+
+    if not keep_classification:
+        if is_extra:
+            parsed_info["classification_override"] = "special_feature"
+        elif content_type == "main_feature" and declaration.get("is_main_feature"):
+            parsed_info["classification_override"] = "main_feature"
+
+    read_errors = declaration.get("read_errors") or 0
+    if read_errors:
+        reason = f"the disc had {read_errors} read error(s) while this title was ripped"
+    ripped = declaration.get("duration_seconds")
+    if not reason and ripped and media_duration_ms:
+        measured = media_duration_ms / 1000.0
+        if abs(measured - ripped) / ripped > DURATION_TOLERANCE:
+            reason = f"file runs {measured:.0f}s but the rip recorded {ripped:.0f}s"
+    return reason
+
+
+async def import_manifest_files(db: Any, paths: Iterable[str]) -> List[str]:
+    """Store the given manifest files; returns the job ids imported."""
+    imported: List[str] = []
+    for path in paths:
+        record = await asyncio.to_thread(read_manifest, path)
+        if record is not None:
+            await upsert_rip(db, record)
+            imported.append(record.job_id)
+    return imported
 
 
 # ── DTOs ────────────────────────────────────────────────────────────────────
