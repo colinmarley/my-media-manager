@@ -50,6 +50,7 @@ from api.media_images import router as media_images_router
 from api.metadata_search import router as metadata_search_router
 from api.cover_scan import router as cover_scan_router
 from api.ripper_proxy import router as ripper_proxy_router
+from api.rips import router as rips_router
 from api.wishlist import router as wishlist_router
 from api.storage_locations import router as storage_locations_router
 from api.library_inventory import router as library_inventory_router
@@ -281,6 +282,14 @@ async def lifespan(app: FastAPI):
         await ingress_queue_service.load_persisted_paths()
     except Exception as exc:
         logger.warning("Could not load the ingress queue path index", error=str(exc))
+
+    try:
+        # Rips that announced their files but had not confirmed delivery when the service stopped.
+        from services import rip_records
+        async with AsyncSessionLocal() as rip_session:
+            ingress_queue_service.expect_rip_paths(await rip_records.pending_paths(rip_session))
+    except Exception as exc:
+        logger.warning("Could not load pending rip paths", error=str(exc))
 
     # Stored proposals are refreshed when a queue item changes. Recompute them once
     # at startup too: the role hints and inherited matches are not persisted, rows
@@ -534,6 +543,7 @@ app.include_router(media_images_router)
 app.include_router(metadata_search_router)
 app.include_router(cover_scan_router)
 app.include_router(ripper_proxy_router)
+app.include_router(rips_router)
 app.include_router(wishlist_router)
 app.include_router(storage_locations_router)
 app.include_router(library_inventory_router)
