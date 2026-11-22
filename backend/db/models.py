@@ -693,3 +693,87 @@ class TapeSessionFile(Base):
     processing_status = Column(Text, nullable=False, default="pending")
     tape_id           = Column(Text, nullable=True, index=True)
     metadata_json     = Column(JSONB, default={})
+
+
+# ---------------------------------------------------------------------------
+# Disc rips (pushed by disc-ripper-service; see api/rips.py)
+# ---------------------------------------------------------------------------
+
+class DiscRip(Base):
+    """One rip job of one physical disc, as reported by disc-ripper-service.
+
+    What the disc said about itself (volume label, fingerprint) lives here and
+    not on ``discs``: a disc PUT rewrites every disc column from its body, so
+    anything only the ripper knows would be lost on the next edit of the disc.
+    """
+    __tablename__ = "disc_rips"
+
+    id                 = Column(Text, primary_key=True)  # the ripper's job id
+    schema_version     = Column(Integer)
+    status             = Column(Text, nullable=False)  # delivering | delivered | partial | failed | cancelled
+    disc_id            = Column(Text, ForeignKey("discs.id", ondelete="SET NULL"), index=True)
+    release_id         = Column(Text, ForeignKey("disc_sets.id", ondelete="SET NULL"), index=True)
+    # What was declared when the rip was set up.
+    media_type         = Column(Text)  # movie | show
+    title              = Column(Text)
+    year               = Column(Integer)
+    imdb_id            = Column(Text)
+    tmdb_id            = Column(Integer)
+    season             = Column(Integer)
+    # What the disc and drive reported.
+    disc_type          = Column(Text)
+    reported_disc_type = Column(Text)
+    disc_name          = Column(Text)
+    volume_label       = Column(Text)
+    fingerprint        = Column(Text, index=True)
+    fingerprint_algo   = Column(Text)
+    drive_model        = Column(Text)
+    makemkv_version    = Column(Text)
+    ripper_host        = Column(Text)
+    rip_started_at     = Column(DateTime(timezone=True))
+    rip_finished_at    = Column(DateTime(timezone=True))
+    delivered_at       = Column(DateTime(timezone=True))
+    scan_titles        = Column(JSONB, default=[])  # every title on the disc, ripped or not
+    manifest           = Column(JSONB, default={})  # the payload as last received
+    created_at         = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at         = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class DiscRipTitle(Base):
+    """One output file of a rip: the disc title it came from and what it was
+    declared to be. Declarations stay here rather than on ``media_files``,
+    whose season/episode/role columns are recomputed from the file's path."""
+    __tablename__ = "disc_rip_titles"
+
+    id                   = Column(Text, primary_key=True, server_default=sa.text("(gen_random_uuid())::text"))
+    rip_id               = Column(Text, ForeignKey("disc_rips.id", ondelete="CASCADE"), nullable=False, index=True)
+    title_index          = Column(Integer, nullable=False)
+    file_seq             = Column(Integer, nullable=False, default=0, server_default=sa.text("0"))
+    status               = Column(Text)  # ripped | delivered | failed
+    error                = Column(Text)
+    content_type         = Column(Text)  # main_feature | episode | an extras category
+    is_main_feature      = Column(Boolean)
+    season               = Column(Integer)
+    episode              = Column(Integer)
+    episode_end          = Column(Integer)
+    tmdb_episode_id      = Column(Integer)
+    episode_name         = Column(Text)
+    custom_name          = Column(Text)
+    makemkv_filename     = Column(Text)
+    delivered_path       = Column(Text, index=True)
+    ingest_relative_path = Column(Text)
+    size_bytes           = Column(BigInteger)
+    sha256               = Column(Text)
+    duration_seconds     = Column(Float)
+    read_errors          = Column(Integer)
+    messages             = Column(JSONB, default=[])
+    probe                = Column(JSONB, default={})
+    rip_started_at       = Column(DateTime(timezone=True))
+    rip_finished_at      = Column(DateTime(timezone=True))
+    media_file_id        = Column(Text, ForeignKey("media_files.id", ondelete="SET NULL"), index=True)
+    created_at           = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at           = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("rip_id", "title_index", "file_seq", name="uq_disc_rip_titles_rip_title_seq"),
+    )

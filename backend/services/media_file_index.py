@@ -46,6 +46,8 @@ LOCATION_OTHER = "other"
 MERGE_KEEP_FIELDS = (
     "disc_id",
     "tape_id",
+    "release_id",
+    "source_kind",
     "assigned_to_type",
     "assigned_to_id",
     "movie_id",
@@ -408,8 +410,13 @@ async def upsert_by_path(session: Any, path: Any, **fields: Any) -> Any:
 
 async def _repoint_references(session: Any, dropped_id: str, survivor_id: str) -> None:
     from sqlalchemy import update
-    from db.models import AssignmentExtraFile, MediaAssignment
+    from db.models import AssignmentExtraFile, DiscRipTitle, MediaAssignment
 
+    await session.execute(
+        update(DiscRipTitle)
+        .where(DiscRipTitle.media_file_id == dropped_id)
+        .values(media_file_id=survivor_id)
+    )
     await session.execute(
         update(MediaAssignment)
         .where(MediaAssignment.primary_file_id == dropped_id)

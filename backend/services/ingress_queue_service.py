@@ -208,6 +208,10 @@ class IngressQueueService:
         # _persist_queue_item, so a re-detected file after a restart updates its row (and an ignored file
         # stays ignored) instead of getting a fresh pending row.
         self.persisted_paths: Dict[str, Tuple[str, str]] = {}
+        # Paths a rip has announced it is about to deliver to (api/rips.py). A file arriving at one is
+        # a new file even when the path's old row was closed as ignored: the file that row was about
+        # has since been organized away, and the ripper never overwrites an existing file.
+        self.rip_expected_paths: Set[str] = set()
         self.processing_history: List[Dict[str, Any]] = []
 
         # Match each stored proposal was resolved with, when it differs from the
@@ -330,7 +334,7 @@ class IngressQueueService:
             existing_id = self.path_to_item_id.get(queued_file.file_path)
             if existing_id is not None:
                 existing_item = self.items_by_id[existing_id]
-                if existing_item.status == QUEUE_IGNORED:
+                if existing_item.status == QUEUE_IGNORED and queued_file.file_path not in self.rip_expected_paths:
                     # A reviewer decided to ignore this file; seeing it again doesn't undo that.
                     logger.info("Ignored ingress file re-detected; leaving it ignored", item_id=existing_id,
                                 file_path=queued_file.file_path)
@@ -341,10 +345,13 @@ class IngressQueueService:
                     existing_item.processed_at = None
                     existing_item.queued_at = time.time()
                     existing_item.priority = max(1, min(priority, 10))
+                self.rip_expected_paths.discard(queued_file.file_path)
                 return existing_item
 
             persisted = self.persisted_paths.get(queued_file.file_path)
-            if persisted is not None and persisted[1] == QUEUE_IGNORED:
+            expected_rip = queued_file.file_path in self.rip_expected_paths
+            self.rip_expected_paths.discard(queued_file.file_path)
+            if persisted is not None and persisted[1] == QUEUE_IGNORED and not expected_rip:
                 # Not in memory (e.g. after a restart) but ignored in Postgres: don't resurrect it.
                 logger.info("Ignored ingress file re-detected after restart; skipping", item_id=persisted[0],
                             file_path=queued_file.file_path)
@@ -376,6 +383,31 @@ class IngressQueueService:
             priority=queue_item.priority,
         )
         return queue_item
+
+    def expect_rip_paths(self, paths: Iterable[str]) -> None:
+        """Announce paths a rip is about to deliver to (see ``rip_expected_paths``)."""
+        # The watcher reports paths in the OS's own form; a rip record carries them with forward slashes.
+        with self.lock:
+            self.rip_expected_paths.update(os.path.normpath(str(path)) for path in paths if path)
+
+    def requeue_ripped_file(self, file_path: str) -> Optional[IngressQueueItem]:
+        """Queue a file a rip has just delivered, if the queue would otherwise skip it.
+
+        Only acts when the path is untracked or its row is ignored: an item that is pending, under
+        review or already assigned is left exactly as it is.
+        """
+        file_path = os.path.normpath(file_path)
+        with self.lock:
+            self.rip_expected_paths.discard(file_path)
+            existing_id = self.path_to_item_id.get(file_path)
+            if existing_id is not None:
+                status: Optional[str] = self.items_by_id[existing_id].status
+            else:
+                persisted = self.persisted_paths.get(file_path)
+                status = persisted[1] if persisted is not None else None
+        if status is not None and status != QUEUE_IGNORED:
+            return None
+        return self.add_manual_file(file_path)
 
     def add_manual_file(
         self,

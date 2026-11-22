@@ -191,6 +191,35 @@ Each count opens the matching list.
 - `link-source` also sets `release_id` and `source_kind = disc`.
 - After a TV disc is mapped, write the episode range to that disc's `disc_media_links` row.
 
+### Rip records (built)
+
+disc-ripper-service reports each rip to `PUT /api/rips/{job_id}` (`backend/api/rips.py`,
+`backend/services/rip_records.py`): once before it moves files (`delivering`) and once after
+(`delivered` / `partial`). The same payload is written next to the files as
+`_rip_manifest.<job8>.json`; `POST /api/rips/import-manifests` stores any whose push never arrived.
+
+- `disc_rips`: the catalogued disc and release, the declared title (TMDB / IMDb id, season), and what
+  the disc reported about itself: volume label, fingerprint, drive, MakeMKV version, every title on it.
+- `disc_rip_titles`: one row per output file: the disc title it came from, the declared content type,
+  season, episode range and TMDB episode id, size, sha256, read errors, and its `media_files` row.
+- Delivered files get `disc_id`, `release_id`, `source_kind = disc` and `checksum`, as `link-source`
+  does; a report that arrives after organize finds the organized row.
+- The episode range is written to the disc's `disc_media_links` row once the series (or movie) has a
+  catalog row. A second rip of the same disc and season widens the range.
+
+Two deliberate departures from the rest of this document:
+
+- Volume label and fingerprint are **not** columns on `discs`. A disc PUT rewrites every disc column
+  from its body, so a phone edit would erase anything only the ripper knows. Look a disc's identity up
+  through its rips (`GET /api/rips?discId=` / `?fingerprint=`).
+- Declared season / episode / role are **not** written to `media_files`. Those are placement columns
+  recomputed from the file's path; the declaration stays on the rip title.
+
+A rip also fixes the ignored-path trap: a path whose queue row was closed as `ignored` (its file was
+organized away) is queued again when a rip announces or delivers a new file there.
+
+Not built yet: matching from the declaration (the queue still matches from names and ids).
+
 ## Build order
 
 | Phase | Work | Repo |
