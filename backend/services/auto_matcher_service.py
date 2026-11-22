@@ -582,7 +582,7 @@ class AutoMatcherService:
                 if episode_runtime is not None:
                     expected_runtime = episode_runtime
 
-        if media_duration_ms:
+        if media_duration_ms and not self.titled_by_folder_only(parsed_info):
             entry = self._runtime_entry(media_duration_ms, expected_runtime, episode=runtime_is_episode)
             if entry is not None:
                 added.append(entry)
@@ -593,6 +593,23 @@ class AutoMatcherService:
         total = sum(int(entry.get("points") or 0) for entry in candidate.score_breakdown)
         candidate.confidence_score = max(0, min(total, 100))
         candidate.match_reason = self._format_reason(candidate.score_breakdown)
+
+    @staticmethod
+    def titled_by_folder_only(parsed_info: Dict[str, Any]) -> bool:
+        """True for a movie extra, or any file on disc 2+ of a set.
+
+        Such a file takes its title from the folder and is not expected to run as long as the
+        film, so its duration is not compared with the provider runtime: that would penalise the
+        film and favour a making-of documentary that happens to be as short as the file. The
+        queue holds these files for review instead of auto-assigning them.
+        """
+        if parsed_info.get("media_type") == "episode" or parsed_info.get("season") is not None:
+            return False
+        try:
+            later_disc = int(parsed_info.get("disc_number") or 1) > 1
+        except (TypeError, ValueError):
+            later_disc = False
+        return bool(parsed_info.get("is_companion")) or later_disc
 
     def _enrich_from_tmdb(self, candidate: MatchCandidate) -> None:
         """Fetch TMDB details with external ids: the IMDb id and the runtime."""

@@ -148,6 +148,56 @@ def test_runtime_off_by_more_than_a_quarter_is_penalised(monkeypatch):
     assert "14 min vs 148 min" in entry["note"]
 
 
+def _film_and_making_of(monkeypatch):
+    _install(monkeypatch, {
+        f"{TMDB}/search/movie": {"results": [
+            {"id": 36647, "title": "Blade II", "release_date": "2002-03-22"},
+            {"id": 359412, "title": "The Blood Pact: The Making of Blade II", "release_date": "2002-09-03"},
+        ]},
+        f"{TMDB}/movie/36647": {"id": 36647, "runtime": 117, "external_ids": {"imdb_id": "tt0187738"}},
+        f"{TMDB}/movie/359412": {"id": 359412, "runtime": 83, "external_ids": {"imdb_id": "tt0379200"}},
+    })
+    return AutoMatcherService(omdb_api_key="", tmdb_api_key="t")
+
+
+def test_bonus_disc_keeps_the_film_over_a_making_of_with_its_runtime(monkeypatch):
+    """ "Blade II D2 (2002)": the longest file on the bonus disc is the 83-minute making-of."""
+    service = _film_and_making_of(monkeypatch)
+
+    result = service.search_and_match(
+        {"title": "Blade II", "year": 2002, "media_type": "movie", "disc_number": 2,
+         "media_duration_ms": _minutes(83)}
+    )
+
+    best = result["best_match"]
+    assert best["imdb_id"] == "tt0187738"
+    assert not any(rule.startswith("runtime") for rule in _rules(best))
+
+
+def test_extra_is_not_scored_on_runtime(monkeypatch):
+    service = _film_and_making_of(monkeypatch)
+
+    result = service.search_and_match(
+        {"title": "Blade II", "year": 2002, "media_type": "movie", "is_companion": True,
+         "media_duration_ms": _minutes(83)}
+    )
+
+    best = result["best_match"]
+    assert best["imdb_id"] == "tt0187738"
+    assert not any(rule.startswith("runtime") for rule in _rules(best))
+
+
+def test_first_disc_feature_is_still_scored_on_runtime(monkeypatch):
+    service = _film_and_making_of(monkeypatch)
+
+    result = service.search_and_match(
+        {"title": "Blade II", "year": 2002, "media_type": "movie", "disc_number": 1,
+         "media_duration_ms": _minutes(116)}
+    )
+
+    assert _rules(result["best_match"])["runtime_within_5pct"] == 15
+
+
 def test_unknown_duration_adds_no_runtime_entry(monkeypatch):
     _install(monkeypatch, {
         f"{TMDB}/search/movie": {"results": [{"id": 27205, "title": "Inception", "release_date": "2010-07-15"}]},

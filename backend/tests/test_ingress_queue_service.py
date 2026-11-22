@@ -576,6 +576,47 @@ def test_no_match_leaves_confidence_empty_and_records_parse_quality(tmp_path):
     assert processed.parsed_info['review_reason'].startswith('no metadata match')
 
 
+def _confident_movie_match(title, year):
+    best = {'source': 'tmdb', 'title': title, 'year': year, 'media_type': 'movie', 'confidence_score': 95,
+            'imdb_id': 'tt0000001', 'score_breakdown': []}
+    return {'status': 'success', 'found': True, 'candidates': [best], 'best_match': best, 'ambiguous': False}
+
+
+def test_later_disc_of_a_set_is_matched_by_folder_title_and_held_for_review(tmp_path):
+    source_file = tmp_path / 'ingest' / 'Top Gun D2 (1986)' / 'Top Gun D2 (1986).mkv'
+    source_file.parent.mkdir(parents=True)
+    source_file.write_bytes(b'x')
+    matcher = _StubMatcher(_confident_movie_match('Top Gun', 1986))
+    orchestrator = _CapturingAssignmentOrchestrator()
+    service = IngressQueueService(auto_matcher_service=matcher, assignment_orchestrator=orchestrator,
+                                  auto_assign_threshold=80)
+    service.add_manual_file(os.fspath(source_file))
+
+    processed = asyncio.run(service.process_next_item())
+
+    assert matcher.calls[0]['title'] == 'Top Gun'
+    assert matcher.calls[0]['disc_number'] == 2
+    assert processed.best_match['title'] == 'Top Gun'
+    assert processed.status == 'needs_review'
+    assert 'later disc' in processed.parsed_info['review_reason']
+    assert orchestrator.calls == []
+
+
+def test_disc_named_folder_at_the_ingest_root_keeps_its_own_title(tmp_path):
+    """The folder is the title; it used to be replaced by the ingest root's name."""
+    source_file = tmp_path / 'ingest' / 'The.Matrix.Disc.2 (1999)' / 'B1_t00.mkv'
+    source_file.parent.mkdir(parents=True)
+    source_file.write_bytes(b'x')
+    matcher = _StubMatcher(_confident_movie_match('The Matrix', 1999))
+    service = IngressQueueService(auto_matcher_service=matcher, auto_assign_threshold=80)
+    service.add_manual_file(os.fspath(source_file))
+
+    asyncio.run(service.process_next_item())
+
+    assert matcher.calls[0]['title'] == 'The Matrix'
+    assert matcher.calls[0]['year'] == 1999
+
+
 def test_ambiguous_match_is_held_for_review_even_above_threshold(tmp_path):
     best = {
         'source': 'omdb', 'title': 'The Office', 'year': 2005, 'media_type': 'series',
