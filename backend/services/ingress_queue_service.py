@@ -386,8 +386,9 @@ class IngressQueueService:
 
     def expect_rip_paths(self, paths: Iterable[str]) -> None:
         """Announce paths a rip is about to deliver to (see ``rip_expected_paths``)."""
+        # The watcher reports paths in the OS's own form; a rip record carries them with forward slashes.
         with self.lock:
-            self.rip_expected_paths.update(str(path) for path in paths if path)
+            self.rip_expected_paths.update(os.path.normpath(str(path)) for path in paths if path)
 
     def requeue_ripped_file(self, file_path: str) -> Optional[IngressQueueItem]:
         """Queue a file a rip has just delivered, if the queue would otherwise skip it.
@@ -395,6 +396,7 @@ class IngressQueueService:
         Only acts when the path is untracked or its row is ignored: an item that is pending, under
         review or already assigned is left exactly as it is.
         """
+        file_path = os.path.normpath(file_path)
         with self.lock:
             self.rip_expected_paths.discard(file_path)
             existing_id = self.path_to_item_id.get(file_path)

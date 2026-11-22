@@ -17,6 +17,8 @@ from services.rip_records import RipRecord
 from tests.fake_db import FakeSession
 
 INGEST = "/ark/media/ingest"
+# The queue keys files by the path the OS reports (backslashes on Windows).
+os_path = os.path.normpath
 FOLDER = f"{INGEST}/Firefly (2002) [imdbid-tt0303461]"
 EP1 = f"{FOLDER}/Season 01/Firefly S01E01-E02 - Serenity.mkv"
 EP3 = f"{FOLDER}/Season 01/Firefly S01E03 - The Train Job.mkv"
@@ -266,6 +268,7 @@ async def test_manifests_in_the_ingest_root_are_imported(tmp_path):
 
 def _watched(path: str) -> SimpleNamespace:
     now = time.time()
+    path = os_path(path)
     return SimpleNamespace(file_path=path, file_name=os.path.basename(path), ingress_path=INGEST,
                            file_size=1024, detected_at=now, queued_at=now)
 
@@ -286,7 +289,7 @@ def test_announced_rip_path_is_queued_even_if_the_old_row_was_ignored():
     again = service.add_from_watcher(_watched(EP1))
 
     assert again is item and again.status == QUEUE_PENDING
-    assert EP1 not in service.rip_expected_paths
+    assert service.rip_expected_paths == set()
     # The announcement is used once: ignoring it again sticks.
     again.status = QUEUE_IGNORED
     assert service.add_from_watcher(_watched(EP1)).status == QUEUE_IGNORED
@@ -295,7 +298,7 @@ def test_announced_rip_path_is_queued_even_if_the_old_row_was_ignored():
 def test_announced_rip_path_is_queued_after_a_restart():
     """Only the persisted index knows the path was ignored."""
     service = IngressQueueService()
-    service.persisted_paths[EP1] = ("row-1", QUEUE_IGNORED)
+    service.persisted_paths[os_path(EP1)] = ("row-1", QUEUE_IGNORED)
     assert service.add_from_watcher(_watched(EP1)) is None
 
     service.expect_rip_paths([EP1])
@@ -315,6 +318,15 @@ def test_requeue_only_touches_ignored_or_untracked_files():
     assert service.requeue_ripped_file(EP3) is ignored and ignored.status == QUEUE_PENDING
 
     assert service.requeue_ripped_file(TRAILER).status == QUEUE_PENDING   # never seen before
+    # A path in the rip record's forward-slash form finds the item the watcher made for it.
+    assert len(service.items_by_id) == 3
+
+
+def test_rip_paths_match_the_watchers_form_of_the_path():
+    service = IngressQueueService()
+    watched = service.add_from_watcher(_watched(EP1))            # OS form
+    assert service.requeue_ripped_file(EP1) is None              # record form: same file, already pending
+    assert list(service.items_by_id.values()) == [watched]
 
 
 # ── API ─────────────────────────────────────────────────────────────────────
@@ -375,7 +387,7 @@ async def test_preregister_then_confirm_drives_the_queue(app, monkeypatch):
     async with _client(app, session, queue=queue) as ac:
         pre = await ac.put(f"/api/rips/{JOB}", json=_payload("delivering"))
         assert pre.json()["expectedPaths"] == 3
-        assert queue.rip_expected_paths == {EP1, EP3, TRAILER}
+        assert queue.rip_expected_paths == {os_path(EP1), os_path(EP3), os_path(TRAILER)}
 
         # The watcher sees the re-ripped file: it is queued again.
         assert queue.add_from_watcher(_watched(EP1)).status == QUEUE_PENDING
