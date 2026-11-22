@@ -13,6 +13,7 @@ import ReplayIcon from '@mui/icons-material/Replay';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
 import type { JobAnalysis, RipJob } from '@/types/disc-ripper/DiscRipper.type';
 import { fmtDur } from './discRipperUtils';
+import RipJobHealth from './RipJobHealth';
 import { borders, surfaces, text } from '@/theme/tokens';
 
 export default function ResultsStep({
@@ -259,6 +260,8 @@ export default function ResultsStep({
           </Select>
         </FormControl>
       )}
+
+      {sourceJob && <RipJobHealth job={sourceJob} />}
 
       {sourceJob?.status === 'failed' && (
         <>

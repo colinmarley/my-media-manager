@@ -4,7 +4,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Alert, Box, Chip, Step, StepButton, Stepper } from '@mui/material';
 import { PageContainer, PageHeader } from '@/components/ui/PageHeader';
 import { DiscRipperService } from '@/service/disc-ripper/DiscRipperService';
-import type { DiscScanInfo, DiscTitle, RipJob, StartJobRequest } from '@/types/disc-ripper/DiscRipper.type';
+import type {
+  DiscScanInfo, DiscTitle, RipJob, StartJobRequest, StoredRip,
+} from '@/types/disc-ripper/DiscRipper.type';
 import DiscScanStep from './_components/DiscScanStep';
 import ConfigureStep from './_components/ConfigureStep';
 import MonitorStep from './_components/MonitorStep';
@@ -17,6 +19,8 @@ export default function DiscRipperPage() {
   const [titles, setTitles] = useState<DiscTitle[]>([]);
   // The stored scan the titles came from: sent with the job so it is tied to this exact disc.
   const [scanInfo, setScanInfo] = useState<DiscScanInfo | null>(null);
+  // Earlier rips of the disc in the drive (matched by fingerprint in the library).
+  const [previousRips, setPreviousRips] = useState<StoredRip[]>([]);
   const [scanError, setScanError] = useState('');
   const [jobs, setJobs] = useState<RipJob[]>([]);
   const [jobsError, setJobsError] = useState('');
@@ -104,7 +108,10 @@ export default function DiscRipperPage() {
           setTitles={setTitles}
           scanError={scanError}
           setScanError={setScanError}
+          scanInfo={scanInfo}
+          previousRips={previousRips}
           onScanned={setScanInfo}
+          onPreviousRips={setPreviousRips}
           onContinue={() => setActiveStep(1)}
         />
       )}
@@ -116,6 +123,7 @@ export default function DiscRipperPage() {
             titles={titles}
             scanId={scanInfo?.scan_id}
             discInfo={scanInfo}
+            suggestedDiscId={previousRips.find((rip) => rip.discId)?.discId ?? undefined}
             onSubmit={handleStart}
           />
         </Box>

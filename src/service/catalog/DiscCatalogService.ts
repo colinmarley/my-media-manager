@@ -6,6 +6,25 @@
  */
 import { api } from '../api/apiClient';
 import { CatalogDisc } from '../../types/catalog/Disc.type';
+import type { StoredRip } from '../../types/disc-ripper/DiscRipper.type';
+
+/** Earlier rips of the disc with this fingerprint; empty when none or the lookup fails. */
+export async function findRipsByFingerprint(fingerprint: string): Promise<StoredRip[]> {
+  if (!fingerprint) return [];
+  try {
+    return await api.get<StoredRip[]>(`/api/rips?fingerprint=${encodeURIComponent(fingerprint)}`);
+  } catch {
+    return [];
+  }
+}
+
+export async function getDisc(id: string): Promise<CatalogDisc | null> {
+  try {
+    return await api.get<CatalogDisc>(`/api/catalog/discs/${encodeURIComponent(id)}`);
+  } catch {
+    return null;
+  }
+}
 
 export async function searchDiscs(params: { title?: string; barcode?: string }): Promise<CatalogDisc[]> {
   if (!params.title && !params.barcode) return [];

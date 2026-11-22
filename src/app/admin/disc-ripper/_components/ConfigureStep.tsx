@@ -14,6 +14,7 @@ import type {
   TmdbEpisode, TmdbResult, TmdbSeason,
 } from '@/types/disc-ripper/DiscRipper.type';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
+import { getDisc } from '@/service/catalog/DiscCatalogService';
 import {
   buildStartJobRequest, epCode, POSTER_BASE, previewFilenames, startJobBlocker,
 } from './discRipperUtils';
@@ -24,12 +25,15 @@ export default function ConfigureStep({
   titles,
   scanId,
   discInfo,
+  suggestedDiscId,
   onSubmit,
 }: {
   titles: DiscTitle[];
   /** The stored scan these titles came from; ties the job to this exact disc. */
   scanId?: string;
   discInfo?: DiscScanInfo | null;
+  /** Catalog disc an earlier rip of this same disc was linked to; preselected. */
+  suggestedDiscId?: string;
   onSubmit: (req: StartJobRequest) => void;
 }) {
   // Search
@@ -63,6 +67,16 @@ export default function ConfigureStep({
   const [contentTypes, setContentTypes] = useState<Record<number, ExtrasCategory | ''>>({});
   const [linkedDisc, setLinkedDisc] = useState<CatalogDisc | null>(null);
   const [error, setError] = useState('');
+
+  // A disc that was ripped before is already in the catalog: link it again.
+  useEffect(() => {
+    if (!suggestedDiscId) return;
+    let cancelled = false;
+    getDisc(suggestedDiscId).then((disc) => {
+      if (!cancelled && disc) setLinkedDisc((current) => current ?? disc);
+    });
+    return () => { cancelled = true; };
+  }, [suggestedDiscId]);
 
   // Auto-detect disc type from video width
   useEffect(() => {
