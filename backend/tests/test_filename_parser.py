@@ -125,6 +125,36 @@ def test_parse_filename_uses_parent_movie_title_for_extras_disc_files():
             "Top Gun D2 (1986).mkv", "Top Gun D2 (1986)", "",
             dict(media_type="movie", title="Top Gun", year=1986, disc_number=2),
         ),
+        # Disc marker in parentheses, and on a hyphenated title
+        (
+            "Joker (D2) (2019).mkv", "Joker (D2) (2019)", "",
+            dict(media_type="movie", title="Joker", year=2019, disc_number=2),
+        ),
+        (
+            "Reservoir-Dogs D2 (1992).mkv", "Reservoir-Dogs D2 (1992)", "",
+            dict(media_type="movie", title="Reservoir-Dogs", normalized_title="reservoir dogs", year=1992,
+                 disc_number=2),
+        ),
+        (
+            "The.Matrix.Disc.2.mkv", "The.Matrix.Disc.2 (1999)", "",
+            dict(media_type="movie", title="The Matrix", year=1999, disc_number=2),
+        ),
+        # MakeMKV title set "E" is a disc code, not a bare episode number
+        (
+            "E1_t18.mkv", "Reservoir-Dogs D2 (1992)", "extras/",
+            dict(media_type="movie", title="Reservoir-Dogs", year=1992, episode=None, is_companion=True,
+                 disc_number=2, makemkv_track=18),
+        ),
+        (
+            "E17_t10.mkv", "The Lord of the Rings- The Two Towers D2 (2002)", "extras/",
+            dict(media_type="movie", title="The Lord of the Rings- The Two Towers", year=2002, episode=None,
+                 is_companion=True, makemkv_track=10),
+        ),
+        # ... while a real bare episode name under a season folder still is one
+        (
+            "e01.avi", "Cheers", "Season 3/",
+            dict(media_type="episode", title="Cheers", season=3, episode=1),
+        ),
         (
             "Men in Black 3 (2012).mkv", "Men in Black³ (2012)", "",
             dict(media_type="movie", title="Men in Black 3", year=2012),

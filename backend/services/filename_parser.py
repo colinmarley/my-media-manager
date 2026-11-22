@@ -153,11 +153,13 @@ class FilenameParser:
     _quality_pattern = re.compile(
         r"(?i)\b(2160p|1080p|720p|480p|4k|uhd|hdr|dv|bluray|web[ ._-]?dl|webrip)\b"
     )
-    # Disc / part suffix on a title: "Top Gun D2", "The Matrix Disc 2", "Movie CD1"
+    # Disc / part suffix on a title: "Top Gun D2", "The Matrix Disc 2", "Movie CD1", "Joker (D2)"
     _disc_suffix_pattern = re.compile(
-        r"(?i)(?:\b(?:disc|disk|dvd|bd|cd|pt|part)\s*\d+\b|\b[A-Z]\d+\b)$"
+        r"(?i)\(?(?:\b(?:disc|disk|dvd|bd|cd|pt|part)[\s._-]*\d+\b|\b[A-Z]\d+\b)\)?$"
     )
-    _disc_number_pattern = re.compile(r"(?i)(?:^|[\s._(-])(?:disc|disk|dvd|bd|cd|d)\s*(\d{1,2})(?:\)|\b)\s*$")
+    _disc_number_pattern = re.compile(
+        r"(?i)(?:^|[\s._(-])(?:(?:disc|disk|dvd|bd|cd)[\s._-]*|d\s*)(\d{1,2})(?:\)|\b)\s*$"
+    )
 
     # Tokens that are never part of a title. Only "safe" tokens live here —
     # words like "web" or "dvd" that can legitimately appear in titles are
@@ -344,7 +346,11 @@ class FilenameParser:
             )
 
         # ── Bare episode filename: "e01", "ep09", "episode 09" ───────────────
-        bare_ep_match = self._bare_episode_pattern.match(stripped_for_parse)
+        # "E1_t18" is a MakeMKV disc code (title set E, track 18), not episode 1.
+        bare_ep_match = (
+            None if self._makemkv_pattern.match(stripped_for_parse)
+            else self._bare_episode_pattern.match(stripped_for_parse)
+        )
         if bare_ep_match:
             episode_number = int(bare_ep_match.group(1))
             title = folder_title
@@ -460,7 +466,8 @@ class FilenameParser:
 
         file_disc_number = self._find_disc_number(title_candidate)
         title_candidate = self._disc_suffix_pattern.sub("", title_candidate.strip()).strip(" -_.")
-        title = self._clean_title(title_candidate)
+        # Again once separators are spaces: "The.Matrix.Disc.2", "Joker (D2)".
+        title = self._disc_suffix_pattern.sub("", self._clean_title(title_candidate)).strip(" -")
         title_source = "filename"
         disc_number = ctx.disc_number if ctx.disc_number is not None else file_disc_number
 

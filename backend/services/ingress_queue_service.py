@@ -517,14 +517,8 @@ class IngressQueueService:
             inferred_media_type = self._infer_source_media_type(source_root)
             if inferred_media_type == "episode":
                 parsed_info["media_type"] = "episode"
-            elif inferred_media_type == "disc_set":
-                # Use the grandparent folder name (stripping the disc suffix) as
-                # the movie title so items aren't accidentally named "Matrix Disc 2"
-                grandparent = os.path.basename(os.path.dirname(source_root.rstrip(os.sep)))
-                if grandparent:
-                    parsed_info["title"] = self.parser._clean_folder_title(grandparent)
-                    parsed_info["normalized_title"] = self.parser.normalize_title(parsed_info["title"])
-                    parsed_info["year"] = parsed_info.get("year") or self.parser._extract_year(grandparent)
+            # A disc-set folder ("Top Gun D2 (1986)", "The.Matrix.Disc.2") needs nothing here: the
+            # parser strips the disc marker from the title and reports it as disc_number.
             # A folder of MakeMKV track files (B1_t00.mkv ...) that is a TV disc
             # rip is matched as a set: series from the folder, episodes from
             # track order and durations. Such a mapping is a guess, so it is
@@ -544,6 +538,14 @@ class IngressQueueService:
             # auto-assigned: the same forced-review path as a track-set guess.
             if hold_reason and not force_review_reason:
                 force_review_reason = f"held for review: {hold_reason}"
+            # Matched on the folder title alone (no runtime check), so never auto-assigned.
+            if (
+                not force_review_reason
+                and track_result is None
+                and (match_result or {}).get("best_match")
+                and AutoMatcherService.titled_by_folder_only(parsed_info)
+            ):
+                force_review_reason = "extra or later disc of a set: matched on the folder title, runtime not compared"
             best_match = match_result.get("best_match") if match_result else None
             has_best_match = isinstance(best_match, dict) and bool(best_match)
             ambiguous = bool(match_result.get("ambiguous")) if match_result else False
@@ -2803,12 +2805,6 @@ class IngressQueueService:
                     return "episode"
         except OSError:
             return None
-
-        # Disc-set folders (e.g. "The.Matrix.Disc.2") contain no Season sub-dirs;
-        # treat them as movie sources so the parent folder name is used as the title.
-        disc_set_name = os.path.basename(source_root.rstrip(os.sep))
-        if re.search(r"(?i)[\s._-]+(?:disc|disk|cd|dvd|bd)[\s._-]*\d+$", disc_set_name):
-            return "disc_set"
 
         return None
 
