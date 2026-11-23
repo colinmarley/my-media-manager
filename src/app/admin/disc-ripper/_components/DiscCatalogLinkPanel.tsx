@@ -42,8 +42,8 @@ function positiveInt(text: string): number | null {
 
 /**
  * The two records a filled-in form describes: the box (release) and the
- * disc in it. The disc is named after the box, with its number when the box
- * holds more than one, so nobody has to invent a separate disc title.
+ * disc in it. The disc is named after the box (its number is a field of its
+ * own), so nobody has to invent a separate disc title.
  */
 export function discSavePlan(form: DiscForm): {
   release: Partial<CatalogRelease>;
@@ -63,7 +63,7 @@ export function discSavePlan(form: DiscForm): {
       expectedDiscCount: discCount,
     },
     disc: {
-      title: discRecordTitle(releaseTitle, discNumber, discCount),
+      title: discRecordTitle(releaseTitle),
       discNumber: discNumber ?? undefined,
       edition,
       format: form.format,
@@ -532,6 +532,7 @@ export default function DiscCatalogLinkPanel({
       </Stack>
       <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
         This disc will be saved as “{plan.disc.title}”
+        {plan.disc.discNumber && plan.disc.isPartOfSet ? ` (disc ${plan.disc.discNumber})` : ''}
         {formMode === 'create' && releaseId ? ', added to the box already in your catalog' : ''}.
         {formMode === 'create' && !releaseId && barcodeInput.trim() ? ' The barcode above is saved on the box.' : ''}
         {mediaType === 'show'

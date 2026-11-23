@@ -833,7 +833,13 @@ export default function ConfigureStep({
         return (
           <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
             <Typography variant="subtitle2" sx={{ mb: 1 }}>
-              Output file{names.length !== 1 ? 's' : ''} preview
+              File{names.length !== 1 ? 's' : ''} the ripper will deliver
+            </Typography>
+            <Typography variant="caption" color="text.secondary" component="p" sx={{ mb: 1 }}>
+              These are the names in the ingest folder. The library renames
+              {mediaType === 'show' ? ' episodes' : ' the film'} when it files them
+              {mediaType === 'show' ? ' (“Title (Year) [imdbid-…] S01E01 Episode Name.mkv”)' : ''}, and extras
+              wait in Extras Review, where their type and final name are confirmed.
             </Typography>
             <Stack spacing={0.5}>
               {names.map((name, i) => (

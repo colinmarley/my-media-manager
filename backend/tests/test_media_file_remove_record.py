@@ -103,3 +103,30 @@ async def test_unknown_file_is_404_and_auth_is_required(app, tmp_path):
     async with _client(app, session, authed=False) as ac:
         assert (await ac.delete(URL.format("f1"))).status_code in (401, 403)
     assert session.deleted == []
+
+
+async def test_removes_an_unfiled_ingest_record_no_scan_can_mark_missing(app, tmp_path):
+    """A ripped extra deleted from the ingest folder: no library scan looks there."""
+    from services import storage_paths
+
+    ingest = tmp_path / "ingest"
+    ingest.mkdir()
+    storage_paths.set_overrides({storage_paths.INGEST_ROOTS_KEY: [str(ingest)]})
+    try:
+        row = _file(ingest / "Show (1996)" / "Show (1996) 6-clip.mkv", is_available=True, missing_since=None, disc_id="d1")
+        session = FakeSession([row])
+        async with _client(app, session) as ac:
+            resp = await ac.delete(URL.format("f1"))
+        assert resp.status_code == 200 and resp.json()["deleted"] == "f1"
+
+        # Still refused while the file is there, or while the ingest folder itself is gone.
+        present = ingest / "A.mkv"
+        present.write_bytes(b"x")
+        async with _client(app, FakeSession([_file(present, is_available=True, missing_since=None)])) as ac:
+            assert (await ac.delete(URL.format("f1"))).json()["detail"]["code"] == "FILE_PRESENT"
+        storage_paths.set_overrides({storage_paths.INGEST_ROOTS_KEY: [str(tmp_path / "unmounted")]})
+        gone = _file(tmp_path / "unmounted" / "A.mkv", is_available=True, missing_since=None)
+        async with _client(app, FakeSession([gone])) as ac:
+            assert (await ac.delete(URL.format("f1"))).json()["detail"]["code"] == "LIBRARY_NOT_MOUNTED"
+    finally:
+        storage_paths.clear_overrides()

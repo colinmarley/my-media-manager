@@ -18,7 +18,7 @@ import { deleteTape } from '@/service/catalog/TapeCatalogService';
 import { disconnectFile } from '@/service/catalog/MediaFileLinkService';
 import PageHeader, { PageContainer } from '@/components/ui/PageHeader';
 import FileTechChips from '@/components/ui/FileTechChips';
-import { qualityLabel } from '@/service/library/mediaFileModel';
+import { fileKindLabel, qualityLabel } from '@/service/library/mediaFileModel';
 import { MediaFile } from '@/types/library/MediaFile.type';
 import { currentLoan } from '@/utils/loanUtils';
 import { formatStorageLocation } from '@/utils/storageLocation';
@@ -148,7 +148,7 @@ export default function PhysicalMediaDetailPage() {
           {disc && disc.barcode && <Chip label={`Barcode: ${disc.barcode}`} size="small" variant="outlined" />}
           {disc && disc.discNumber != null && <Chip label={`Disc #${disc.discNumber}`} size="small" variant="outlined" />}
           {disc && disc.language && <Chip label={`Language: ${disc.language}`} size="small" variant="outlined" />}
-          {disc && disc.isPartOfSet && <Chip label="Part of a set" size="small" color="info" variant="outlined" />}
+          {disc && (disc.isPartOfSet || boxSize > 1) && <Chip label="Part of a set" size="small" color="info" variant="outlined" />}
           {disc && disc.isRentalDisc && <Chip label="Rental disc" size="small" color="warning" variant="outlined" />}
 
           {tape && tape.tapeType && <Chip label={`Type: ${tape.tapeType.toUpperCase()}`} size="small" variant="outlined" />}
@@ -232,7 +232,7 @@ export default function PhysicalMediaDetailPage() {
                       {f.targetPath ?? f.filePath}
                     </Typography>
                   </TableCell>
-                  <TableCell>{f.detectedMediaType ?? '—'}</TableCell>
+                  <TableCell>{fileKindLabel(f)}</TableCell>
                   <TableCell>
                     <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>{qualityLabel(f) ?? '—'}</Typography>
                     <FileTechChips {...f} />

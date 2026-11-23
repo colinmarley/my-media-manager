@@ -170,14 +170,14 @@ describe('discSavePlan', () => {
     discCount: '4', edition: '', format: 'DVD' as const, barcode: ' 024543519317 ',
   };
 
-  it('names a disc of a box after the box and its number', () => {
+  it('names a disc of a box after the box, with its number in its own field', () => {
     expect(discSavePlan(form)).toEqual({
       release: {
         title: 'Burn Notice: The Complete First Season', barcode: '024543519317', edition: undefined,
         packaging: 'box_set', expectedDiscCount: 4,
       },
       disc: {
-        title: 'Burn Notice: The Complete First Season - Disc 1', discNumber: 1, edition: undefined,
+        title: 'Burn Notice: The Complete First Season', discNumber: 1, edition: undefined,
         format: 'DVD', isPartOfSet: true,
       },
     });
@@ -192,7 +192,7 @@ describe('discSavePlan', () => {
   it('grows the box to hold the disc number typed', () => {
     const plan = discSavePlan({ ...form, discNumber: '3', discCount: '' });
     expect(plan.release.expectedDiscCount).toBe(3);
-    expect(plan.disc.title).toBe('Burn Notice: The Complete First Season - Disc 3');
+    expect(plan.disc).toMatchObject({ title: 'Burn Notice: The Complete First Season', discNumber: 3 });
   });
 
   it('falls back to a placeholder name', () => {

@@ -83,6 +83,35 @@ export function roleLabel(file: MediaFile): string {
   return ROLE_LABELS[file.role ?? ''] ?? 'Unclassified';
 }
 
+const EXTRA_SUFFIX_LABELS: Record<string, string> = {
+  behindthescenes: 'Behind the Scenes',
+  deletedscene: 'Deleted Scene',
+  interview: 'Interview',
+  featurette: 'Featurette',
+  trailer: 'Trailer',
+  scene: 'Scene',
+  sample: 'Sample',
+  short: 'Short',
+  clip: 'Clip',
+  blooper: 'Blooper',
+  other: 'Other',
+};
+
+/**
+ * What a file is, for a list that mixes episodes and extras: "S06E11", "Extra · Deleted Scene".
+ * An extra's type is read off its file name ("Title (Year) 2-deletedscene.mkv"). A file with no
+ * role yet falls back to what the scanner detected.
+ */
+export function fileKindLabel(file: MediaFile): string {
+  if (file.role === 'extra') {
+    const suffix = /-([a-z]+)\.[a-z0-9]+$/i.exec(file.fileName ?? '')?.[1]?.toLowerCase();
+    const type = suffix ? EXTRA_SUFFIX_LABELS[suffix] : undefined;
+    return type ? `Extra · ${type}` : 'Extra';
+  }
+  if (file.role) return roleLabel(file);
+  return file.detectedMediaType ?? '—';
+}
+
 export const isMissing = (file: MediaFile): boolean => file.isAvailable === false;
 export const isFlagged = (file: MediaFile): boolean => file.needsReview === true;
 
