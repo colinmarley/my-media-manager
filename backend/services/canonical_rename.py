@@ -206,10 +206,30 @@ async def apply(session: Any, plan_obj: RenamePlan, file_manager: Any) -> Dict[s
         raise RenameRefused(409, "RENAME_CONFLICT", plan_obj.conflict)
     if not plan_obj.changed:
         return {"operations": [], "sidecarErrors": [], "row": plan_obj.row}
+    return await move_with_sidecars(
+        session, plan_obj.row, plan_obj.current_path, plan_obj.target_path, plan_obj.sidecars, file_manager
+    )
+
+
+async def move_with_sidecars(
+    session: Any,
+    row: Any,
+    current_path: str,
+    target_path: str,
+    sidecars: List[Tuple[str, str]],
+    file_manager: Any,
+) -> Dict[str, Any]:
+    """Move a file and its sidecars, record the moves and relocate the rows (``row`` keeps its id).
+
+    Returns ``{operations, sidecarErrors, row, moved}``; ``moved`` is the
+    ``(src, dst)`` pairs that did move. A failed main move raises
+    :class:`RenameRefused` (500); a failed sidecar is reported and skipped.
+    """
+    source_row = row
     recorder = OperationRecorder(OperationLog(_SharedSession(session)), None, None)
     operations: List[str] = []
     sidecar_errors: List[str] = []
-    moves = [(plan_obj.current_path, plan_obj.target_path, True)] + [(s, d, False) for s, d in plan_obj.sidecars]
+    moves = [(current_path, target_path, True)] + [(s, d, False) for s, d in sidecars]
     moved: List[Tuple[str, str]] = []
     for src, dst, is_main in moves:
         size = _size(src)
@@ -226,16 +246,15 @@ async def apply(session: Any, plan_obj: RenamePlan, file_manager: Any) -> Dict[s
         operations.append(op_id)
         moved.append((src, dst))
 
-    row = plan_obj.row
     try:
         async with media_file_index.savepoint(session):
             for src, dst in moved:
-                if src == plan_obj.current_path:
-                    row = await media_file_index.relocate(session, src, dst, row=plan_obj.row) or plan_obj.row
+                if src == current_path:
+                    row = await media_file_index.relocate(session, src, dst, row=source_row) or source_row
                 else:
                     await media_file_index.relocate(session, src, dst)
     except Exception as exc:  # pylint: disable=broad-except
         # The files moved and the moves are on record; the inventory scan reconciles the rows.
         logger.warning("Could not relocate media_files rows after a canonical rename", error=str(exc))
     await session.commit()
-    return {"operations": operations, "sidecarErrors": sidecar_errors, "row": row}
+    return {"operations": operations, "sidecarErrors": sidecar_errors, "row": row, "moved": moved}

@@ -19,6 +19,7 @@ import asyncio
 import glob
 import json
 import os
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional
@@ -392,6 +393,13 @@ async def declaration_for_path(db: Any, path: Any, file_size: Optional[int] = No
     }
 
 
+# A custom name that is really an episode code: "S01E11", "S01E11-E12 - Name".
+_CUSTOM_EPISODE_RE = re.compile(
+    r"^\s*S(?P<season>\d{1,3})E(?P<episode>\d{1,4})(?:-?E(?P<end>\d{1,4}))?(?:\s*-\s*(?P<name>.*))?\s*$",
+    re.IGNORECASE,
+)
+
+
 def apply_declaration(
     parsed_info: Dict[str, Any],
     declaration: Dict[str, Any],
@@ -452,11 +460,26 @@ def apply_declaration(
             reason = EXTRA_HOLD_REASON
     if is_show and not is_extra:
         parsed_info["media_type"] = "episode"
+        if declaration.get("episode") is None:
+            # A custom name typed as an episode code ("S01E11-E12 - Dead Drop")
+            # is an episode assignment all the same.
+            typed = _CUSTOM_EPISODE_RE.match(declaration.get("custom_name") or "")
+            if typed:
+                declaration = {
+                    **declaration,
+                    "season": int(typed.group("season")),
+                    "episode": int(typed.group("episode")),
+                    "episode_end": int(typed.group("end")) if typed.group("end") else None,
+                    "episode_name": (typed.group("name") or "").strip() or None,
+                }
         if declaration.get("episode") is not None:
             season = declaration.get("season")
             parsed_info["season"] = season if season is not None else declaration.get("rip_season")
             parsed_info["episode"] = declaration["episode"]
-            parsed_info["episode_end"] = declaration.get("episode_end")
+            episode_end = declaration.get("episode_end")
+            parsed_info["episode_end"] = (
+                episode_end if episode_end is not None and episode_end > declaration["episode"] else None
+            )
             if declaration.get("episode_name"):
                 parsed_info["episode_title"] = declaration["episode_name"]
         else:

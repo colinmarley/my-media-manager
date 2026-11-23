@@ -122,6 +122,26 @@ export interface RenameCanonicalResult {
   file: MediaFile | null;
 }
 
+/** POST /api/catalog/media-files/{id}/extra-type */
+export interface ExtraTypeResult {
+  fileId: string;
+  /** The new type, an extras category slug (ExtrasCategory). */
+  category: string;
+  /** The type the old name had; null for a suffix without a category ("-extra"). */
+  currentCategory: string | null;
+  currentName: string;
+  newName: string;
+  currentPath: string;
+  newPath: string;
+  currentRelativePath: string | null;
+  newRelativePath: string | null;
+  applied: boolean;
+  sidecars: { from: string; to: string }[];
+  sidecarErrors: string[];
+  nfoTitleUpdated: boolean;
+  file: MediaFile | null;
+}
+
 /** GET /api/library/inventory/status */
 export interface InventoryScanStatus {
   running: boolean;

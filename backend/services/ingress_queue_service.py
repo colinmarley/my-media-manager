@@ -1521,6 +1521,7 @@ class IngressQueueService:
             "media_type": normalized_media_type,
             "season": None if unknown_episode else match_payload.get("season"),
             "episode": None if unknown_episode else match_payload.get("episode"),
+            "episode_end": None,
             "imdb_id": match_payload.get("imdb_id"),
             "media_id": match_payload.get("media_id") or match_payload.get("imdb_id"),
             "confidence_score": 100,
@@ -1529,6 +1530,7 @@ class IngressQueueService:
         }
 
         parsed_info = dict(item.parsed_info or {})
+        parsed_episode_before = parsed_info.get("episode")
         parsed_info["media_type"] = normalized_media_type
         # A reviewer decided where this file goes: the hold has done its job.
         parsed_info.pop(HOLD_REASON_KEY, None)
@@ -1543,6 +1545,29 @@ class IngressQueueService:
                     parsed_info["season"] = match_payload.get("season")
                 if match_payload.get("episode") is not None:
                     parsed_info["episode"] = match_payload.get("episode")
+            # The last episode of a multi-episode file. An explicit value (or an
+            # explicit None) is the reviewer's; when the caller says nothing, the
+            # end read from the name is kept only if the episode is still the same.
+            episode = parsed_info.get("episode")
+            if "episode_end" in match_payload:
+                episode_end = match_payload.get("episode_end")
+            elif episode == parsed_episode_before:
+                episode_end = parsed_info.get("episode_end")
+            else:
+                episode_end = None
+            if (
+                unknown_episode
+                or not isinstance(episode_end, int) or not isinstance(episode, int)
+                or episode_end <= episode
+            ):
+                episode_end = None
+            if episode_end is None:
+                parsed_info.pop("episode_end", None)
+            else:
+                parsed_info["episode_end"] = episode_end
+            best_match["episode_end"] = episode_end
+        else:
+            parsed_info.pop("episode_end", None)
 
         with self.lock:
             item.best_match = best_match
@@ -1631,6 +1656,30 @@ class IngressQueueService:
     @staticmethod
     def _shows_folder() -> str:
         return settings.folder_tv_shows
+
+    @staticmethod
+    def _carry_episode_end(match: Dict[str, Any], parsed_info: Dict[str, Any]) -> None:
+        """Give ``match`` the last episode of a multi-episode file (in place).
+
+        The matcher answers with one season/episode; the range a file covers
+        is only in ``parsed_info`` (from its name or its rip record). Without
+        it the proposed name would be the first episode's alone. The end is
+        carried only when it belongs to the episode the match names.
+        """
+        if match.get("episode_end") is not None:
+            return
+        try:
+            episode = int(match.get("episode"))
+            end = int(parsed_info.get("episode_end"))
+            if int(parsed_info.get("episode")) != episode:
+                return
+        except (TypeError, ValueError):
+            return
+        parsed_season, season = parsed_info.get("season"), match.get("season")
+        if parsed_season is not None and season is not None and str(parsed_season) != str(season):
+            return
+        if end > episode:
+            match["episode_end"] = end
 
     @staticmethod
     def _build_main_path(file_name: str, best_match: Dict[str, Any]) -> str:
@@ -1919,6 +1968,7 @@ class IngressQueueService:
                         ep_match["episode"] = parsed_info.get("episode")
                     if ep_match.get("episode_title") is None and parsed_info.get("episode_title"):
                         ep_match["episode_title"] = parsed_info.get("episode_title")
+                    self._carry_episode_end(ep_match, parsed_info)
 
                     items[idx]["best_match"] = ep_match
                     if override == "special_feature":
@@ -2064,6 +2114,8 @@ class IngressQueueService:
                         inherited_match["episode"] = parsed_info.get("episode")
                     else:
                         inherited_match.pop("episode", None)
+                    inherited_match.pop("episode_end", None)
+                    self._carry_episode_end(inherited_match, parsed_info)
                     if parsed_info.get("episode_title"):
                         inherited_match["episode_title"] = parsed_info.get("episode_title")
                     else:
@@ -2748,6 +2800,10 @@ class IngressQueueService:
                 if (item.best_match or {}).get(field) is None and parsed_info.get(field) is not None:
                     item.best_match = dict(item.best_match or {})
                     item.best_match[field] = parsed_info.get(field)
+            if (item.best_match or {}).get("episode_end") is None and parsed_info.get("episode_end") is not None:
+                carried = dict(item.best_match or {})
+                self._carry_episode_end(carried, parsed_info)
+                item.best_match = carried
 
         for name, value in self._role_hints(item.proposed_path, item.best_match).items():
             setattr(item, name, value)

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  buildStartJobRequest, startJobBlocker, type StartJobInput,
+  assignedEpisodeNumbers, buildStartJobRequest, episodeRangeName, episodeValue, previewFilenames, rangeEnd,
+  startJobBlocker, suggestedRangeEnd, type StartJobInput,
 } from '@/app/admin/disc-ripper/_components/discRipperUtils';
 import { discSavePlan, nextDiscNumber } from '@/app/admin/disc-ripper/_components/DiscCatalogLinkPanel';
 
@@ -77,6 +78,36 @@ describe('buildStartJobRequest', () => {
     expect(req.titles).toEqual([
       { title_index: 2, content_type: 'episode', season: 1, episode: 5, episode_name: 'Safe', tmdb_episode_id: 85399 },
       { title_index: 3, content_type: 'episode', season: 1, episode: 6 },
+    ]);
+  });
+
+  it('declares a two-part episode on one title as a range', () => {
+    const req = buildStartJobRequest({
+      ...base,
+      title: 'Burn Notice',
+      selectedIndices: [4, 5],
+      assignments: {
+        4: { type: 'episode', episodeNumber: 11, episodeName: 'Dead Drop', episodeEndNumber: 12 },
+        // An end that is not after the episode is no range.
+        5: { type: 'episode', episodeNumber: 10, episodeName: 'False Flag', episodeEndNumber: 10 },
+      },
+      episodes: [
+        { episodeNumber: 10, name: 'False Flag' },
+        { episodeNumber: 11, name: 'Dead Drop', tmdbId: 111 },
+        { episodeNumber: 12, name: 'Loose Ends', tmdbId: 112 },
+      ],
+    });
+    // episode_map is what the ripper names the file from.
+    expect(req.episode_map).toEqual({
+      4: 'S01E11-E12 - Dead Drop and Loose Ends',
+      5: 'S01E10 - False Flag',
+    });
+    expect(req.titles).toEqual([
+      {
+        title_index: 4, content_type: 'episode', season: 1, episode: 11, episode_end: 12,
+        episode_name: 'Dead Drop and Loose Ends', tmdb_episode_id: 111,
+      },
+      { title_index: 5, content_type: 'episode', season: 1, episode: 10, episode_name: 'False Flag' },
     ]);
   });
 
@@ -166,6 +197,53 @@ describe('discSavePlan', () => {
 
   it('falls back to a placeholder name', () => {
     expect(discSavePlan({ ...form, releaseTitle: ' ', discNumber: '0', discCount: '1' }).disc.title).toBe('Untitled Disc');
+  });
+});
+
+describe('episode ranges on the rip page', () => {
+  const episodes = [
+    { episodeNumber: 10, name: 'False Flag', runtime: 43 },
+    { episodeNumber: 11, name: 'Dead Drop', runtime: 42 },
+    { episodeNumber: 12, name: 'Loose Ends', runtime: 42 },
+    { episodeNumber: 13, name: 'Extra', runtime: 44 },
+  ];
+
+  it('previews the file name the ripper will give a range', () => {
+    expect(previewFilenames('show', 'Burn Notice', 2007, [4, 5, 6], {
+      4: { type: 'episode', episodeNumber: 11, episodeName: 'Dead Drop', episodeEndNumber: 12 },
+      5: { type: 'episode', episodeNumber: 10, episodeName: 'False Flag' },
+    }, 1, episodes)).toEqual([
+      'Burn Notice S01E11-E12 - Dead Drop and Loose Ends.mkv',
+      'Burn Notice S01E10 - False Flag.mkv',
+      'Burn Notice S01E03.mkv',
+    ]);
+  });
+
+  it('names a range after every episode in it, once each', () => {
+    const three = { type: 'episode' as const, episodeNumber: 10, episodeName: 'False Flag', episodeEndNumber: 12 };
+    expect(episodeRangeName(three, episodes)).toBe('False Flag, Dead Drop and Loose Ends');
+    expect(episodeValue(1, three, episodes)).toBe('S01E10-E12 - False Flag, Dead Drop and Loose Ends');
+    // Episodes the list does not know add nothing to the name.
+    expect(episodeValue(2, { type: 'episode', episodeNumber: 1, episodeName: '', episodeEndNumber: 2 }, []))
+      .toBe('S02E01-E02');
+    expect(rangeEnd({ type: 'episode', episodeNumber: 5, episodeName: '', episodeEndNumber: 4 })).toBeNull();
+  });
+
+  it('counts every episode of a range as taken', () => {
+    expect([...assignedEpisodeNumbers({
+      0: { type: 'episode', episodeNumber: 11, episodeName: '', episodeEndNumber: 12 },
+      1: { type: 'special' },
+      2: { type: 'episode', episodeNumber: 3, episodeName: '' },
+    })].sort((a, b) => a - b)).toEqual([3, 11, 12]);
+  });
+
+  it('suggests a range only for a title about twice an episode long', () => {
+    expect(suggestedRangeEnd(83 * 60, 11, episodes)).toBe(12);
+    expect(suggestedRangeEnd(43 * 60, 11, episodes)).toBeNull();
+    expect(suggestedRangeEnd(130 * 60, 11, episodes)).toBeNull();
+    // Nothing follows the last episode, and without runtimes there is no usual length.
+    expect(suggestedRangeEnd(83 * 60, 13, episodes)).toBeNull();
+    expect(suggestedRangeEnd(83 * 60, 11, [{ episodeNumber: 11, name: 'a' }, { episodeNumber: 12, name: 'b' }])).toBeNull();
   });
 });
 

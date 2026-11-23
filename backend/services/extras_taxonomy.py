@@ -198,3 +198,61 @@ def classify_extra_category_from_stem(stem: str) -> Optional[str]:
 def folder_for_category(category: str) -> Optional[str]:
     """Canonical on-disk folder name for a category slug, or None if unknown."""
     return CATEGORY_TO_FOLDER.get(category)
+
+
+# ---------------------------------------------------------------------------
+# Extras named by suffix (the disc ripper's naming)
+# ---------------------------------------------------------------------------
+# First file of a type: "Title (Year)-<suffix>.mkv"; later ones
+# "Title (Year) N-<suffix>.mkv", N from 2.
+
+CATEGORY_TO_SUFFIX: Dict[str, str] = {
+    "behind_the_scenes": "behindthescenes",
+    "deleted_scene": "deletedscene",
+    "interview": "interview",
+    "featurette": "featurette",
+    "trailer": "trailer",
+    "scene": "scene",
+    "sample": "sample",
+    "short": "short",
+    "clip": "clip",
+    "blooper": "blooper",
+    "other": "other",
+}
+
+_SUFFIXED_STEM_RE = re.compile(
+    r"^(?P<base>.+)-(?P<suffix>" + "|".join(sorted(EXTRA_SUFFIX_TO_FOLDER, key=len, reverse=True)) + r")$",
+    re.IGNORECASE,
+)
+# The counter is only read after a "(Year)", so "Apollo 13-trailer" keeps its 13.
+_NUMBERED_BASE_RE = re.compile(r"^(?P<base>.*\(\d{4}\)) (?P<number>\d{1,3})$")
+
+
+def split_suffixed_stem(stem: str) -> Optional[Dict[str, Optional[str]]]:
+    """``{base, number, suffix, category}`` of a "Title (Year) N-suffix" stem, else None.
+
+    ``number`` is None for the first file of a type; ``category`` is None for
+    a suffix without a category slug ("extra").
+    """
+    match = _SUFFIXED_STEM_RE.match(stem.strip())
+    if not match or not match.group("base").strip():
+        return None
+    base, number = match.group("base").rstrip(), None
+    numbered = _NUMBERED_BASE_RE.match(base)
+    if numbered:
+        base, number = numbered.group("base"), numbered.group("number")
+    suffix = match.group("suffix").lower()
+    return {
+        "base": base,
+        "number": number,
+        "suffix": suffix,
+        "category": FOLDER_TO_CATEGORY.get(EXTRA_SUFFIX_TO_FOLDER[suffix]),
+    }
+
+
+def suffixed_stem(base: str, category: str, number: Optional[int] = None) -> str:
+    """The stem for the ``number``-th file of ``category`` (None or 1: the first, unnumbered)."""
+    suffix = CATEGORY_TO_SUFFIX[category]
+    if number is None or number <= 1:
+        return f"{base}-{suffix}"
+    return f"{base} {number}-{suffix}"
