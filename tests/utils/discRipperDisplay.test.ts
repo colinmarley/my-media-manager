@@ -156,10 +156,10 @@ describe('disc record naming', () => {
     expect(suggestReleaseTitle('movie', '', 1979, 1)).toBe('');
   });
 
-  it('numbers a disc only inside a multi-disc box', () => {
-    expect(discRecordTitle('Firefly', 2, 4)).toBe('Firefly - Disc 2');
-    expect(discRecordTitle('Alien (1979)', 1, 1)).toBe('Alien (1979)');
-    expect(discRecordTitle('  ', null, null)).toBe('Untitled Disc');
+  it('names every disc of a box after the box', () => {
+    expect(discRecordTitle('Firefly')).toBe('Firefly');
+    expect(discRecordTitle(' Alien (1979) ')).toBe('Alien (1979)');
+    expect(discRecordTitle('  ')).toBe('Untitled Disc');
   });
 
   it('reads the disc number off a volume label', () => {

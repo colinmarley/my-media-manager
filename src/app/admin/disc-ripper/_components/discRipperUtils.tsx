@@ -611,11 +611,13 @@ export function suggestReleaseTitle(
   return year ? `${name} (${year})` : name;
 }
 
-/** The disc record's own title: the box name, plus the disc number in a multi-disc box. */
-export function discRecordTitle(releaseTitle: string, discNumber: number | null, discCount: number | null): string {
-  const name = releaseTitle.trim() || 'Untitled Disc';
-  if (discNumber && (discCount ?? 0) > 1) return `${name} - Disc ${discNumber}`;
-  return name;
+/**
+ * The disc record's own title: the box name, the same for every disc in the box. The disc
+ * number is its own field and is shown beside the title, so it is not repeated in it (a box's
+ * first disc used to be saved without a number and the later ones with " - Disc N").
+ */
+export function discRecordTitle(releaseTitle: string): string {
+  return releaseTitle.trim() || 'Untitled Disc';
 }
 
 /** The disc number a volume label ends with: "BURNNOTICE_S1_D1" → 1. */

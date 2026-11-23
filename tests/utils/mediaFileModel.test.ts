@@ -127,3 +127,15 @@ describe('mediaFileModel', () => {
     ]);
   });
 });
+
+describe('fileKindLabel', () => {
+  it('names an extra by the type in its file name, not by what the scanner detected', async () => {
+    const { fileKindLabel } = await import('@/service/library/mediaFileModel');
+    const extra = file({ role: 'extra', detectedMediaType: 'episode', fileName: 'Everybody Loves Raymond (1996) 2-deletedscene.mkv' });
+    expect(fileKindLabel(extra)).toBe('Extra · Deleted Scene');
+    expect(fileKindLabel(file({ role: 'extra', fileName: 'Making Of.mkv' }))).toBe('Extra');
+    expect(fileKindLabel(file({ role: 'episode', seasonNumber: 6, episodeNumber: 11, fileName: 'x.mkv' }))).toBe('S06E11');
+    expect(fileKindLabel(file({ role: null, detectedMediaType: 'movie', fileName: 'x.mkv' }))).toBe('movie');
+    expect(fileKindLabel(file({ role: null, detectedMediaType: null, fileName: 'x.mkv' }))).toBe('—');
+  });
+});

@@ -61,7 +61,7 @@ async function pickTheShow() {
 }
 
 const previewNames = () => {
-  const heading = screen.getByText(/^Output files? preview$/);
+  const heading = screen.getByText(/^Files? the ripper will deliver$/);
   return within(heading.parentElement as HTMLElement)
     .getAllByText(/\.mkv$/)
     .map((el) => el.textContent);
