@@ -170,7 +170,8 @@ export interface TmdbEpisode {
 }
 
 export type Assignment =
-  | { type: 'episode'; episodeNumber: number; episodeName: string }
+  // episodeEndNumber: the last episode when one title holds several (S01E11-E12).
+  | { type: 'episode'; episodeNumber: number; episodeName: string; episodeEndNumber?: number }
   | { type: 'special' }
   | { type: 'custom'; name: string };
 

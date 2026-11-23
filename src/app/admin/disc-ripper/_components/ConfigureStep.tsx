@@ -16,8 +16,9 @@ import type {
 import { CatalogDisc } from '@/types/catalog/Disc.type';
 import { getDisc } from '@/service/catalog/DiscCatalogService';
 import {
-  analyzeTitles, buildStartJobRequest, discTypeFromScan, epCode, MIN_EPISODE_SECONDS, POSTER_BASE,
-  previewFilenames, SHORT_CLIP_SECONDS, startJobBlocker, titleHintLabel,
+  analyzeTitles, assignedEpisodeNumbers, buildStartJobRequest, discTypeFromScan, epCode, episodeValue,
+  MIN_EPISODE_SECONDS, POSTER_BASE, previewFilenames, rangeEnd, SHORT_CLIP_SECONDS, startJobBlocker,
+  suggestedRangeEnd, titleHintLabel,
 } from './discRipperUtils';
 import ExtrasTypeSelector from './ExtrasTypeSelector';
 import DiscCatalogLinkPanel from './DiscCatalogLinkPanel';
@@ -245,11 +246,7 @@ export default function ConfigureStep({
         // A clip is an extra, not an episode: start it off as one.
         setContentTypes((prev) => ({ ...prev, [idx]: prev[idx] || 'clip' }));
       } else if (episodes.length) {
-        const usedEps = new Set(
-          Object.values(assignments)
-            .filter((a): a is Extract<Assignment, { type: 'episode' }> => a.type === 'episode')
-            .map((a) => a.episodeNumber)
-        );
+        const usedEps = assignedEpisodeNumbers(assignments);
         const next = episodes.find((e) => !usedEps.has(e.episodeNumber));
         setAssignments((prev) => ({
           ...prev,
@@ -273,6 +270,18 @@ export default function ConfigureStep({
     }
   };
 
+  /** Set (or with null, clear) the last episode of a title that holds several. */
+  const setRangeEnd = (titleIdx: number, end: number | null) => {
+    setAssignments((prev) => {
+      const current = prev[titleIdx];
+      if (current?.type !== 'episode') return prev;
+      const next = { ...current };
+      if (end != null && end > current.episodeNumber) next.episodeEndNumber = end;
+      else delete next.episodeEndNumber;
+      return { ...prev, [titleIdx]: next };
+    });
+  };
+
   const getAssignmentSelectValue = (titleIdx: number): string => {
     const a = assignments[titleIdx];
     if (!a) return '';
@@ -283,10 +292,7 @@ export default function ConfigureStep({
   const getAssignmentPreview = (titleIdx: number): string | null => {
     const a = assignments[titleIdx];
     if (!a) return null;
-    if (a.type === 'episode') {
-      const ep = episodes.find((e) => e.episodeNumber === a.episodeNumber);
-      return `${epCode(season, a.episodeNumber)}${ep ? ` — ${ep.name}` : ''}`;
-    }
+    if (a.type === 'episode') return episodeValue(season, a, episodes).replace(' - ', ' — ');
     if (a.type === 'special') return 'SpecialFeature…';
     if (a.type === 'custom' && a.name) return a.name;
     return null;
@@ -641,7 +647,50 @@ export default function ConfigureStep({
                           </Select>
                         </FormControl>
                       )}
+
+                      {/* A two-part episode on one title: the last episode it holds */}
+                      {mediaType === 'show' && !isExtra && a?.type === 'episode'
+                        && episodes.some((ep) => ep.episodeNumber > a.episodeNumber) && (
+                        <FormControl size="small" sx={{ minWidth: 200 }}>
+                          <Select
+                            value={rangeEnd(a) != null ? String(rangeEnd(a)) : ''}
+                            onChange={(e) => setRangeEnd(t.index, e.target.value ? Number(e.target.value) : null)}
+                            displayEmpty
+                            inputProps={{ 'aria-label': `Through episode for title ${t.index}` }}
+                          >
+                            <MenuItem value="">
+                              <Typography variant="body2" color="text.secondary">One episode</Typography>
+                            </MenuItem>
+                            {episodes.filter((ep) => ep.episodeNumber > a.episodeNumber).map((ep) => (
+                              <MenuItem key={ep.episodeNumber} value={String(ep.episodeNumber)}>
+                                <Typography variant="body2">
+                                  through{' '}
+                                  <Typography component="span" sx={{ fontFamily: 'monospace', mr: 1 }}>
+                                    E{String(ep.episodeNumber).padStart(2, '0')}
+                                  </Typography>
+                                  {ep.name}
+                                </Typography>
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      )}
                     </Stack>
+
+                    {mediaType === 'show' && !isExtra && a?.type === 'episode' && rangeEnd(a) == null && (() => {
+                      const through = suggestedRangeEnd(t.duration_seconds, a.episodeNumber, episodes);
+                      if (through == null) return null;
+                      return (
+                        <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 0.75 }}>
+                          <Typography variant="caption" color="text.secondary">
+                            About twice as long as an episode of this season: a two-part episode?
+                          </Typography>
+                          <Button size="small" variant="text" onClick={() => setRangeEnd(t.index, through)}>
+                            Make it {epCode(season, a.episodeNumber)}-E{String(through).padStart(2, '0')}
+                          </Button>
+                        </Stack>
+                      );
+                    })()}
 
                     {mediaType === 'show' && !isExtra && a?.type === 'custom' && (
                       <TextField
@@ -678,7 +727,7 @@ export default function ConfigureStep({
 
       {/* ── Output filename preview ────────────────────────────────────── */}
       {selectedIndices.length > 0 && title.trim() && (() => {
-        const names = previewFilenames(mediaType, title.trim(), year, selectedIndices, assignments, season);
+        const names = previewFilenames(mediaType, title.trim(), year, selectedIndices, assignments, season, episodes);
         return (
           <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
             <Typography variant="subtitle2" sx={{ mb: 1 }}>

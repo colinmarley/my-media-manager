@@ -122,8 +122,24 @@ class QueueManualAssignRequest(BaseModel):
     posterUrl: Optional[str] = None
     season: Optional[int] = None
     episode: Optional[int] = None
+    # Last episode of a multi-episode file (S01E11-E12 -> 12). Sent as null to
+    # say the file is a single episode; left out, the end read from the file
+    # name is kept.
+    episodeEnd: Optional[int] = None
     unknownEpisode: bool = False
     organizeNow: bool = False
+
+
+def _requested_episode_end(payload: QueueManualAssignRequest) -> Optional[int]:
+    """The last episode the request asks for, or None for a single episode."""
+    episode_end = None if payload.unknownEpisode else payload.episodeEnd
+    if episode_end is None:
+        return None
+    if payload.episode is None:
+        raise HTTPException(status_code=422, detail="A last episode needs a first episode.")
+    if episode_end < payload.episode:
+        raise HTTPException(status_code=422, detail="The last episode of a range cannot be before the first.")
+    return episode_end if episode_end > payload.episode else None
 
 
 class QueueResetToEncodedRequest(BaseModel):
@@ -826,6 +842,8 @@ async def manual_assign_ingress_item(
         "unknown_episode": payload.unknownEpisode,
         "raw_data": raw_data,
     }
+    if "episodeEnd" in payload.model_fields_set:
+        match_payload["episode_end"] = _requested_episode_end(payload)
 
     queue_item = await queue_service.manual_assign_item(
         payload.itemId,

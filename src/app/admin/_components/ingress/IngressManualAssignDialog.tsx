@@ -25,6 +25,7 @@ import type { SearchResult } from '@/service/library/MediaAssignmentSearchServic
 import {
   EpisodeAssignmentMapping,
   withEpisode,
+  withEpisodeEnd,
   withSeason,
   withUnknownFlag,
 } from '@/service/ingress/ingressQueueModel';
@@ -189,7 +190,8 @@ const IngressManualAssignDialog: React.FC<Props> = ({
               Episode Mapping
             </Typography>
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-              Mark an entry as Unknown to place it in Season 00 and keep the original filename.
+Mark an entry as Unknown to place it in Season 00 and keep the original filename. For a file
+              that holds more than one episode, fill in Through episode with the last one.
             </Typography>
             <Stack spacing={1.2}>
               {assignTargets.map((item) => {
@@ -233,6 +235,22 @@ const IngressManualAssignDialog: React.FC<Props> = ({
                         onEpisodeMappingChange(item.id, withEpisode(mapping, episodeValue));
                       }}
                       sx={{ width: 120 }}
+                    />
+                    <TextField
+                      label="Through episode"
+                      type="number"
+                      size="small"
+                      disabled={Boolean(mapping.unknown)}
+                      value={mapping.episodeEnd ?? ''}
+                      placeholder="—"
+                      error={mapping.episodeEnd !== undefined && mapping.episode !== undefined
+                        && mapping.episodeEnd < mapping.episode}
+                      onChange={(event) => {
+                        const endValue = event.target.value ? Number(event.target.value) : undefined;
+                        onEpisodeMappingChange(item.id, withEpisodeEnd(mapping, endValue));
+                      }}
+                      slotProps={{ inputLabel: { shrink: true } }}
+                      sx={{ width: 150 }}
                     />
                   </Box>
                 );
