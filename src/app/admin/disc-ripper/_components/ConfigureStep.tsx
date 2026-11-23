@@ -14,11 +14,13 @@ import type {
   TmdbEpisode, TmdbResult, TmdbSeason,
 } from '@/types/disc-ripper/DiscRipper.type';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
-import { getDisc } from '@/service/catalog/DiscCatalogService';
+import { findSeasonRips, getDisc } from '@/service/catalog/DiscCatalogService';
+import { getMediaFiles } from '@/service/library/MediaFilesService';
 import {
-  analyzeTitles, assignedEpisodeNumbers, buildStartJobRequest, discTypeFromScan, epCode, episodeValue,
-  MIN_EPISODE_SECONDS, POSTER_BASE, previewFilenames, rangeEnd, SHORT_CLIP_SECONDS, startJobBlocker,
-  suggestedRangeEnd, titleHintLabel,
+  analyzeTitles, assignedEpisodeNumbers, autoAssignEpisodes, buildStartJobRequest, DEFAULT_EXTRA_TYPE,
+  defaultsToExtra, discTypeFromScan, epCode, episodeValue, formatEpisodeNumbers, heldEpisodeNumbers,
+  isPreselected, POSTER_BASE, previewFilenames, rangeEnd, SHORT_CLIP_SECONDS, startJobBlocker,
+  suggestedRangeEnd, titleHintLabel, titleHintNote,
 } from './discRipperUtils';
 import ExtrasTypeSelector from './ExtrasTypeSelector';
 import DiscCatalogLinkPanel from './DiscCatalogLinkPanel';
@@ -69,6 +71,12 @@ export default function ConfigureStep({
   const [contentTypes, setContentTypes] = useState<Record<number, ExtrasCategory | ''>>({});
   const [linkedDisc, setLinkedDisc] = useState<CatalogDisc | null>(null);
   const [error, setError] = useState('');
+  // Episodes of the season that already exist (library files, other discs'
+  // rips): the default numbering starts after them unless the user says not to.
+  const [heldEpisodes, setHeldEpisodes] = useState<Set<number>>(new Set());
+  const [ignoreHeld, setIgnoreHeld] = useState(false);
+  // Titles this page tagged as extras by itself (not the user).
+  const autoExtras = useRef<Set<number>>(new Set());
 
   // A disc that was ripped before is already in the catalog: link it again.
   useEffect(() => {
@@ -88,12 +96,39 @@ export default function ConfigureStep({
     if (first) setDiscType(first.width > 1280 ? 'bluray' : 'dvd');
   }, [titles, detectedDiscType]);
 
-  // Duplicates, play-all titles and short clips are pointed out and left
-  // unselected: a DVD lists each episode more than once.
+  // Repeats, play-all titles and short clips are pointed out and left
+  // unselected: a DVD lists each episode more than once. A title that only
+  // might be a repeat is selected like any other, with a note.
   const titleHints = useMemo(() => analyzeTitles(titles), [titles]);
+  const preselected = useMemo(
+    () => titles.filter((t) => isPreselected(titleHints[t.index])).map((t) => t.index),
+    [titles, titleHints],
+  );
+  useEffect(() => { setSelectedIndices(preselected); }, [preselected]);
+
+  // On a TV disc with a play-all title, a selected title the play-all does
+  // not include starts out as an extra instead of taking an episode number.
   useEffect(() => {
-    setSelectedIndices(titles.filter((t) => !titleHints[t.index]).map((t) => t.index));
-  }, [titles, titleHints]);
+    const auto = autoExtras.current;
+    if (mediaType === 'show') {
+      const extras = preselected.filter((idx) => defaultsToExtra(idx, titles, titleHints));
+      if (!extras.length) return;
+      extras.forEach((idx) => auto.add(idx));
+      setContentTypes((prev) => {
+        const next = { ...prev };
+        for (const idx of extras) if (next[idx] === undefined) next[idx] = DEFAULT_EXTRA_TYPE;
+        return next;
+      });
+    } else if (auto.size) {
+      const drop = [...auto];
+      auto.clear();
+      setContentTypes((prev) => {
+        const next = { ...prev };
+        for (const idx of drop) if (next[idx] === DEFAULT_EXTRA_TYPE) delete next[idx];
+        return next;
+      });
+    }
+  }, [mediaType, preselected, titles, titleHints]);
 
   // ── Search ────────────────────────────────────────────────────────────────
 
@@ -140,39 +175,57 @@ export default function ConfigureStep({
 
   // ── TMDB selection ────────────────────────────────────────────────────────
 
-  const loadEpisodes = useCallback(async (seriesId: number, seasonNum: number, currentSelectedIndices: number[]) => {
+  const fingerprint = discInfo?.fingerprint ?? null;
+
+  /** Episodes of the season already in the library or on another disc's rip; empty when unknown. */
+  const loadHeldEpisodes = useCallback(async (seriesId: number, seasonNum: number, imdb: string) => {
+    try {
+      const [files, rips] = await Promise.all([
+        imdb.trim() ? getMediaFiles('series', imdb.trim()).catch(() => null) : Promise.resolve(null),
+        findSeasonRips({ tmdbId: seriesId, imdbId: imdb, season: seasonNum }),
+      ]);
+      return heldEpisodeNumbers({ season: seasonNum, librarySeasons: files?.seasons, rips, fingerprint });
+    } catch {
+      return new Set<number>();
+    }
+  }, [fingerprint]);
+
+  const loadEpisodes = useCallback(async (
+    seriesId: number, seasonNum: number, currentSelectedIndices: number[], imdb: string, skipHeld = true,
+  ) => {
     setEpisodesLoading(true);
     try {
-      const data = await TmdbService.getSeasonDetails(seriesId, seasonNum);
+      const [data, held] = await Promise.all([
+        TmdbService.getSeasonDetails(seriesId, seasonNum),
+        loadHeldEpisodes(seriesId, seasonNum, imdb),
+      ]);
       const eps: TmdbEpisode[] = (data.episodes ?? []).map((e: {
         id?: number; episode_number: number; name: string; runtime?: number;
       }) => ({
         episodeNumber: e.episode_number, name: e.name, runtime: e.runtime ?? undefined, tmdbId: e.id,
       }));
       setEpisodes(eps);
-      // Auto-assign in order. A clip of a few minutes is never an episode.
-      const newAssignments: Record<number, Assignment> = {};
-      let epIdx = 0;
-      for (const idx of [...currentSelectedIndices].sort((a, b) => a - b)) {
-        const length = titles.find((t) => t.index === idx)?.duration_seconds ?? 0;
-        const ep = length >= MIN_EPISODE_SECONDS && epIdx < eps.length ? eps[epIdx++] : null;
-        newAssignments[idx] = ep
-          ? { type: 'episode', episodeNumber: ep.episodeNumber, episodeName: ep.name }
-          : { type: 'special' };
-      }
-      setAssignments(newAssignments);
+      setHeldEpisodes(held);
+      // Auto-assign in order, after the episodes that already exist. A clip of
+      // a few minutes is never an episode, and neither is a title tagged as an extra.
+      setAssignments(autoAssignEpisodes({
+        selectedIndices: currentSelectedIndices, titles, episodes: eps, contentTypes,
+        held: skipHeld ? held : undefined,
+      }));
     } catch {
       setEpisodes([]);
     } finally {
       setEpisodesLoading(false);
     }
-  }, [titles]);
+  }, [titles, contentTypes, loadHeldEpisodes]);
 
   const handleSelectResult = async (result: TmdbResult | null) => {
     setSearchValue(result);
     setTmdbSeasons([]);
     setEpisodes([]);
     setAssignments({});
+    setHeldEpisodes(new Set());
+    setIgnoreHeld(false);
     // The ids belong to the picked result; none picked means none known.
     setTmdbSeriesId(null);
     setTmdbMovieId(null);
@@ -201,7 +254,7 @@ export default function ConfigureStep({
         if (seasons.length > 0) {
           const firstSeason = seasons[0].seasonNumber;
           setSeason(firstSeason);
-          await loadEpisodes(result.tmdbId, firstSeason, selectedIndices);
+          await loadEpisodes(result.tmdbId, firstSeason, selectedIndices, extIds.imdb_id ?? '');
         }
       } catch { /* fall through to manual entry */ }
     } else {
@@ -216,7 +269,15 @@ export default function ConfigureStep({
   const handleSeasonChange = async (seasonNum: number) => {
     setSeason(seasonNum);
     setAssignments({});
-    if (tmdbSeriesId) await loadEpisodes(tmdbSeriesId, seasonNum, selectedIndices);
+    setHeldEpisodes(new Set());
+    setIgnoreHeld(false);
+    if (tmdbSeriesId) await loadEpisodes(tmdbSeriesId, seasonNum, selectedIndices, imdbId);
+  };
+
+  /** Number the selected titles from the season's first episode after all. */
+  const numberFromFirstEpisode = () => {
+    setIgnoreHeld(true);
+    setAssignments(autoAssignEpisodes({ selectedIndices, titles, episodes, contentTypes }));
   };
 
   const handleMediaTypeChange = (type: 'show' | 'movie') => {
@@ -227,6 +288,8 @@ export default function ConfigureStep({
     setTmdbSeasons([]);
     setEpisodes([]);
     setAssignments({});
+    setHeldEpisodes(new Set());
+    setIgnoreHeld(false);
     setTmdbSeriesId(null);
     setTmdbMovieId(null);
   };
@@ -242,12 +305,16 @@ export default function ConfigureStep({
     } else {
       setSelectedIndices((prev) => [...prev, idx].sort((a, b) => a - b));
       const length = titles.find((t) => t.index === idx)?.duration_seconds ?? 0;
-      if (length < SHORT_CLIP_SECONDS) {
-        // A clip is an extra, not an episode: start it off as one.
-        setContentTypes((prev) => ({ ...prev, [idx]: prev[idx] || 'clip' }));
+      const notAnEpisode = mediaType === 'show' && defaultsToExtra(idx, titles, titleHints);
+      if (length < SHORT_CLIP_SECONDS || notAnEpisode) {
+        // A clip, or a title the disc's play-all leaves out, is an extra, not
+        // an episode: start it off as one.
+        setContentTypes((prev) => ({ ...prev, [idx]: prev[idx] || DEFAULT_EXTRA_TYPE }));
       } else if (episodes.length) {
         const usedEps = assignedEpisodeNumbers(assignments);
-        const next = episodes.find((e) => !usedEps.has(e.episodeNumber));
+        const free = (e: TmdbEpisode) => !usedEps.has(e.episodeNumber);
+        const next = episodes.find((e) => free(e) && (ignoreHeld || !heldEpisodes.has(e.episodeNumber)))
+          ?? episodes.find(free);
         setAssignments((prev) => ({
           ...prev,
           [idx]: next
@@ -506,27 +573,49 @@ export default function ConfigureStep({
             <Button
               size="small"
               variant="text"
-              onClick={() => loadEpisodes(tmdbSeriesId!, season, selectedIndices)}
+              onClick={() => loadEpisodes(tmdbSeriesId!, season, selectedIndices, imdbId, !ignoreHeld)}
             >
               Re-assign in order
             </Button>
           )}
         </Stack>
 
-        {Object.keys(titleHints).length > 0 && (
+        {preselected.length < titles.length && (
           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
-            {titles.length - Object.keys(titleHints).length} of {titles.length} titles are selected. The
+            {preselected.length} of {titles.length} titles start out selected. The
             rest are repeats of a selected title, a play-all title that joins several of them, or short
             clips (extras such as commentary scenes, or ads and previews). Click any of them to rip it
             as well, and say what kind of extra it is.
           </Typography>
         )}
 
+        {mediaType === 'show' && !ignoreHeld && (() => {
+          const held = episodes.filter((e) => heldEpisodes.has(e.episodeNumber)).map((e) => e.episodeNumber);
+          if (!held.length) return null;
+          const all = held.length === episodes.length;
+          return (
+            <Alert
+              severity="info"
+              sx={{ mb: 1, py: 0 }}
+              action={all ? undefined : (
+                <Button color="inherit" size="small" onClick={numberFromFirstEpisode}>
+                  Number from {epCode(season, episodes[0].episodeNumber)} instead
+                </Button>
+              )}
+            >
+              {all
+                ? `Every episode of season ${season} is already in your library or on another disc's rip, so the numbering here starts at the first episode.`
+                : `Season ${season} episode${held.length === 1 ? '' : 's'} ${formatEpisodeNumbers(held)} ${held.length === 1 ? 'is' : 'are'} already in your library or on another disc's rip, so the numbering here starts after ${held.length === 1 ? 'it' : 'them'}.`}
+            </Alert>
+          );
+        })()}
+
         <Stack spacing={0.75}>
           {titles.map((t) => {
             const isSelected = selectedIndices.includes(t.index);
             const hint = titleHints[t.index];
-            const isShort = !!hint;
+            const hintNote = titleHintNote(hint);
+            const isShort = !isPreselected(hint);
             const a = assignments[t.index];
             const preview = getAssignmentPreview(t.index);
             const isExtra = !!contentTypes[t.index];
@@ -591,6 +680,12 @@ export default function ConfigureStep({
                     />
                   )}
                 </Stack>
+
+                {hintNote && (
+                  <Typography variant="caption" color="warning.main" sx={{ display: 'block', mt: 0.5 }}>
+                    {hintNote}
+                  </Typography>
+                )}
 
                 {isSelected && (
                   <Box sx={{ mt: 1 }} onClick={(e) => e.stopPropagation()}>
@@ -716,10 +811,12 @@ export default function ConfigureStep({
       </Paper>
 
       {/* ── Episode count warning ──────────────────────────────────────── */}
-      {mediaType === 'show' && episodes.length > 0 && selectedIndices.length > episodes.length && (
+      {mediaType === 'show' && episodes.length > 0
+        && selectedIndices.filter((idx) => !contentTypes[idx]).length > episodes.length && (
         <Alert severity="warning" sx={{ mb: 2 }}>
-          You&apos;ve selected {selectedIndices.length} titles but Season {season} only has {episodes.length} episodes.
-          Extra titles will be numbered as special features.
+          You&apos;ve selected {selectedIndices.filter((idx) => !contentTypes[idx]).length} titles that are not
+          extras but Season {season} only has {episodes.length} episodes.
+          Titles beyond those are numbered as special features unless you tag them as extras.
         </Alert>
       )}
 
@@ -727,7 +824,12 @@ export default function ConfigureStep({
 
       {/* ── Output filename preview ────────────────────────────────────── */}
       {selectedIndices.length > 0 && title.trim() && (() => {
-        const names = previewFilenames(mediaType, title.trim(), year, selectedIndices, assignments, season, episodes);
+        // Built from the request Start Rip would send, by the ripper's naming rule.
+        const names = previewFilenames({
+          discType, mediaType, title, year, imdbId,
+          tmdbId: mediaType === 'show' ? tmdbSeriesId : tmdbMovieId,
+          season, selectedIndices, assignments, contentTypes, episodes, scanId,
+        });
         return (
           <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
             <Typography variant="subtitle2" sx={{ mb: 1 }}>

@@ -36,18 +36,24 @@ export default function DiscScanStep({
   onContinue: () => void;
 }) {
   const [scanning, setScanning] = useState(false);
+  // A rescan asked for the short titles but the ripper build cannot do that.
+  const [shortUnsupported, setShortUnsupported] = useState(false);
 
-  const scan = async () => {
+  /** `includeShort` rescans with no minimum title length, so nothing is skipped as too short. */
+  const scan = async (includeShort = false) => {
     setScanning(true);
+    setShortUnsupported(false);
     setScanError('');
     setTitles([]);
     onScanned?.(null);
     onPreviousRips?.([]);
     try {
-      const info = await DiscRipperService.getDiscInfo();
+      const info = await DiscRipperService.getDiscInfo(includeShort ? { minLengthSeconds: 0 } : undefined);
       if (info.error) {
         setScanError(info.error);
       } else {
+        // An older ripper ignores the request and reports no minimum length.
+        if (includeShort && info.disc?.min_length_seconds == null) setShortUnsupported(true);
         setTitles(info.titles);
         onScanned?.(info.disc ?? null);
         if (info.disc?.fingerprint) {
@@ -69,7 +75,7 @@ export default function DiscScanStep({
       </Typography>
       <Button
         variant="contained"
-        onClick={scan}
+        onClick={() => scan()}
         disabled={scanning}
         startIcon={scanning ? <CircularProgress size={16} /> : <RefreshIcon />}
       >
@@ -86,7 +92,25 @@ export default function DiscScanStep({
               {[scanInfo.disc_type, scanInfo.makemkv_version,
                 scanInfo.skipped_short ? `${scanInfo.skipped_short} short title(s) skipped` : null]
                 .filter(Boolean).map((part) => ` · ${part}`).join('')}
+              {scanInfo.min_length_seconds != null && ' · short titles included'}
             </Typography>
+          )}
+          {scanInfo && !!scanInfo.skipped_short && scanInfo.min_length_seconds == null && !shortUnsupported && (
+            <Box sx={{ mb: 1.5 }}>
+              <Button size="small" variant="outlined" disabled={scanning} onClick={() => scan(true)}>
+                Show short titles
+              </Button>
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                Scans the disc again and lists the {scanInfo.skipped_short} title(s) left out for being short,
+                so they can be ripped too.
+              </Typography>
+            </Box>
+          )}
+          {shortUnsupported && (
+            <Alert severity="warning" sx={{ mb: 1.5 }}>
+              This version of disc-ripper-service cannot include short titles in a scan, so the list is
+              the same as before. Update the ripper to rip them.
+            </Alert>
           )}
           {(previousRips?.length ?? 0) > 0 && (
             <Alert severity="warning" sx={{ mb: 1.5 }}>

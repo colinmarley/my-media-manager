@@ -35,8 +35,16 @@ function formatBytes(bytes: number): string {
 }
 
 export const DiscRipperService = {
-  async getDiscInfo(): Promise<DiscInfoResponse> {
-    const { data } = await api.get<DiscInfoResponse>('/disc/info');
+  /**
+   * Scan the disc in the drive. `minLengthSeconds` asks for titles down to
+   * that length (0 for every title) instead of MakeMKV's own minimum, which
+   * leaves out short titles. A ripper build that does not know the parameter
+   * ignores it and scans as usual: its answer then has no
+   * `disc.min_length_seconds`.
+   */
+  async getDiscInfo(options?: { minLengthSeconds?: number }): Promise<DiscInfoResponse> {
+    const params = options?.minLengthSeconds != null ? { min_length: options.minLengthSeconds } : undefined;
+    const { data } = await api.get<DiscInfoResponse>('/disc/info', { params });
     return data;
   },
 

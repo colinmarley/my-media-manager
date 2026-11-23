@@ -209,10 +209,13 @@ describe('episode ranges on the rip page', () => {
   ];
 
   it('previews the file name the ripper will give a range', () => {
-    expect(previewFilenames('show', 'Burn Notice', 2007, [4, 5, 6], {
-      4: { type: 'episode', episodeNumber: 11, episodeName: 'Dead Drop', episodeEndNumber: 12 },
-      5: { type: 'episode', episodeNumber: 10, episodeName: 'False Flag' },
-    }, 1, episodes)).toEqual([
+    expect(previewFilenames({
+      ...base, title: 'Burn Notice', year: 2007, selectedIndices: [4, 5, 6], episodes,
+      assignments: {
+        4: { type: 'episode', episodeNumber: 11, episodeName: 'Dead Drop', episodeEndNumber: 12 },
+        5: { type: 'episode', episodeNumber: 10, episodeName: 'False Flag' },
+      },
+    })).toEqual([
       'Burn Notice S01E11-E12 - Dead Drop and Loose Ends.mkv',
       'Burn Notice S01E10 - False Flag.mkv',
       'Burn Notice S01E03.mkv',
