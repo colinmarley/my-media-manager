@@ -356,8 +356,18 @@ async def remove_missing_file_record(file_id: str, db: AsyncSession = Depends(ge
     from services import attention_service
     from services.library_inventory_service import default_mount_check
 
+    from services import storage_paths
+
     row = await _file_or_404(db, file_id)
-    if row.is_available is not False:
+    # A file still in an ingest folder was never filed. A library scan does not look there, so it
+    # can never be marked missing: its own ingest root being present stands in for the scan.
+    ingest_root = next(
+        (root for root in storage_paths.ingest_roots() if storage_paths.is_within(row.file_path, root)), None,
+    ) if row.file_path else None
+    if ingest_root is not None:
+        if not os.path.isdir(ingest_root):
+            raise _file_error(409, "LIBRARY_NOT_MOUNTED", "The ingest folder is not there, so every file in it looks missing. Nothing was removed.")
+    elif row.is_available is not False:
         raise _file_error(409, "FILE_NOT_MISSING", "The library does not list this file as missing. Rescan the library first.")
     if not default_mount_check():
         raise _file_error(409, "LIBRARY_NOT_MOUNTED", "The library share is not mounted, so every file looks missing. Nothing was removed.")
