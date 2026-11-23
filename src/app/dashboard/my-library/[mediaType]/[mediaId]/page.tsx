@@ -20,6 +20,7 @@ import MediaFolderFileList from '../../_components/detail/MediaFolderFileList';
 import LinkFileToDiscDialog, { SourceOption } from '../../_components/detail/LinkFileToDiscDialog';
 import RenameCanonicalDialog from '../../_components/detail/RenameCanonicalDialog';
 import RemoveRecordDialog from '../../_components/detail/RemoveRecordDialog';
+import ChangeExtraTypeDialog from '../../_components/detail/ChangeExtraTypeDialog';
 import EpisodeAssignDialog from '../../_components/detail/EpisodeAssignDialog';
 import RemoveFromLibraryDialog from '../../_components/detail/RemoveFromLibraryDialog';
 import { FileActionHandlers } from '../../_components/detail/fileActionTypes';
@@ -84,6 +85,7 @@ const LibraryMediaDetailPage = () => {
   const [linkDialog, setLinkDialog] = useState<{ files: MediaFile[]; target?: SourceOption } | null>(null);
   const [renameFiles, setRenameFiles] = useState<MediaFile[] | null>(null);
   const [removeRecordFile, setRemoveRecordFile] = useState<MediaFile | null>(null);
+  const [extraTypeFile, setExtraTypeFile] = useState<MediaFile | null>(null);
   const [reassignDisc, setReassignDisc] = useState<TitleSource | null>(null);
 
   const diskReassign = useDiskReassign({
@@ -122,6 +124,7 @@ const LibraryMediaDetailPage = () => {
       : undefined,
     onSetFlag: (files, needsReview) => void fileActions.setReview(files.map((f) => f.id), needsReview),
     onRename: (files) => files.length > 0 && setRenameFiles(files),
+    onChangeExtraType: (file) => setExtraTypeFile(file),
     onRemoveRecord: (file) => setRemoveRecordFile(file),
     reviewUnavailable: fileActions.reviewUnavailable,
     renameUnavailable: fileActions.renameUnavailable,
@@ -287,6 +290,12 @@ const LibraryMediaDetailPage = () => {
         file={removeRecordFile}
         onClose={() => setRemoveRecordFile(null)}
         onConfirm={(file) => fileActions.removeRecords([file])}
+      />
+
+      <ChangeExtraTypeDialog
+        file={extraTypeFile}
+        onClose={() => setExtraTypeFile(null)}
+        onConfirm={(file, category) => fileActions.changeExtraType(file, category)}
       />
 
       <RenameCanonicalDialog
