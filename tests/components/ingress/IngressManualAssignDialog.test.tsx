@@ -156,6 +156,31 @@ describe('IngressManualAssignDialog', () => {
     expect(props.onEpisodeMappingChange).toHaveBeenCalledWith('ep-1', { season: 3, episode: 2, unknown: false });
   });
 
+  it('takes a through episode for a file that holds more than one', () => {
+    const props = renderDialog({
+      assignMediaType: 'episode',
+      episodeMapByItemId: { 'ep-1': { season: 1, episode: 11, episodeEnd: 12, unknown: false } },
+    });
+
+    expect(screen.getByLabelText('Through episode')).toHaveValue(12);
+
+    fireEvent.change(screen.getByLabelText('Through episode'), { target: { value: '13' } });
+    expect(props.onEpisodeMappingChange).toHaveBeenLastCalledWith('ep-1', {
+      season: 1, episode: 11, episodeEnd: 13, unknown: false,
+    });
+
+    fireEvent.change(screen.getByLabelText('Through episode'), { target: { value: '' } });
+    expect(props.onEpisodeMappingChange).toHaveBeenLastCalledWith('ep-1', {
+      season: 1, episode: 11, episodeEnd: undefined, unknown: false,
+    });
+  });
+
+  it('leaves the through episode empty for a single episode', () => {
+    renderDialog({ assignMediaType: 'episode' });
+
+    expect(screen.getByLabelText('Through episode')).toHaveValue(null);
+  });
+
   it('locks the season and episode fields when the row is marked Unknown', () => {
     const props = renderDialog({
       assignMediaType: 'episode',

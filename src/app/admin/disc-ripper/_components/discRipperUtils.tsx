@@ -27,6 +27,68 @@ export function epCode(season: number, ep: number) {
   return `S${String(season).padStart(2, '0')}E${String(ep).padStart(2, '0')}`;
 }
 
+type EpisodeAssignment = Extract<Assignment, { type: 'episode' }>;
+
+/** The last episode of a title that holds several, or null for a single episode. */
+export function rangeEnd(a: EpisodeAssignment): number | null {
+  return a.episodeEndNumber != null && a.episodeEndNumber > a.episodeNumber ? a.episodeEndNumber : null;
+}
+
+/** "Dead Drop and Loose Ends": the names of every episode a title holds. */
+export function episodeRangeName(a: EpisodeAssignment, episodes: TmdbEpisode[]): string {
+  const end = rangeEnd(a);
+  if (end == null) return a.episodeName;
+  const names = [a.episodeName];
+  for (let n = a.episodeNumber + 1; n <= end; n++) {
+    const name = episodes.find((e) => e.episodeNumber === n)?.name ?? '';
+    if (name && !names.includes(name)) names.push(name);
+  }
+  const named = names.filter(Boolean);
+  if (named.length < 2) return named[0] ?? '';
+  return `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`;
+}
+
+/**
+ * The episode string the ripper names a file from: "S01E11 - Dead Drop", or
+ * "S01E11-E12 - Dead Drop and Loose Ends" for a title that holds a range.
+ */
+export function episodeValue(season: number, a: EpisodeAssignment, episodes: TmdbEpisode[]): string {
+  const end = rangeEnd(a);
+  const code = epCode(season, a.episodeNumber) + (end != null ? `-E${String(end).padStart(2, '0')}` : '');
+  const name = episodeRangeName(a, episodes);
+  return name ? `${code} - ${name}` : code;
+}
+
+/** Every episode number the assignments already cover, ranges included. */
+export function assignedEpisodeNumbers(assignments: Record<number, Assignment>): Set<number> {
+  const used = new Set<number>();
+  for (const a of Object.values(assignments)) {
+    if (a.type !== 'episode') continue;
+    for (let n = a.episodeNumber; n <= (rangeEnd(a) ?? a.episodeNumber); n++) used.add(n);
+  }
+  return used;
+}
+
+/**
+ * The episode to offer as "through" when a title runs about twice as long as
+ * an episode of the season usually does: probably a two-part episode on one
+ * title. Null when the length is ordinary or nothing follows the episode.
+ */
+export function suggestedRangeEnd(
+  durationSeconds: number, episodeNumber: number, episodes: TmdbEpisode[],
+): number | null {
+  const runtimes = episodes.map((e) => e.runtime ?? 0).filter((r) => r > 0).sort((x, y) => x - y);
+  if (!runtimes.length || durationSeconds <= 0) return null;
+  const typical = runtimes[Math.floor((runtimes.length - 1) / 2)] * 60;
+  const ratio = durationSeconds / typical;
+  if (ratio < 1.7 || ratio > 2.3) return null;
+  const next = episodes
+    .map((e) => e.episodeNumber)
+    .filter((n) => n > episodeNumber)
+    .sort((x, y) => x - y)[0];
+  return next ?? null;
+}
+
 export function previewFilenames(
   mediaType: 'movie' | 'show',
   title: string,
@@ -34,6 +96,7 @@ export function previewFilenames(
   selectedIndices: number[],
   assignments: Record<number, Assignment>,
   season: number,
+  episodes: TmdbEpisode[] = [],
 ): string[] {
   if (!title.trim() || !selectedIndices.length) return [];
   const sorted = [...selectedIndices].sort((a, b) => a - b);
@@ -45,12 +108,8 @@ export function previewFilenames(
   let specialN = 0;
   return sorted.map((idx, i) => {
     const a = assignments[idx];
-    if (!a || a.type === 'episode') {
-      const epNum = a?.type === 'episode' ? a.episodeNumber : i + 1;
-      const epName = a?.type === 'episode' ? a.episodeName : '';
-      const code = epCode(season, epNum);
-      return `${title} ${code}${epName ? ` - ${epName}` : ''}.mkv`;
-    }
+    if (a?.type === 'episode') return `${title} ${episodeValue(season, a, episodes)}.mkv`;
+    if (!a) return `${title} ${epCode(season, i + 1)}.mkv`;
     if (a.type === 'special') {
       specialN++;
       return `${title} SpecialFeature${String(specialN).padStart(3, '0')}.mkv`;
@@ -86,7 +145,8 @@ export interface StartJobInput {
  * `titles` is the structured record of what each selected title is. The older
  * `episode_map` / `title_content_types` are sent too, unchanged, because they
  * are what the ripper names files from: a title tagged with an extras category
- * is left out of `episode_map` so it is not also given an episode code.
+ * is left out of `episode_map` so it is not also given an episode code. A title
+ * that holds several episodes carries `episode_end` and a ranged name.
  */
 export function buildStartJobRequest(input: StartJobInput): StartJobRequest {
   const sorted = [...input.selectedIndices].sort((a, b) => a - b);
@@ -111,15 +171,19 @@ export function buildStartJobRequest(input: StartJobInput): StartJobRequest {
     }
     const a = input.assignments[idx];
     if (a?.type === 'episode') {
-      const code = epCode(input.season, a.episodeNumber);
-      episodeMap[String(idx)] = a.episodeName ? `${code} - ${a.episodeName}` : code;
+      // The range is in both: episode_map names the file ("S01E11-E12 - ..."),
+      // episode_end is what the rip record tells the library.
+      episodeMap[String(idx)] = episodeValue(input.season, a, input.episodes);
+      const end = rangeEnd(a);
+      const episodeName = episodeRangeName(a, input.episodes);
       const tmdbEpisodeId = input.episodes.find((e) => e.episodeNumber === a.episodeNumber)?.tmdbId;
       titles.push({
         title_index: idx,
         content_type: 'episode',
         season: input.season,
         episode: a.episodeNumber,
-        ...(a.episodeName ? { episode_name: a.episodeName } : {}),
+        ...(end != null ? { episode_end: end } : {}),
+        ...(episodeName ? { episode_name: episodeName } : {}),
         ...(tmdbEpisodeId != null ? { tmdb_episode_id: tmdbEpisodeId } : {}),
       });
     } else if (a?.type === 'special') {

@@ -28,6 +28,7 @@ import {
   runQueueActionsSequentially,
   sortActiveQueueItems,
   withEpisode,
+  withEpisodeEnd,
   withSeason,
   withUnknownFlag,
 } from '@/service/ingress/ingressQueueModel';
@@ -380,6 +381,46 @@ describe('manual assign payload', () => {
       episode: undefined,
       unknownEpisode: true,
     });
+  });
+
+  it('sends the last episode of a range, and null for a single episode', () => {
+    const payload = (mapping: Parameters<typeof buildManualAssignPayload>[0]['mapping'], mediaType: 'movie' | 'episode' = 'episode') =>
+      buildManualAssignPayload({ itemId: '1', mediaType, result, mapping, organizeAfterAssign: false });
+
+    expect(payload({ season: 1, episode: 11, episodeEnd: 12 }).episodeEnd).toBe(12);
+    // null is sent so a range read from the file name is not kept.
+    expect(payload({ season: 1, episode: 11 }).episodeEnd).toBeNull();
+    expect(payload({ season: 1, episode: 11, episodeEnd: 11 }).episodeEnd).toBeNull();
+    expect(payload({ unknown: true, episodeEnd: 12 }).episodeEnd).toBeUndefined();
+    expect(payload({ season: 1, episode: 11, episodeEnd: 12 }, 'movie').episodeEnd).toBeUndefined();
+  });
+
+  it('starts a mapping with the range read from the file name', () => {
+    const { episodeMap } = buildDefaultEpisodeAssignments([
+      makeItem({ id: 'two-part', status: 'needs_review', parsed_info: { media_type: 'episode', season: 1, episode: 11, episode_end: 12 } }),
+      makeItem({ id: 'single', status: 'needs_review', parsed_info: { media_type: 'episode', season: 1, episode: 3, episode_end: null } }),
+    ]);
+
+    expect(episodeMap['two-part']).toEqual({ season: 1, episode: 11, episodeEnd: 12, unknown: false });
+    expect(episodeMap.single).toEqual({ season: 1, episode: 3, unknown: false });
+  });
+
+  it('accepts a through episode only at or after the episode', () => {
+    expect(isEpisodeMappingValid({ season: 1, episode: 11, episodeEnd: 12 })).toBe(true);
+    expect(isEpisodeMappingValid({ season: 1, episode: 11, episodeEnd: 11 })).toBe(true);
+    expect(isEpisodeMappingValid({ season: 1, episode: 11, episodeEnd: 10 })).toBe(false);
+    expect(withEpisodeEnd({ season: 1, episode: 11, unknown: true }, 12)).toEqual({
+      season: 1, episode: 11, episodeEnd: 12, unknown: false,
+    });
+    expect(withUnknownFlag({ season: 1, episode: 11, episodeEnd: 12 }, true).episodeEnd).toBeUndefined();
+  });
+
+  it('shows the range on the episode badge', () => {
+    const labels = getQueueClassificationBadges(
+      makeItem({ id: 'two-part', status: 'needs_review', parsed_info: { media_type: 'episode', season: 1, episode: 11, episode_end: 12 } })
+    ).map((badge) => badge.label);
+
+    expect(labels).toContain('S01E11-E12');
   });
 
   it('leaves the year unset when the search result has none', () => {

@@ -66,6 +66,8 @@ export interface IngressQueueItem {
     media_type?: string;
     season?: number;
     episode?: number;
+    /** Last episode of a multi-episode file (S01E11-E12 → 12). */
+    episode_end?: number | null;
     quality?: string;
     classification_hint?: string;
     is_companion?: boolean;
@@ -276,6 +278,8 @@ export interface QueueManualAssignPayload {
   posterUrl?: string;
   season?: number;
   episode?: number;
+  /** Last episode of a multi-episode file; null for a single episode. */
+  episodeEnd?: number | null;
   unknownEpisode?: boolean;
   organizeNow?: boolean;
 }
