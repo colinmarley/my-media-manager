@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert, Box, Button, Chip, CircularProgress, FormControl, MenuItem,
   Paper, Select, Stack, Typography,
 } from '@mui/material';
+import ExtrasReviewService from '@/service/library/ExtrasReviewService';
 import useExtrasReviewStore from '@/store/useExtrasReviewStore';
 import { formatBytes } from '@/utils/format';
 
@@ -24,6 +25,44 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 function formatSize(bytes: number | null): string {
   return formatBytes(bytes, { precision: 'video' });
+}
+
+function formatDuration(ms: number | null | undefined): string | null {
+  if (!ms || ms <= 0) return null;
+  const total = Math.round(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = String(total % 60).padStart(2, '0');
+  return minutes >= 60
+    ? `${Math.floor(minutes / 60)}:${String(minutes % 60).padStart(2, '0')}:${seconds}`
+    : `${minutes}:${seconds}`;
+}
+
+const baseName = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+
+/** Twelve frames spread over the file, so the type can be judged without playing it. */
+function ContactSheet({ id, fileName }: { id: string; fileName: string }) {
+  const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading');
+  return (
+    <Box>
+      {state === 'loading' && (
+        <Typography variant="caption" color="text.secondary">Reading frames from the file…</Typography>
+      )}
+      {state === 'failed' && (
+        <Typography variant="caption" color="text.secondary">No frames could be read from this file.</Typography>
+      )}
+      {state !== 'failed' && (
+        // eslint-disable-next-line @next/next/no-img-element -- made on demand by the backend, not a static asset
+        <img
+          src={ExtrasReviewService.contactSheetUrl(id)}
+          alt={`Twelve frames from ${fileName}`}
+          loading="lazy"
+          onLoad={() => setState('ready')}
+          onError={() => setState('failed')}
+          style={{ display: state === 'ready' ? 'block' : 'none', width: '100%', height: 'auto', borderRadius: 4 }}
+        />
+      )}
+    </Box>
+  );
 }
 
 /**
@@ -46,8 +85,8 @@ export default function ExtrasReviewPanel() {
         <Box>
           <Typography variant="h6">Extras Review</Typography>
           <Typography variant="body2" color="text.secondary">
-            Confirm or correct the extras type for files auto-classified during ingest.
-            Files stay where they landed until confirmed here.
+            Confirm or correct the type of each extra before it is filed. Ripped extras wait here with
+            frames from the video; files stay where they landed until confirmed.
           </Typography>
         </Box>
         <Button size="small" onClick={() => load()} disabled={loading}>
@@ -117,9 +156,28 @@ export default function ExtrasReviewPanel() {
                   startIcon={isSaving ? <CircularProgress size={14} /> : undefined}
                   onClick={() => confirm(item.id)}
                 >
-                  {isSaving ? 'Saving…' : 'Confirm'}
+                  {isSaving ? 'Saving…' : item.source === 'rip' ? 'Confirm and file' : 'Confirm'}
                 </Button>
               </Stack>
+
+              {item.source === 'rip' && (
+                <Box sx={{ mt: 1.5 }}>
+                  <Typography variant="caption" color="text.secondary" component="p" sx={{ mb: 1, wordBreak: 'break-word' }}>
+                    {[
+                      item.title ? `${item.title}${item.year ? ` (${item.year})` : ''}` : null,
+                      item.discTitleIndex != null ? `disc title ${item.discTitleIndex}` : null,
+                      formatDuration(item.durationMs),
+                    ].filter(Boolean).join(' · ')}
+                    {item.proposedPath && (
+                      <>
+                        <br />
+                        Will be filed as <strong>{baseName(item.proposedPath)}</strong>
+                      </>
+                    )}
+                  </Typography>
+                  {item.hasContactSheet && <ContactSheet id={item.id} fileName={item.fileName} />}
+                </Box>
+              )}
             </Paper>
           );
         })}
