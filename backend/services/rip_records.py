@@ -342,6 +342,8 @@ async def import_manifests(db: Any, roots: Optional[Iterable[str]] = None) -> Di
 
 # Content types that are neither the feature nor an episode.
 _NOT_EXTRAS = (None, "", "main_feature", "episode")
+# Why a ripped extra waits for a person (see ``apply_declaration``).
+EXTRA_HOLD_REASON = "extra from a rip: confirm its type in Extras Review before it is filed"
 # How far a file's measured duration may differ from what the ripper measured.
 DURATION_TOLERANCE = 0.02
 
@@ -404,6 +406,8 @@ def apply_declaration(
     *,
     media_duration_ms: Optional[float] = None,
     keep_classification: bool = False,
+    previous: Optional[Dict[str, Any]] = None,
+    hold_extras: bool = False,
 ) -> Optional[str]:
     """Put what the rip declared into ``parsed_info`` (in place).
 
@@ -412,7 +416,15 @@ def apply_declaration(
     hold the file for review, or None when the declaration can be trusted as
     it stands. ``keep_classification`` leaves a reviewer's own
     main/special/alternate choice alone.
+
+    A declared extra gets ``extras_category`` (its type): the one a reviewer
+    already chose (``previous``, the item's earlier parsed_info), else the type
+    picked on the rip page. With ``hold_extras`` it is held for review until a
+    reviewer confirms that type, because the rip page's pick was made without
+    seeing the video.
     """
+    from services.extras_taxonomy import CATEGORIES
+
     content_type = declaration.get("content_type")
     is_show = declaration.get("media_type") == "show"
     is_extra = content_type not in _NOT_EXTRAS
@@ -435,6 +447,17 @@ def apply_declaration(
         parsed_info["year"] = declaration["year"]
 
     reason: Optional[str] = None
+    if is_extra:
+        earlier = previous or {}
+        category = earlier.get("extras_category")
+        if category not in CATEGORIES:
+            category = content_type if content_type in CATEGORIES else None
+        if category:
+            parsed_info["extras_category"] = category
+        if earlier.get("extras_confirmed"):
+            parsed_info["extras_confirmed"] = True
+        elif hold_extras:
+            reason = EXTRA_HOLD_REASON
     if is_show and not is_extra:
         parsed_info["media_type"] = "episode"
         if declaration.get("episode") is None:

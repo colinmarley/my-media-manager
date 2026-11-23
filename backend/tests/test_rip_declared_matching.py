@@ -232,10 +232,14 @@ def _service(tmp_path, name, declaration, match=MATCH, **file_kwargs):
     return service, matcher, item
 
 
-def test_declared_extra_is_auto_assigned_where_a_named_one_is_held(tmp_path):
+def test_declared_extra_is_auto_assigned_where_a_named_one_is_held(tmp_path, monkeypatch):
     """A file on a later disc of a set takes its title from the folder, so
     without a record it is held for review. Declared at rip time, it is known
-    to be an extra of that film."""
+    to be an extra of that film. (With ``ingress_hold_rip_extras`` on, the
+    default, it still waits for its type to be confirmed: see
+    test_extras_held_for_review.py.)"""
+    from config.settings import settings
+    monkeypatch.setattr(settings, "ingress_hold_rip_extras", False)
     name = "Gone Girl (2014)-trailer.mkv"
     disc_two = {"folder_name": "Gone Girl D2 (2014) [imdbid-tt2267998]"}
 

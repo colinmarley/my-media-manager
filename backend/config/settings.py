@@ -44,6 +44,9 @@ class LibrarySettings(BaseSettings):
     # Ingress watcher settings
     ingress_file_stability_wait_seconds: int = 10
     ingress_debounce_seconds: int = 5
+    # A ripped extra's type is picked on the rip page without seeing the video. With this on, such
+    # a file waits in Extras Review (frames + type picker) instead of going straight to the library.
+    ingress_hold_rip_extras: bool = True
     ingress_stability_poll_interval_seconds: int = 2
     # Polling is required for SMB/NFS shares (inotify doesn't work over the network).
     # Network paths are auto-detected at runtime; this flag forces polling unconditionally.

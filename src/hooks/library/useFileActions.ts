@@ -2,6 +2,8 @@ import { useCallback, useState } from 'react';
 
 import { useNotify } from '@/context/NotificationContext';
 import {
+  changeExtraType as changeExtraTypeRequest,
+  fileActionErrorMessage,
   forEachFile,
   isEndpointUnavailable,
   linkFile,
@@ -94,6 +96,22 @@ const useFileActions = ({ refetch }: Params) => {
     [run],
   );
 
+  const changeExtraType = useCallback(
+    async (file: MediaFile, category: string) => {
+      setBusy(true);
+      try {
+        const result = await changeExtraTypeRequest(file.id, category, false);
+        notify(`Changed the type: ${file.fileName} is now ${result.newName}.`, 'success');
+      } catch (error) {
+        notify(`Could not change the type: ${fileActionErrorMessage(error)}`, 'error');
+      } finally {
+        await refetch();
+        setBusy(false);
+      }
+    },
+    [notify, refetch],
+  );
+
   const setReview = useCallback(
     async (fileIds: string[], needsReview: boolean, note?: string) => {
       if (reviewUnavailable || fileIds.length === 0) return;
@@ -128,6 +146,7 @@ const useFileActions = ({ refetch }: Params) => {
     link,
     unlink,
     removeRecords,
+    changeExtraType,
     setReview,
     reviewUnavailable,
     renameUnavailable,

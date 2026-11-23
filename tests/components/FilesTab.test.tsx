@@ -226,6 +226,28 @@ describe('FilesTab', () => {
     expect(onRemoveRecord).toHaveBeenCalledWith(MISSING);
   });
 
+  it('offers Change type only on an extra that is on disk', () => {
+    const onChangeExtraType = vi.fn();
+    const goneExtra = file({ id: 'gone-extra', fileName: 'Big Movie-scene.mkv', role: 'extra', isAvailable: false });
+    renderTab({ ...MOVIE_GROUPS, extras: [BARE, goneExtra] }, handlers({ onChangeExtraType }));
+
+    for (const name of ['Big Movie (1995).mkv', 'Big Movie-scene.mkv']) {
+      fireEvent.click(screen.getByRole('button', { name: `Actions for ${name}` }));
+      expect(screen.queryByRole('menuitem', { name: 'Change type…' })).not.toBeInTheDocument();
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Big Movie - Trailer.mp4' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Change type…' }));
+    expect(onChangeExtraType).toHaveBeenCalledWith(BARE);
+  });
+
+  it('hides Change type when the page gives no handler for it', () => {
+    renderTab(MOVIE_GROUPS, handlers());
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Big Movie - Trailer.mp4' }));
+    expect(screen.queryByRole('menuitem', { name: 'Change type…' })).not.toBeInTheDocument();
+  });
+
   it('explains an empty inventory, offers a scan and shows the folder fallback', () => {
     const onScan = vi.fn();
     renderTab({ main: [], versions: [], extras: [], other: [], seasons: [] }, handlers(), {
