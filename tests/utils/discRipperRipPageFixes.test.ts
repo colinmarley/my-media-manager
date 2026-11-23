@@ -124,6 +124,17 @@ describe('repeats and near matches', () => {
     expect(analyzeTitles([t(0, 3974, 3_472_046_080), t(3, 3974, 3_472_035_840)])[3]).toEqual({ kind: 'duplicate', of: 0 });
   });
 
+  it('does not flag episodes of one play-all as possibly the same', () => {
+    // Everybody Loves Raymond S6 D1: five episodes within nine seconds of each other.
+    const hints = analyzeTitles([
+      t(0, 6721, 5_600_000_000),
+      t(1, 1347, 1_100_000_000), t(2, 1343, 1_098_000_000), t(3, 1346, 1_101_000_000),
+      t(4, 1347, 1_102_000_000), t(5, 1338, 1_095_000_000),
+    ]);
+    expect(hints[0]).toEqual({ kind: 'play_all', of: [1, 2, 3, 4, 5] });
+    expect([1, 2, 3, 4, 5].map((i) => hints[i])).toEqual([undefined, undefined, undefined, undefined, undefined]);
+  });
+
   it('keeps a long near match selected, with a note, and a real repeat unselected', () => {
     const hints = analyzeTitles([t(0, 1320, 1_200_000_000), t(1, 1321, 1_205_000_000), t(2, 1320, 1_200_000_000)]);
     expect(hints[1]).toEqual({ kind: 'possible_duplicate', of: 0, short: false });
