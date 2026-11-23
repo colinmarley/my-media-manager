@@ -87,6 +87,8 @@ export async function runQueueActionsSequentially<T>(
 export type EpisodeAssignmentMapping = {
   season?: number;
   episode?: number;
+  /** Last episode of a file that holds several (S01E11-E12 → 12). */
+  episodeEnd?: number;
   unknown?: boolean;
 };
 
@@ -95,7 +97,18 @@ export function isEpisodeMappingValid(mapping?: EpisodeAssignmentMapping): boole
     return true;
   }
 
-  return Number.isInteger(mapping?.season) && Number.isInteger(mapping?.episode);
+  if (!Number.isInteger(mapping?.season) || !Number.isInteger(mapping?.episode)) {
+    return false;
+  }
+  const end = mapping?.episodeEnd;
+  return end === undefined || (Number.isInteger(end) && end >= (mapping?.episode as number));
+}
+
+/** The last episode to send for a mapping: a number for a range, null for a single episode. */
+export function mappingEpisodeEnd(mapping?: EpisodeAssignmentMapping): number | null {
+  const end = mapping?.episodeEnd;
+  const episode = mapping?.episode;
+  return typeof end === 'number' && typeof episode === 'number' && end > episode ? end : null;
 }
 
 export function getQueueClassificationBadges(item: IngressQueueItem): QueueBadge[] {
@@ -125,7 +138,9 @@ export function getQueueClassificationBadges(item: IngressQueueItem): QueueBadge
   } else if (mediaType === 'episode' || mediaType === 'series') {
     if (typeof season === 'number' && typeof episode === 'number') {
       badges.push({ label: 'TV Episode', color: 'secondary' });
-      badges.push({ label: `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}`, color: 'secondary', variant: 'outlined' });
+      const episodeEnd = item.parsed_info?.episode === episode ? item.parsed_info?.episode_end : undefined;
+      const range = typeof episodeEnd === 'number' && episodeEnd > episode ? `-E${String(episodeEnd).padStart(2, '0')}` : '';
+      badges.push({ label: `S${String(season).padStart(2, '0')}E${String(episode).padStart(2, '0')}${range}`, color: 'secondary', variant: 'outlined' });
     } else {
       badges.push({ label: 'Unknown Episode', color: 'warning' });
     }
@@ -312,9 +327,14 @@ export function buildDefaultEpisodeAssignments(
   items.forEach((item) => {
     const season = item.parsed_info?.season ?? item.best_match?.season;
     const episode = item.parsed_info?.episode ?? item.best_match?.episode;
+    const parsedEnd = item.parsed_info?.episode_end;
     episodeMap[item.id] = {
       season,
       episode,
+      // The range read from the name belongs to the episode read from the name.
+      ...(typeof parsedEnd === 'number' && typeof episode === 'number'
+        && episode === item.parsed_info?.episode && parsedEnd > episode
+        ? { episodeEnd: parsedEnd } : {}),
       unknown: shouldUseEpisode && (!Number.isInteger(season) || !Number.isInteger(episode)),
     };
   });
@@ -328,6 +348,15 @@ export function withUnknownFlag(mapping: EpisodeAssignmentMapping | undefined, c
     unknown: checked,
     season: checked ? undefined : mapping?.season,
     episode: checked ? undefined : mapping?.episode,
+    episodeEnd: checked ? undefined : mapping?.episodeEnd,
+  };
+}
+
+export function withEpisodeEnd(mapping: EpisodeAssignmentMapping | undefined, episodeEnd?: number): EpisodeAssignmentMapping {
+  return {
+    ...mapping,
+    episodeEnd,
+    unknown: false,
   };
 }
 
@@ -388,6 +417,9 @@ export function buildManualAssignPayload(args: {
     posterUrl: result.poster || undefined,
     season: mediaType === 'episode' && !mapping.unknown ? mapping.season : undefined,
     episode: mediaType === 'episode' && !mapping.unknown ? mapping.episode : undefined,
+    // Always sent for an episode: null says "a single episode", so a range the
+    // reviewer cleared is not kept from the file name.
+    episodeEnd: mediaType === 'episode' && !mapping.unknown ? mappingEpisodeEnd(mapping) : undefined,
     unknownEpisode: mediaType === 'episode' ? Boolean(mapping.unknown) : undefined,
     organizeNow: organizeAfterAssign,
   };

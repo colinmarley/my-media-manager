@@ -197,7 +197,7 @@ export default function useIngressAssignDialog({
         return !isEpisodeMappingValid(mapping);
       });
       if (missingMapping) {
-        setError('Each selected queue item needs season/episode values or must be marked as Unknown.');
+        setError('Each selected queue item needs season/episode values (and a Through episode, if set, at or after the episode) or must be marked as Unknown.');
         return;
       }
     }
