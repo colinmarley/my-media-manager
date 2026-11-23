@@ -67,6 +67,11 @@ const FileRowMenu = ({ file, actions }: Props) => {
         <MenuItem onClick={pick(() => actions.onRename([file]))} disabled={actions.renameUnavailable}>
           <ListItemText secondary={actions.renameUnavailable ? NOT_YET : undefined}>Rename to canonical…</ListItemText>
         </MenuItem>
+        {actions.onChangeExtraType && file.role === 'extra' && !isMissing(file) && (
+          <MenuItem onClick={pick(() => actions.onChangeExtraType!(file))}>
+            <ListItemText>Change type…</ListItemText>
+          </MenuItem>
+        )}
         {actions.onRemoveRecord && isMissing(file) && (
           <MenuItem onClick={pick(() => actions.onRemoveRecord!(file))}>
             <ListItemText>Remove record…</ListItemText>

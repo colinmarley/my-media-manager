@@ -13,6 +13,9 @@ Every file of a library title, with its technical metadata and source disc / tap
 - ``POST /api/catalog/media-files/{file_id}/rename-canonical?dryRun=true|false``
   — the file's canonical name (dry run, the default) or the rename itself
   (services/canonical_rename.py).
+- ``POST /api/catalog/media-files/{file_id}/extra-type?dryRun=true|false``
+  ``{category}`` — the new name of an extra for another type (dry run, the
+  default) or the rename itself (services/extra_type_change.py).
 - ``DELETE /api/catalog/media-files/{file_id}`` — forget the record of a file
   that is gone from disk. Refused (409) while the file is still there.
 
@@ -366,6 +369,75 @@ async def remove_missing_file_record(file_id: str, db: AsyncSession = Depends(ge
     await db.commit()
     attention_service.invalidate_summary()
     return removed
+
+
+class ExtraTypeRequest(BaseModel):
+    category: str
+
+
+@router.post("/media-files/{file_id}/extra-type")
+async def change_extra_type(
+    file_id: str,
+    body: ExtraTypeRequest,
+    req: Request,
+    dry_run: bool = Query(True, alias="dryRun"),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """Change the type of an extra that is already in the library.
+
+    The type is the file name's suffix, so this renames the file in its
+    folder to the next free name for the new type (``Title (Year)-blooper``,
+    then ``Title (Year) 2-blooper``, ...). Sidecars sharing the stem move with
+    it and a moved ``.nfo`` gets the new name as its title. The record keeps
+    its id, disc / tape link and assignment. Refused (409 / 422) for a file
+    that is missing, not an extra, outside the library, typed by its folder
+    instead of its name, already of that type, or for an unknown category.
+    """
+    from services import attention_service, canonical_rename, extra_type_change, storage_paths
+
+    row = await _file_or_404(db, file_id)
+    try:
+        plan = await extra_type_change.plan(db, row, body.category.strip())
+    except canonical_rename.RenameRefused as exc:
+        raise _file_error(exc.status, exc.code, exc.message) from exc
+
+    applied = False
+    operations: List[str] = []
+    sidecar_errors: List[str] = []
+    nfo_title_updated = False
+    if not dry_run:
+        file_manager = getattr(req.app.state, "file_manager", None)
+        if file_manager is None:
+            from services.filesystem_manager import FileSystemManager
+
+            file_manager = FileSystemManager()
+        try:
+            outcome = await extra_type_change.apply(db, plan, file_manager)
+        except canonical_rename.RenameRefused as exc:
+            raise _file_error(exc.status, exc.code, exc.message) from exc
+        row = outcome["row"]
+        operations, sidecar_errors = outcome["operations"], outcome["sidecarErrors"]
+        nfo_title_updated = outcome["nfoTitleUpdated"]
+        applied = True
+        attention_service.invalidate_summary()
+
+    return {
+        "fileId": row.id,
+        "category": plan.category,
+        "currentCategory": plan.current_category,
+        "currentName": os.path.basename(plan.current_path),
+        "newName": os.path.basename(plan.target_path),
+        "currentPath": plan.current_path,
+        "newPath": plan.target_path,
+        "currentRelativePath": storage_paths.to_library_relative(plan.current_path),
+        "newRelativePath": storage_paths.to_library_relative(plan.target_path),
+        "applied": applied,
+        "sidecars": [{"from": src, "to": dst} for src, dst in plan.sidecars],
+        "sidecarErrors": sidecar_errors,
+        "operations": operations,
+        "nfoTitleUpdated": nfo_title_updated,
+        "file": await file_dto(db, row),
+    }
 
 
 @router.post("/media-files/{file_id}/rename-canonical")

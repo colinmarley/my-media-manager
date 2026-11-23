@@ -6,8 +6,9 @@
  * feature-detect with `isEndpointUnavailable`: a 404 / 405 means "this server has no such
  * route yet", and the UI hides or disables the action instead of failing.
  */
-import { api, apiErrorStatus } from '../api/apiClient';
+import { api, ApiError, apiErrorStatus } from '../api/apiClient';
 import {
+  ExtraTypeResult,
   InventoryScanStatus,
   MediaDetailResponse,
   MediaFile,
@@ -25,6 +26,21 @@ const enc = encodeURIComponent;
 export function isEndpointUnavailable(error: unknown): boolean {
   const status = apiErrorStatus(error);
   return status === 404 || status === 405;
+}
+
+/** The server's own sentence for a refused file action (`detail.message`), else the error's text. */
+export function fileActionErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    try {
+      const detail = (JSON.parse(error.body) as { detail?: unknown }).detail;
+      if (typeof detail === 'string' && detail) return detail;
+      const message = (detail as { message?: unknown } | null)?.message;
+      if (typeof message === 'string' && message) return message;
+    } catch {
+      // Not JSON: fall through to the plain text.
+    }
+  }
+  return error instanceof Error ? error.message : 'Request failed';
 }
 
 export async function getMediaDetail(mediaType: string, mediaId: string): Promise<MediaDetailResponse> {
@@ -89,6 +105,17 @@ export async function renameToCanonical(fileId: string, dryRun: boolean): Promis
 /** Forgets the record of a file that is gone from disk. The server refuses while the file is still there. */
 export async function removeMissingFileRecord(fileId: string): Promise<{ deleted: string }> {
   return api.delete<{ deleted: string }>(`/api/catalog/media-files/${enc(fileId)}`);
+}
+
+/**
+ * Previews (dryRun) or applies a new type for an extra: the file is renamed in its folder to the
+ * next free name for that type. The server refuses files that are missing or not extras.
+ */
+export async function changeExtraType(fileId: string, category: string, dryRun: boolean): Promise<ExtraTypeResult> {
+  return api.post<ExtraTypeResult>(
+    `/api/catalog/media-files/${enc(fileId)}/extra-type?dryRun=${dryRun ? 'true' : 'false'}`,
+    { category },
+  );
 }
 
 export type ScanStartResult = 'started' | 'already-running';
