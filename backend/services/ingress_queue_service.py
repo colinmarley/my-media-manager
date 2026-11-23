@@ -334,6 +334,7 @@ class IngressQueueService:
             return None
 
         with self.lock:
+            self._forget_filed_item(queued_file.file_path)
             existing_id = self.path_to_item_id.get(queued_file.file_path)
             if existing_id is not None:
                 existing_item = self.items_by_id[existing_id]
@@ -445,18 +446,25 @@ class IngressQueueService:
             else:
                 persisted = self.persisted_paths.get(file_path)
                 status = persisted[1] if persisted is not None else None
-            if status == QUEUE_COMPLETED and existing_id is not None:
-                # Forget the finished item so add_manual_file builds a clean one for the new file.
-                self.items_by_id.pop(existing_id, None)
-                self.path_to_item_id.pop(file_path, None)
-                self.item_order = [i for i in self.item_order if i != existing_id]
-                self._proposal_matches.pop(existing_id, None)
-                self.persisted_paths.setdefault(file_path, (existing_id, QUEUE_COMPLETED))
-        if status == QUEUE_COMPLETED:
-            return self.add_manual_file(file_path)
-        if status is not None and status != QUEUE_IGNORED:
+        if status is not None and status not in {QUEUE_IGNORED, QUEUE_COMPLETED}:
             return None
         return self.add_manual_file(file_path)
+
+    def _forget_filed_item(self, file_path: str) -> None:
+        """Drop the in-memory item of a file that was filed from ``file_path`` (lock held).
+
+        A completed item's file has been moved into the library, so a file at that path now is
+        a different one. The next add builds a clean item under the same row id (file_path is
+        unique): the earlier file's match, type and reviewer confirmation must not carry over.
+        """
+        existing_id = self.path_to_item_id.get(file_path)
+        if existing_id is None or self.items_by_id[existing_id].status != QUEUE_COMPLETED:
+            return
+        self.items_by_id.pop(existing_id, None)
+        self.path_to_item_id.pop(file_path, None)
+        self.item_order = [i for i in self.item_order if i != existing_id]
+        self._proposal_matches.pop(existing_id, None)
+        self.persisted_paths.setdefault(file_path, (existing_id, QUEUE_COMPLETED))
 
     def add_manual_file(
         self,
@@ -475,6 +483,7 @@ class IngressQueueService:
         resolved_ingress_path = self._infer_ingress_root(file_path, ingress_path)
 
         with self.lock:
+            self._forget_filed_item(file_path)
             existing_id = self.path_to_item_id.get(file_path)
             if existing_id is not None:
                 existing_item = self.items_by_id[existing_id]

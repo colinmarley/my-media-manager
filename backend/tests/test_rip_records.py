@@ -342,6 +342,22 @@ def test_requeue_starts_a_new_item_where_a_filed_one_was():
     assert list(service.items_by_id.values()) == [fresh]
 
 
+@pytest.mark.parametrize("add", ["manual", "watcher"])
+def test_any_add_starts_a_new_item_where_a_filed_one_was(add):
+    """On the live stack the manual add reused the filed item, so the new file inherited
+    'confirmed deleted scene' and was filed without review."""
+    service = IngressQueueService()
+    filed = service.add_from_watcher(_watched(TRAILER))
+    filed.status = QUEUE_COMPLETED
+    filed.parsed_info = {"extras_category": "deleted_scene", "extras_confirmed": True}
+
+    fresh = (service.add_manual_file(os_path(TRAILER)) if add == "manual"
+             else service.add_from_watcher(_watched(TRAILER)))
+
+    assert fresh is not filed and fresh.id == filed.id and fresh.status == QUEUE_PENDING
+    assert not fresh.parsed_info
+
+
 def test_requeue_starts_a_new_item_for_a_filed_row_after_a_restart():
     service = IngressQueueService()
     service.persisted_paths[os_path(TRAILER)] = ("row-9", QUEUE_COMPLETED)
