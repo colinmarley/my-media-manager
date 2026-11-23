@@ -70,6 +70,21 @@ export async function searchReleases(title: string): Promise<Pick<CatalogRelease
   }
 }
 
+/** A box in a picker: its name, and how many discs are already in it. */
+export type ReleaseOption = Pick<CatalogRelease, 'id' | 'title'> & { discCount?: number };
+
+/** Boxes by name with their disc counts, so two boxes with one name can be told apart. */
+export async function searchBoxes(title: string): Promise<ReleaseOption[]> {
+  if (!title.trim()) return [];
+  try {
+    return await api.get<ReleaseOption[]>(
+      `/api/catalog/releases?include_loose=false&limit=50&title=${encodeURIComponent(title.trim())}`,
+    );
+  } catch {
+    return [];
+  }
+}
+
 export async function getRelease(id: string): Promise<CatalogRelease | null> {
   try {
     return await api.get<CatalogRelease>(`/api/catalog/releases/${encodeURIComponent(id)}`);
