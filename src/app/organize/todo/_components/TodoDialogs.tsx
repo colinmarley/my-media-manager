@@ -3,6 +3,7 @@
 import React from 'react';
 
 import DiskReassignDialog from '@/app/dashboard/my-library/_components/DiskReassignDialog';
+import RemoveRecordDialog from '@/app/dashboard/my-library/_components/detail/RemoveRecordDialog';
 import RenameCanonicalDialog from '@/app/dashboard/my-library/_components/detail/RenameCanonicalDialog';
 import { useNotify } from '@/context/NotificationContext';
 import DismissNoteDialog from './DismissNoteDialog';
@@ -64,6 +65,12 @@ const TodoDialogs = ({ actions, refetch }: Props) => {
           onLinked={refetch}
         />
       )}
+
+      <RemoveRecordDialog
+        file={dialog?.type === 'remove-record' ? dialog.file : null}
+        onClose={closeDialog}
+        onConfirm={actions.removeRecord}
+      />
 
       <DismissNoteDialog
         item={dialog?.type === 'dismiss-note' ? dialog.item : null}

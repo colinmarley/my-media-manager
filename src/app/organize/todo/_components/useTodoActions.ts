@@ -7,7 +7,7 @@ import useInventoryScan from '@/hooks/library/useInventoryScan';
 import { apiErrorStatus } from '@/service/api/apiClient';
 import AttentionService from '@/service/attention/AttentionService';
 import { itemFile, type AttentionAction } from '@/service/attention/attentionModel';
-import { isEndpointUnavailable } from '@/service/library/MediaFilesService';
+import { isEndpointUnavailable, removeMissingFileRecord } from '@/service/library/MediaFilesService';
 import type { AttentionDismissal, AttentionItem } from '@/types/attention/Attention.type';
 import type { MediaFile } from '@/types/library/MediaFile.type';
 import type { DismissChoice } from './TodoRowActions';
@@ -18,6 +18,7 @@ export type TodoDialog =
   | { type: 'assign-queue'; queueItemId: string; queueStatus: string | null }
   | { type: 'link-disc'; mediaType: string; mediaId: string; discId: string; discTitle: string }
   | { type: 'dismiss-note'; item: AttentionItem }
+  | { type: 'remove-record'; file: MediaFile }
   | null;
 
 const errorText = (error: unknown) => (error instanceof Error && error.message ? error.message : 'Request failed');
@@ -53,6 +54,22 @@ export default function useTodoActions({ refetch }: { refetch: () => Promise<unk
     [notify, refetch],
   );
 
+  const removeRecord = useCallback(
+    async (file: MediaFile) => {
+      setBusy(true);
+      try {
+        await removeMissingFileRecord(file.id);
+        notify(`Removed the record of ${file.fileName}.`, 'success');
+        await refetch();
+      } catch (error) {
+        notify(`Could not remove the record: ${errorText(error)}`, 'error');
+      } finally {
+        setBusy(false);
+      }
+    },
+    [notify, refetch],
+  );
+
   const perform = useCallback(
     (item: AttentionItem, action: AttentionAction) => {
       switch (action.type) {
@@ -76,6 +93,11 @@ export default function useTodoActions({ refetch }: { refetch: () => Promise<unk
         case 'rescan':
           void scan.startScan();
           return;
+        case 'remove-record': {
+          const file = itemFile(item);
+          if (file) setDialog({ type: 'remove-record', file });
+          return;
+        }
         default:
           // Links are rendered as anchors by the row.
           return;
@@ -154,7 +176,7 @@ export default function useTodoActions({ refetch }: { refetch: () => Promise<unk
     [notify, undo],
   );
 
-  return { dialog, closeDialog, busy: busy || scan.scanning, scanning: scan.scanning, perform, renameMany, dismiss, onDismiss, restore };
+  return { dialog, closeDialog, busy: busy || scan.scanning, scanning: scan.scanning, perform, renameMany, removeRecord, dismiss, onDismiss, restore };
 }
 
 export type TodoActions = ReturnType<typeof useTodoActions>;

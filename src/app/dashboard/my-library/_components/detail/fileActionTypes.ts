@@ -12,6 +12,8 @@ export interface FileActionHandlers {
   onSetFlag: (files: MediaFile[], needsReview: boolean) => void;
   /** Opens the canonical rename preview for these files. */
   onRename: (files: MediaFile[]) => void;
+  /** Asks to forget the record of a file that is gone from disk. */
+  onRemoveRecord?: (file: MediaFile) => void;
   /** Endpoints from a later backend PR that answered 404 / 405 here. */
   reviewUnavailable: boolean;
   renameUnavailable: boolean;

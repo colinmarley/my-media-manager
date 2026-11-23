@@ -86,6 +86,11 @@ export async function renameToCanonical(fileId: string, dryRun: boolean): Promis
   );
 }
 
+/** Forgets the record of a file that is gone from disk. The server refuses while the file is still there. */
+export async function removeMissingFileRecord(fileId: string): Promise<{ deleted: string }> {
+  return api.delete<{ deleted: string }>(`/api/catalog/media-files/${enc(fileId)}`);
+}
+
 export type ScanStartResult = 'started' | 'already-running';
 
 /** Starts an inventory scan. A 409 means one is already running, which is fine for callers. */

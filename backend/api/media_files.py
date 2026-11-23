@@ -13,6 +13,8 @@ Every file of a library title, with its technical metadata and source disc / tap
 - ``POST /api/catalog/media-files/{file_id}/rename-canonical?dryRun=true|false``
   — the file's canonical name (dry run, the default) or the rename itself
   (services/canonical_rename.py).
+- ``DELETE /api/catalog/media-files/{file_id}`` — forget the record of a file
+  that is gone from disk. Refused (409) while the file is still there.
 
 ``media_type`` is what the web UI routes with: ``movie`` and ``series``, or a
 type it derives from the record (``documentary``, ``live_performance``,
@@ -24,6 +26,7 @@ whose id or IMDb id matches and whose derived type is ``media_type``.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -335,6 +338,34 @@ async def set_review_flag(file_id: str, body: ReviewRequest, db: AsyncSession = 
     await db.commit()
     attention_service.invalidate_summary()
     return await file_dto(db, row)
+
+
+@router.delete("/media-files/{file_id}")
+async def remove_missing_file_record(file_id: str, db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
+    """Forget a file that is gone from disk for good.
+
+    Only the record goes: nothing on disk is touched. Refused (409) unless the
+    last scan marked the file missing, the library share is mounted, and the
+    path really is empty, so a stale flag or an unmounted share cannot make
+    the library forget a file it still has. Rows that point at the record
+    (extras review, rip titles, assignments) are cleaned up by their foreign keys.
+    """
+    from services import attention_service
+    from services.library_inventory_service import default_mount_check
+
+    row = await _file_or_404(db, file_id)
+    if row.is_available is not False:
+        raise _file_error(409, "FILE_NOT_MISSING", "The library does not list this file as missing. Rescan the library first.")
+    if not default_mount_check():
+        raise _file_error(409, "LIBRARY_NOT_MOUNTED", "The library share is not mounted, so every file looks missing. Nothing was removed.")
+    if row.file_path and os.path.exists(row.file_path):
+        raise _file_error(409, "FILE_PRESENT", "The file is at its path again. Rescan the library instead of removing the record.")
+
+    removed = {"deleted": row.id, "fileName": row.file_name, "filePath": row.file_path}
+    await db.delete(row)
+    await db.commit()
+    attention_service.invalidate_summary()
+    return removed
 
 
 @router.post("/media-files/{file_id}/rename-canonical")

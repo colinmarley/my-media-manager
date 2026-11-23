@@ -2,7 +2,7 @@ import MoreVertIcon from '@mui/icons-material/MoreVert';
 import { IconButton, ListItemText, Menu, MenuItem } from '@mui/material';
 import React, { useState } from 'react';
 
-import { fileSource, isFlagged } from '@/service/library/mediaFileModel';
+import { fileSource, isFlagged, isMissing } from '@/service/library/mediaFileModel';
 import { MediaFile } from '@/types/library/MediaFile.type';
 import { FileActionHandlers } from './fileActionTypes';
 
@@ -67,6 +67,11 @@ const FileRowMenu = ({ file, actions }: Props) => {
         <MenuItem onClick={pick(() => actions.onRename([file]))} disabled={actions.renameUnavailable}>
           <ListItemText secondary={actions.renameUnavailable ? NOT_YET : undefined}>Rename to canonical…</ListItemText>
         </MenuItem>
+        {actions.onRemoveRecord && isMissing(file) && (
+          <MenuItem onClick={pick(() => actions.onRemoveRecord!(file))}>
+            <ListItemText>Remove record…</ListItemText>
+          </MenuItem>
+        )}
       </Menu>
     </>
   );

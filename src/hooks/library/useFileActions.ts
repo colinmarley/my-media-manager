@@ -5,6 +5,7 @@ import {
   forEachFile,
   isEndpointUnavailable,
   linkFile,
+  removeMissingFileRecord,
   setFileReview,
   unlinkFile,
 } from '@/service/library/MediaFilesService';
@@ -83,6 +84,16 @@ const useFileActions = ({ refetch }: Params) => {
     [run],
   );
 
+  const removeRecords = useCallback(
+    (files: MediaFile[]) =>
+      run(
+        files.map((file) => file.id),
+        (id) => removeMissingFileRecord(id),
+        (n) => `Removed ${plural(n, 'missing file record')}.`,
+      ),
+    [run],
+  );
+
   const setReview = useCallback(
     async (fileIds: string[], needsReview: boolean, note?: string) => {
       if (reviewUnavailable || fileIds.length === 0) return;
@@ -116,6 +127,7 @@ const useFileActions = ({ refetch }: Params) => {
     busy,
     link,
     unlink,
+    removeRecords,
     setReview,
     reviewUnavailable,
     renameUnavailable,
