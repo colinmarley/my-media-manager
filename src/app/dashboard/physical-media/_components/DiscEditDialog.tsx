@@ -5,12 +5,13 @@ import {
   Alert, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle,
   FormControl, FormControlLabel, InputLabel, MenuItem, Select, Stack, TextField,
 } from '@mui/material';
-import { createDisc, updateDisc } from '@/service/catalog/DiscCatalogService';
+import { createDisc, createRelease, getRelease, updateDisc } from '@/service/catalog/DiscCatalogService';
 import { lookupUpc, scanCover } from '@/service/catalog/DiscLookupService';
 import { CatalogDisc } from '@/types/catalog/Disc.type';
 import { DiscFormat, DiscCondition, StorageType } from '@/types/catalog/Common.type';
 import { LoanFields, loanFields, loanPayload, validateLoan } from '@/utils/loanUtils';
 import LoanInputs from './LoanInputs';
+import BoxPicker, { BoxChoice } from './BoxPicker';
 import { storageLocationPayload, validateStorageLocation } from '@/utils/storageLocation';
 import StorageLocationFields from './StorageLocationFields';
 
@@ -50,7 +51,10 @@ export default function DiscEditDialog({
   const [language, setLanguage] = useState('');
   const [purchaseDate, setPurchaseDate] = useState('');
   const [releaseDate, setReleaseDate] = useState('');
-  const [isPartOfSet, setIsPartOfSet] = useState(false);
+  // The box set the disc is in. Carries over between "add another" entries: the
+  // next disc usually comes from the same box.
+  const [box, setBox] = useState<BoxChoice | null>(null);
+  const [boxLoading, setBoxLoading] = useState(false);
   const [isRentalDisc, setIsRentalDisc] = useState(false);
   const [containsSpecialFeatures, setContainsSpecialFeatures] = useState(false);
   const [loan, setLoan] = useState<LoanFields>(loanFields(null));
@@ -88,7 +92,6 @@ export default function DiscEditDialog({
     setLanguage(from?.language ?? '');
     setPurchaseDate(from?.purchaseDate ?? '');
     setReleaseDate(from?.releaseDate ?? '');
-    setIsPartOfSet(from?.isPartOfSet ?? false);
     setIsRentalDisc(from?.isRentalDisc ?? false);
     setContainsSpecialFeatures(from?.containsSpecialFeatures ?? false);
     setLoan(loanFields(from));
@@ -107,6 +110,20 @@ export default function DiscEditDialog({
     setStorageError('');
     setError('');
     setInfo('');
+    // A loose disc has no setId: its automatic one-disc wrapper is not a box.
+    setBox(null);
+    setBoxLoading(false);
+    const setId = disc?.setId;
+    if (!setId) return;
+    let cancelled = false;
+    // Saving before the box is known would take the disc out of it.
+    setBoxLoading(true);
+    getRelease(setId).then((release) => {
+      if (cancelled) return;
+      if (release && release.packaging !== 'loose') setBox({ id: release.id, title: release.title });
+      setBoxLoading(false);
+    });
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, disc]);
 
@@ -212,6 +229,8 @@ export default function DiscEditDialog({
     setSaving(true);
     setError('');
     setInfo('');
+    const boxTitle = box?.title.trim() ?? '';
+    const inBox = !!box && (!!box.id || !!boxTitle);
     const payload: Partial<CatalogDisc> = {
       title: title.trim(),
       format: format || undefined,
@@ -222,13 +241,22 @@ export default function DiscEditDialog({
       language: language || undefined,
       purchaseDate: purchaseDate || undefined,
       releaseDate: releaseDate || undefined,
-      isPartOfSet,
+      isPartOfSet: inBox,
       isRentalDisc,
       containsSpecialFeatures,
       ...loanPayload(loan, disc),
       ...storageLocationPayload(storageType, storageId, disc?.storageId),
     };
     try {
+      if (inBox) {
+        // A typed name that is not a listed box makes a new, empty box to join.
+        const boxId = box!.id ?? (await createRelease({ title: boxTitle, packaging: 'box_set', discs: [] })).id;
+        payload.setId = boxId;
+        if (!box!.id) setBox({ id: boxId, title: boxTitle });
+      } else if (isEdit) {
+        // An explicit null takes the disc out of the box it was in.
+        payload.setId = null;
+      }
       const saved = isEdit
         ? await updateDisc(disc!.id, payload)
         : await createDisc(payload);
@@ -325,15 +353,12 @@ export default function DiscEditDialog({
               slotProps={{ inputLabel: { shrink: true } }}
             />
           </Stack>
+          <BoxPicker value={box} onChange={setBox} disabled={saving || boxLoading} />
           <StorageLocationFields
             storageType={storageType} storageId={storageId} error={storageError}
             onTypeChange={setStorageType} onIdChange={setStorageId}
           />
           <Stack direction="row" spacing={1} flexWrap="wrap">
-            <FormControlLabel
-              control={<Checkbox checked={isPartOfSet} onChange={(e) => setIsPartOfSet(e.target.checked)} />}
-              label="Part of a set"
-            />
             <FormControlLabel
               control={<Checkbox checked={isRentalDisc} onChange={(e) => setIsRentalDisc(e.target.checked)} />}
               label="Rental disc"
@@ -351,7 +376,7 @@ export default function DiscEditDialog({
         {!isEdit && (
           <Button onClick={() => handleSave(true)} disabled={saving}>Save &amp; add another</Button>
         )}
-        <Button variant="contained" onClick={() => handleSave()} disabled={saving}>
+        <Button variant="contained" onClick={() => handleSave()} disabled={saving || boxLoading}>
           {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Disc'}
         </Button>
       </DialogActions>

@@ -11,9 +11,9 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import LinkOffIcon from '@mui/icons-material/LinkOff';
 import AddLinkIcon from '@mui/icons-material/AddLink';
 import { api } from '@/service/api/apiClient';
-import { CatalogDisc } from '@/types/catalog/Disc.type';
+import { CatalogDisc, CatalogRelease } from '@/types/catalog/Disc.type';
 import { CatalogTape } from '@/types/catalog/Tape.type';
-import { deleteDisc } from '@/service/catalog/DiscCatalogService';
+import { deleteDisc, getRelease } from '@/service/catalog/DiscCatalogService';
 import { deleteTape } from '@/service/catalog/TapeCatalogService';
 import { disconnectFile } from '@/service/catalog/MediaFileLinkService';
 import PageHeader, { PageContainer } from '@/components/ui/PageHeader';
@@ -29,6 +29,10 @@ import ConnectFileDialog from '../../_components/ConnectFileDialog';
 import DiscRipStatusPanel from '../../_components/DiscRipStatusPanel';
 import LinkedTitlesSection from '../../_components/LinkedTitlesSection';
 import { formatBytes } from '@/utils/format';
+
+function boxDiscLabel(d: CatalogDisc): string {
+  return d.discNumber != null ? `Disc ${d.discNumber}` : d.title;
+}
 
 function formatSize(bytes: number | null): string {
   return formatBytes(bytes, { precision: 'video' });
@@ -78,6 +82,22 @@ export default function PhysicalMediaDetailPage() {
     });
     return () => { cancelled = true; };
   }, [load]);
+
+  // The box set this disc is in, with its other discs. A loose disc has no
+  // setId; its automatic one-disc wrapper is not shown as a box.
+  const [box, setBox] = useState<CatalogRelease | null>(null);
+  const boxId = !isTape ? (item as CatalogDisc | null)?.setId ?? null : null;
+  useEffect(() => {
+    setBox(null);
+    if (!boxId) return;
+    let cancelled = false;
+    getRelease(boxId).then((release) => {
+      if (!cancelled && release && release.packaging !== 'loose') setBox(release);
+    });
+    return () => { cancelled = true; };
+  }, [boxId, item]);
+  const boxDiscs = [...(box?.discs ?? [])].sort((a, b) => (a.discNumber ?? 999) - (b.discNumber ?? 999));
+  const boxSize = box ? Math.max(box.expectedDiscCount ?? 0, boxDiscs.length) : 0;
 
   const handleDisconnect = async (fileId: string) => {
     setDisconnectingId(fileId);
@@ -141,6 +161,27 @@ export default function PhysicalMediaDetailPage() {
             <Chip label={`Location: ${formatStorageLocation(item)}`} size="small" color="primary" variant="outlined" />
           )}
         </Stack>
+        {disc && box && (
+          <>
+            <Divider sx={{ my: 1.5 }} />
+            <Typography variant="body2" sx={{ mb: 1 }}>
+              Box set: <strong>{box.title}</strong>
+              {disc.discNumber != null && ` · Disc ${disc.discNumber}${boxSize ? ` of ${boxSize}` : ''}`}
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {boxDiscs.map((d) => (
+                d.id === disc.id
+                  ? <Chip key={d.id} label={boxDiscLabel(d)} size="small" color="info" />
+                  : (
+                    <Chip
+                      key={d.id} label={boxDiscLabel(d)} size="small" variant="outlined" clickable
+                      onClick={() => router.push(`/dashboard/physical-media/discs/${d.id}`)}
+                    />
+                  )
+              ))}
+            </Stack>
+          </>
+        )}
         {tape?.labelNotes && (
           <>
             <Divider sx={{ my: 1.5 }} />

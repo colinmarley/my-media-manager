@@ -8,9 +8,16 @@ import { CatalogDisc } from '../../src/types/catalog/Disc.type';
 const createDiscMock = vi.fn();
 const updateDiscMock = vi.fn();
 
+const getReleaseMock = vi.fn();
+const createReleaseMock = vi.fn();
+const searchBoxesMock = vi.fn();
+
 vi.mock('../../src/service/catalog/DiscCatalogService', () => ({
   createDisc: (...args: unknown[]) => createDiscMock(...args),
   updateDisc: (...args: unknown[]) => updateDiscMock(...args),
+  getRelease: (...args: unknown[]) => getReleaseMock(...args),
+  createRelease: (...args: unknown[]) => createReleaseMock(...args),
+  searchBoxes: (...args: unknown[]) => searchBoxesMock(...args),
 }));
 
 const lookupUpcMock = vi.fn();
@@ -38,6 +45,9 @@ describe('DiscEditDialog', () => {
   beforeEach(() => {
     createDiscMock.mockReset().mockResolvedValue({ id: 'new-disc', title: 'New Disc' });
     updateDiscMock.mockReset().mockResolvedValue({ id: 'disc-1', title: 'Updated' });
+    getReleaseMock.mockReset().mockResolvedValue(null);
+    createReleaseMock.mockReset().mockResolvedValue({ id: 'new-box', title: 'New Box' });
+    searchBoxesMock.mockReset().mockResolvedValue([]);
     lookupUpcMock.mockReset();
     scanCoverMock.mockReset();
   });
@@ -397,6 +407,60 @@ describe('DiscEditDialog', () => {
 
       await waitFor(() => expect(updateDiscMock).toHaveBeenCalledTimes(1));
       expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ title: 'Aliens', storageType: 'Box', storageId: 'Shelf A' });
+    });
+  });
+
+  describe('box set', () => {
+    const BOXED: CatalogDisc = { ...EXISTING_DISC, isPartOfSet: true, setId: 'box-1' };
+    const boxInput = () => screen.getByLabelText('Box set') as HTMLInputElement;
+
+    it('shows the box an existing disc is in and keeps it on save', async () => {
+      getReleaseMock.mockResolvedValue({ id: 'box-1', title: 'Burn Notice: Season 1', packaging: 'box_set' });
+      render(<DiscEditDialog open disc={BOXED} onClose={() => {}} onSaved={() => {}} />);
+      await waitFor(() => expect(boxInput().value).toBe('Burn Notice: Season 1'));
+      fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+      await waitFor(() => expect(updateDiscMock).toHaveBeenCalled());
+      expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ setId: 'box-1', isPartOfSet: true });
+      expect(createReleaseMock).not.toHaveBeenCalled();
+    });
+
+    it('joins a box picked from the list', async () => {
+      searchBoxesMock.mockResolvedValue([{ id: 'box-2', title: 'Burn Notice: Season 1', discCount: 3 }]);
+      render(<DiscEditDialog open disc={EXISTING_DISC} onClose={() => {}} onSaved={() => {}} />);
+      fireEvent.change(boxInput(), { target: { value: 'Burn' } });
+      fireEvent.click(await screen.findByText('3 discs'));
+      fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+      await waitFor(() => expect(updateDiscMock).toHaveBeenCalled());
+      expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ setId: 'box-2', isPartOfSet: true });
+      expect(createReleaseMock).not.toHaveBeenCalled();
+    });
+
+    it('creates a new box for a typed name that is not listed', async () => {
+      render(<DiscEditDialog open disc={EXISTING_DISC} onClose={() => {}} onSaved={() => {}} />);
+      fireEvent.change(boxInput(), { target: { value: 'New Box' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+      await waitFor(() => expect(updateDiscMock).toHaveBeenCalled());
+      expect(createReleaseMock).toHaveBeenCalledWith({ title: 'New Box', packaging: 'box_set', discs: [] });
+      expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ setId: 'new-box', isPartOfSet: true });
+    });
+
+    it('takes the disc out of its box when the field is cleared', async () => {
+      getReleaseMock.mockResolvedValue({ id: 'box-1', title: 'Burn Notice: Season 1', packaging: 'box_set' });
+      render(<DiscEditDialog open disc={BOXED} onClose={() => {}} onSaved={() => {}} />);
+      await waitFor(() => expect(boxInput().value).toBe('Burn Notice: Season 1'));
+      fireEvent.change(boxInput(), { target: { value: '' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+      await waitFor(() => expect(updateDiscMock).toHaveBeenCalled());
+      expect(updateDiscMock.mock.calls[0][1]).toMatchObject({ setId: null, isPartOfSet: false });
+    });
+
+    it('does not put a new disc in a box unless one is chosen', async () => {
+      render(<DiscEditDialog open onClose={() => {}} onSaved={() => {}} />);
+      fireEvent.change(screen.getByLabelText(/Title/), { target: { value: 'Loose Disc' } });
+      fireEvent.click(screen.getByRole('button', { name: 'Create Disc' }));
+      await waitFor(() => expect(createDiscMock).toHaveBeenCalled());
+      expect(createDiscMock.mock.calls[0][0]).not.toHaveProperty('setId');
+      expect(createDiscMock.mock.calls[0][0]).toMatchObject({ isPartOfSet: false });
     });
   });
 });
