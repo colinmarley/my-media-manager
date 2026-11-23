@@ -180,6 +180,7 @@ export type AttentionAction =
   | { type: 'rename'; label: string; fileId: string }
   | { type: 'clear-flag'; label: string; fileId: string }
   | { type: 'rescan'; label: string }
+  | { type: 'remove-record'; label: string; fileId: string }
   | { type: 'link-disc'; label: string; discId: string; discTitle: string; mediaType: string; mediaId: string }
   | { type: 'link'; label: string; href: string };
 
@@ -269,8 +270,11 @@ export function itemActions(item: AttentionItem): ItemActions {
       }
       return { primary: open, secondary: [] };
     }
-    case 'missing_file':
-      return { primary: openTitle(item, 'Open title files'), secondary: [{ type: 'rescan', label: 'Rescan library' }] };
+    case 'missing_file': {
+      const secondary: AttentionAction[] = [{ type: 'rescan', label: 'Rescan library' }];
+      if (item.subjectType === 'media_file') secondary.push({ type: 'remove-record', label: 'Remove record…', fileId: item.subjectId });
+      return { primary: openTitle(item, 'Open title files'), secondary };
+    }
     case 'no_disc_link': {
       const type = item.mediaType || item.catalogType;
       const discs = openTitle(item, 'Open Discs & Tapes', 'discs');

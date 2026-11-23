@@ -213,6 +213,19 @@ describe('FilesTab', () => {
     expect(actions.onAssignEpisode).toHaveBeenCalledWith(MAIN);
   });
 
+  it('offers Remove record only on a missing file', () => {
+    const onRemoveRecord = vi.fn();
+    renderTab(MOVIE_GROUPS, handlers({ onRemoveRecord }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Big Movie (1995).mkv' }));
+    expect(screen.queryByRole('menuitem', { name: 'Remove record…' })).not.toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions for Old Cut.mkv' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Remove record…' }));
+    expect(onRemoveRecord).toHaveBeenCalledWith(MISSING);
+  });
+
   it('explains an empty inventory, offers a scan and shows the folder fallback', () => {
     const onScan = vi.fn();
     renderTab({ main: [], versions: [], extras: [], other: [], seasons: [] }, handlers(), {

@@ -96,8 +96,19 @@ describe('itemActions', () => {
     for (const kind of ['missing_file', 'unprobed'] as const) {
       const actions = itemActions(attentionItem({ kind }));
       expect(actions.primary).toMatchObject({ type: 'link', href: '/dashboard/my-library/movie/m1?tab=files' });
-      expect(actions.secondary).toEqual([{ type: 'rescan', label: 'Rescan library' }]);
+      expect(actions.secondary[0]).toEqual({ type: 'rescan', label: 'Rescan library' });
     }
+  });
+
+  it('offers to remove the record of a missing file, and only of a missing file', () => {
+    const missing = itemActions(attentionItem({ kind: 'missing_file' }));
+    expect(missing.secondary).toEqual([
+      { type: 'rescan', label: 'Rescan library' },
+      { type: 'remove-record', label: 'Remove record…', fileId: 'f1' },
+    ]);
+    expect(itemActions(attentionItem({ kind: 'unprobed' })).secondary).toEqual([{ type: 'rescan', label: 'Rescan library' }]);
+    const title = itemActions(attentionItem({ kind: 'missing_file', subjectType: 'title', subjectId: 'm1' }));
+    expect(title.secondary).toEqual([{ type: 'rescan', label: 'Rescan library' }]);
   });
 
   it('links a disc from no_disc_link, and opens disc pages for unripped discs', () => {

@@ -19,6 +19,7 @@ import ArtworkTab from '../../_components/detail/ArtworkTab';
 import MediaFolderFileList from '../../_components/detail/MediaFolderFileList';
 import LinkFileToDiscDialog, { SourceOption } from '../../_components/detail/LinkFileToDiscDialog';
 import RenameCanonicalDialog from '../../_components/detail/RenameCanonicalDialog';
+import RemoveRecordDialog from '../../_components/detail/RemoveRecordDialog';
 import EpisodeAssignDialog from '../../_components/detail/EpisodeAssignDialog';
 import RemoveFromLibraryDialog from '../../_components/detail/RemoveFromLibraryDialog';
 import { FileActionHandlers } from '../../_components/detail/fileActionTypes';
@@ -82,6 +83,7 @@ const LibraryMediaDetailPage = () => {
 
   const [linkDialog, setLinkDialog] = useState<{ files: MediaFile[]; target?: SourceOption } | null>(null);
   const [renameFiles, setRenameFiles] = useState<MediaFile[] | null>(null);
+  const [removeRecordFile, setRemoveRecordFile] = useState<MediaFile | null>(null);
   const [reassignDisc, setReassignDisc] = useState<TitleSource | null>(null);
 
   const diskReassign = useDiskReassign({
@@ -120,6 +122,7 @@ const LibraryMediaDetailPage = () => {
       : undefined,
     onSetFlag: (files, needsReview) => void fileActions.setReview(files.map((f) => f.id), needsReview),
     onRename: (files) => files.length > 0 && setRenameFiles(files),
+    onRemoveRecord: (file) => setRemoveRecordFile(file),
     reviewUnavailable: fileActions.reviewUnavailable,
     renameUnavailable: fileActions.renameUnavailable,
     busy: fileActions.busy,
@@ -278,6 +281,12 @@ const LibraryMediaDetailPage = () => {
         target={linkDialog?.target ?? null}
         sources={sources.map(toOption)}
         onLink={(fileIds, target) => fileActions.link(fileIds, target)}
+      />
+
+      <RemoveRecordDialog
+        file={removeRecordFile}
+        onClose={() => setRemoveRecordFile(null)}
+        onConfirm={(file) => fileActions.removeRecords([file])}
       />
 
       <RenameCanonicalDialog
