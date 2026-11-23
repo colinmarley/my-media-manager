@@ -428,8 +428,13 @@ class IngressQueueService:
     def requeue_ripped_file(self, file_path: str) -> Optional[IngressQueueItem]:
         """Queue a file a rip has just delivered, if the queue would otherwise skip it.
 
-        Only acts when the path is untracked or its row is ignored: an item that is pending, under
-        review or already assigned is left exactly as it is.
+        Only acts when the path is untracked or its row is ignored or completed: an item that is
+        pending, under review or already assigned is left exactly as it is.
+
+        A completed row means the file that was at this path has been filed and moved away, so a
+        file there now is a different one (a later disc's first extra gets the same ingest name as
+        an earlier disc's). It starts again as a new item under the row's id: nothing the earlier
+        file was matched or confirmed as carries over.
         """
         file_path = os.path.normpath(file_path)
         with self.lock:
@@ -440,6 +445,15 @@ class IngressQueueService:
             else:
                 persisted = self.persisted_paths.get(file_path)
                 status = persisted[1] if persisted is not None else None
+            if status == QUEUE_COMPLETED and existing_id is not None:
+                # Forget the finished item so add_manual_file builds a clean one for the new file.
+                self.items_by_id.pop(existing_id, None)
+                self.path_to_item_id.pop(file_path, None)
+                self.item_order = [i for i in self.item_order if i != existing_id]
+                self._proposal_matches.pop(existing_id, None)
+                self.persisted_paths.setdefault(file_path, (existing_id, QUEUE_COMPLETED))
+        if status == QUEUE_COMPLETED:
+            return self.add_manual_file(file_path)
         if status is not None and status != QUEUE_IGNORED:
             return None
         return self.add_manual_file(file_path)

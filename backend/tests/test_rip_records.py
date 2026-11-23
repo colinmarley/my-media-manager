@@ -12,7 +12,9 @@ from httpx import ASGITransport, AsyncClient
 
 from db.models import Disc, DiscMediaLink, DiscRip, DiscRipTitle, MediaFile, Movie, Series
 from services import rip_records, storage_paths
-from services.ingress_queue_service import QUEUE_IGNORED, QUEUE_NEEDS_REVIEW, QUEUE_PENDING, IngressQueueService
+from services.ingress_queue_service import (
+    QUEUE_COMPLETED, QUEUE_IGNORED, QUEUE_NEEDS_REVIEW, QUEUE_PENDING, IngressQueueService,
+)
 from services.rip_records import RipRecord
 from tests.fake_db import FakeSession
 
@@ -320,6 +322,31 @@ def test_requeue_only_touches_ignored_or_untracked_files():
     assert service.requeue_ripped_file(TRAILER).status == QUEUE_PENDING   # never seen before
     # A path in the rip record's forward-slash form finds the item the watcher made for it.
     assert len(service.items_by_id) == 3
+
+
+def test_requeue_starts_a_new_item_where_a_filed_one_was():
+    """Everybody Loves Raymond S6: disc 2's first extra was delivered to the ingest name disc 1's
+    extra had before it was filed. It must be queued, and as a new file."""
+    service = IngressQueueService()
+    filed = service.add_from_watcher(_watched(TRAILER))
+    filed.status = QUEUE_COMPLETED
+    filed.parsed_info = {"extras_category": "deleted_scene", "extras_confirmed": True}
+    filed.assignment_id = "a-1"
+
+    fresh = service.requeue_ripped_file(TRAILER)
+
+    assert fresh is not None and fresh is not filed
+    assert fresh.id == filed.id                      # file_path is unique: the row is reused
+    assert fresh.status == QUEUE_PENDING
+    assert not fresh.parsed_info and fresh.assignment_id is None
+    assert list(service.items_by_id.values()) == [fresh]
+
+
+def test_requeue_starts_a_new_item_for_a_filed_row_after_a_restart():
+    service = IngressQueueService()
+    service.persisted_paths[os_path(TRAILER)] = ("row-9", QUEUE_COMPLETED)
+    fresh = service.requeue_ripped_file(TRAILER)
+    assert fresh is not None and fresh.id == "row-9" and fresh.status == QUEUE_PENDING
 
 
 def test_rip_paths_match_the_watchers_form_of_the_path():
