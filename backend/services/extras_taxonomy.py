@@ -204,21 +204,7 @@ def folder_for_category(category: str) -> Optional[str]:
 # Extras named by suffix (the disc ripper's naming)
 # ---------------------------------------------------------------------------
 # First file of a type: "Title (Year)-<suffix>.mkv"; later ones
-# "Title (Year) N-<suffix>.mkv", N from 2.
-
-CATEGORY_TO_SUFFIX: Dict[str, str] = {
-    "behind_the_scenes": "behindthescenes",
-    "deleted_scene": "deletedscene",
-    "interview": "interview",
-    "featurette": "featurette",
-    "trailer": "trailer",
-    "scene": "scene",
-    "sample": "sample",
-    "short": "short",
-    "clip": "clip",
-    "blooper": "blooper",
-    "other": "other",
-}
+# "Title (Year) N-<suffix>.mkv", N from 2. The suffixes are CATEGORY_TO_SUFFIX above.
 
 _SUFFIXED_STEM_RE = re.compile(
     r"^(?P<base>.+)-(?P<suffix>" + "|".join(sorted(EXTRA_SUFFIX_TO_FOLDER, key=len, reverse=True)) + r")$",
