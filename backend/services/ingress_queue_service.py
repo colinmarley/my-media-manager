@@ -598,6 +598,8 @@ class IngressQueueService:
                     rip_declaration,
                     media_duration_ms=candidate.media_duration_ms,
                     keep_classification=existing_override in VALID_CLASSIFICATION_OVERRIDES,
+                    previous=candidate.parsed_info,
+                    hold_extras=settings.ingress_hold_rip_extras,
                 )
                 declared_class = parsed_info.get("classification_override")
                 if declared_class in VALID_CLASSIFICATION_OVERRIDES:
@@ -968,6 +970,63 @@ class IngressQueueService:
                 "ai_confidence": ai_classification.get("confidence"),
                 **(history_extra or {}),
             },
+        )
+        return item
+
+    @staticmethod
+    def is_held_extra(item: IngressQueueItem) -> bool:
+        """A ripped extra waiting in review for a person to confirm its type."""
+        parsed_info = item.parsed_info or {}
+        return (
+            item.status == QUEUE_NEEDS_REVIEW
+            and bool(parsed_info.get("extras_category") or (parsed_info.get("rip") or {}).get("content_type"))
+            and parsed_info.get("classification_override") == "special_feature"
+            and isinstance(parsed_info.get("rip"), dict)
+            and not parsed_info.get("extras_confirmed")
+        )
+
+    def held_extras(self) -> List[Dict[str, Any]]:
+        """The ripped extras waiting for their type to be confirmed, newest first."""
+        with self.lock:
+            items = [self.items_by_id[item_id] for item_id in self.item_order]
+            held = [self._item_view(item) for item in items if self.is_held_extra(item)]
+        return sorted(held, key=lambda view: view.get("detected_at") or 0, reverse=True)
+
+    async def set_extras_category(
+        self,
+        item_id: str,
+        category: Optional[str],
+        confirmed: bool = False,
+    ) -> Optional[IngressQueueItem]:
+        """Set the type of a held extra and re-propose its library name; ``confirmed`` also
+        marks the type as checked by a person, so the item is no longer held for it.
+
+        Raises ValueError for an unknown category, or when confirming an extra with no type.
+        """
+        from services.extras_taxonomy import CATEGORIES
+
+        if category is not None and category not in CATEGORIES:
+            raise ValueError(f"Unknown category: {category}")
+        await self.hydrate_item(item_id)
+        with self.lock:
+            item = self.items_by_id.get(item_id)
+            if item is None:
+                return None
+            parsed_info = dict(item.parsed_info or {})
+            if category:
+                parsed_info["extras_category"] = category
+            if confirmed:
+                if parsed_info.get("extras_category") not in CATEGORIES:
+                    raise ValueError("Cannot confirm an extra with no category set")
+                parsed_info["extras_confirmed"] = True
+            item.parsed_info = parsed_info
+
+        await self._store_proposals(self._item_proposal_keys(item), skip_persist={item.id})
+        await self._persist_queue_item(item)
+        await self._record_history_event(
+            item,
+            "extras_category_updated",
+            {"extras_category": (item.parsed_info or {}).get("extras_category"), "confirmed": confirmed},
         )
         return item
 
@@ -2013,6 +2072,62 @@ class IngressQueueService:
                 inherited_match["inferred_from_source_root"] = True
                 items[idx]["best_match"] = inherited_match
                 _propose_special(idx, inherited_match)
+
+        self._name_extras_by_category(items, resolved)
+
+    @staticmethod
+    def _name_extras_by_category(items: List[Dict[str, Any]], resolved: Set[int]) -> None:
+        """Give an extra with a known type its Jellyfin name: ``Title (Year)[ N]-<type>.ext``.
+
+        Applies to items proposed as a special feature whose parsed_info carries
+        ``extras_category`` (a ripped extra). The folder the proposal chose is kept; only the
+        file name changes. Names are numbered per folder against what is on disk and what the
+        other items in this pass were given.
+        """
+        from services import extras_taxonomy
+
+        taken: Dict[str, Set[str]] = {}
+
+        def _taken_in(directory: str) -> Set[str]:
+            key = directory.lower()
+            if key not in taken:
+                names: Set[str] = set()
+                try:
+                    names = {name.lower() for name in os.listdir(PathBuilder.absolute(storage_paths.library_root(), directory))}
+                except OSError:
+                    pass
+                taken[key] = names
+            return taken[key]
+
+        def _split(path: Any) -> Tuple[str, str]:
+            directory, _, name = str(path).replace(chr(92), "/").rpartition("/")
+            return directory, name
+
+        for i in resolved:
+            path = items[i].get("proposed_path")
+            if path:
+                directory, name = _split(path)
+                _taken_in(directory).add(name.lower())
+
+        pending = [i for i in range(len(items)) if i not in resolved]
+        for idx in sorted(pending, key=lambda i: str(items[i].get("file_name") or "").lower()):
+            item = items[idx]
+            parsed_info = item.get("parsed_info") or {}
+            category = parsed_info.get("extras_category")
+            match = item.get("best_match")
+            path = item.get("proposed_path")
+            if category not in extras_taxonomy.CATEGORY_TO_SUFFIX or not path or not isinstance(match, dict):
+                continue
+            override = item.get("classification_override") or parsed_info.get("classification_override")
+            if override != "special_feature":
+                continue
+            directory, old_name = _split(path)
+            extension = os.path.splitext(old_name)[1] or os.path.splitext(str(item.get("file_name") or ""))[1]
+            base = PathBuilder.folder_name(match.get("title"), match.get("year"))
+            used = _taken_in(directory)
+            name = extras_taxonomy.extra_file_name(base, category, extension, used)
+            used.add(name.lower())
+            item["proposed_path"] = f"{directory}/{name}" if directory else name
 
     @staticmethod
     def _extract_organized_path(assignment_result: Dict[str, Any]) -> Optional[str]:

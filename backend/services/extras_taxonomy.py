@@ -16,7 +16,7 @@ each other in places. It provides two related but distinct vocabularies:
 """
 
 import re
-from typing import Dict, Optional, Set
+from typing import Dict, Iterable, Optional, Set
 
 # Canonical category slugs, in the order they should be offered in review UIs.
 CATEGORIES = [
@@ -48,6 +48,44 @@ CATEGORY_TO_FOLDER: Dict[str, str] = {
 }
 
 FOLDER_TO_CATEGORY: Dict[str, str] = {v: k for k, v in CATEGORY_TO_FOLDER.items()}
+
+# The Jellyfin filename suffix of each category ("Title (Year)-trailer.mkv"). The same table the
+# disc ripper names its extras from (disc-ripper-service job_manager.CONTENT_TYPE_SUFFIX).
+CATEGORY_TO_SUFFIX: Dict[str, str] = {
+    "behind_the_scenes": "behindthescenes",
+    "deleted_scene": "deletedscene",
+    "interview": "interview",
+    "featurette": "featurette",
+    "trailer": "trailer",
+    "scene": "scene",
+    "sample": "sample",
+    "short": "short",
+    "clip": "clip",
+    "blooper": "blooper",
+    "other": "other",
+}
+
+
+def extra_file_name(base: str, category: str, extension: str, taken: Iterable[str] = ()) -> str:
+    """The file name of an extra of ``category`` for the title ``base`` ("Title (Year)").
+
+    The first of a kind is ``Title (Year)-scene.mkv``, later ones ``Title (Year) 2-scene.mkv``,
+    ``Title (Year) 3-scene.mkv``: the first number whose name is not in ``taken`` (compared
+    without case). Raises ValueError for an unknown category.
+    """
+    suffix = CATEGORY_TO_SUFFIX.get(category)
+    if suffix is None:
+        raise ValueError(f"Unknown extras category: {category}")
+    ext = extension or ""
+    if ext and not ext.startswith("."):
+        ext = f".{ext}"
+    used = {str(name).lower() for name in taken}
+    number = 1
+    while True:
+        name = f"{base}-{suffix}{ext}" if number == 1 else f"{base} {number}-{suffix}{ext}"
+        if name.lower() not in used:
+            return name
+        number += 1
 
 # Additional Jellyfin-recognized extras folders that this taxonomy doesn't
 # assign a review category to (no corresponding CATEGORY slug), but that
