@@ -39,6 +39,12 @@ export interface DiscScanInfo {
   makemkv_version: string | null;
   title_count: number;
   skipped_short?: number;
+  /**
+   * The minimum title length this scan asked MakeMKV for, in seconds; null
+   * when it used MakeMKV's own setting. Missing on a ripper build that cannot
+   * scan with a chosen minimum.
+   */
+  min_length_seconds?: number | null;
 }
 
 export interface DiscInfoResponse {
@@ -113,6 +119,23 @@ export interface StoredRip {
   volumeLabel: string | null;
   deliveredAt: string | null;
   ripStartedAt: string | null;
+  mediaType?: string | null;
+  imdbId?: string | null;
+  /** TMDB movie id or series id. */
+  tmdbId?: number | null;
+  fingerprint?: string | null;
+  /** Only on a single rip (GET /api/rips/{id}). */
+  titles?: StoredRipTitle[];
+}
+
+/** One file of a stored rip: the disc title it came from and what it was declared to be. */
+export interface StoredRipTitle {
+  titleIndex: number;
+  status: string;            // ripped | delivered | failed
+  contentType?: string | null;
+  season?: number | null;
+  episode?: number | null;
+  episodeEnd?: number | null;
 }
 
 export interface JobAnalysis {
@@ -195,6 +218,25 @@ export const EXTRAS_CATEGORIES = [
 ] as const;
 
 export type ExtrasCategory = typeof EXTRAS_CATEGORIES[number];
+
+/**
+ * What the ripper ends an extra's file name with ("Title (Year)-clip.mkv"):
+ * disc-ripper-service's CONTENT_TYPE_SUFFIX, copied so the output preview can
+ * name files the way the ripper will.
+ */
+export const EXTRAS_FILENAME_SUFFIX: Record<ExtrasCategory, string> = {
+  behind_the_scenes: 'behindthescenes',
+  deleted_scene: 'deletedscene',
+  interview: 'interview',
+  featurette: 'featurette',
+  trailer: 'trailer',
+  scene: 'scene',
+  sample: 'sample',
+  short: 'short',
+  clip: 'clip',
+  blooper: 'blooper',
+  other: 'other',
+};
 
 export const EXTRAS_CATEGORY_LABELS: Record<ExtrasCategory, string> = {
   behind_the_scenes: 'Behind the Scenes',

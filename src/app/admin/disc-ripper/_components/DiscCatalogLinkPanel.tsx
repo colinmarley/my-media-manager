@@ -2,11 +2,11 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, MenuItem,
+  Alert, Autocomplete, Box, Button, Chip, CircularProgress, Collapse, Link, MenuItem,
   Paper, Stack, TextField, Typography,
 } from '@mui/material';
 import {
-  createDisc, createRelease, getRelease, mergeDisc, searchDiscs, searchReleases, updateRelease,
+  createDisc, createRelease, getRelease, mergeDisc, searchBoxes, searchDiscs, searchReleases, updateRelease,
 } from '@/service/catalog/DiscCatalogService';
 import { CatalogDisc, CatalogRelease } from '@/types/catalog/Disc.type';
 import type { DiscFormat } from '@/types/catalog/Common.type';
@@ -80,7 +80,15 @@ export function nextDiscNumber(discs: Pick<CatalogDisc, 'discNumber'>[]): number
   return n;
 }
 
-type ReleaseOption = Pick<CatalogRelease, 'id' | 'title'>;
+type ReleaseOption = Pick<CatalogRelease, 'id' | 'title'> & { discCount?: number };
+
+const boxNameKey = (name: string) => name.trim().toLowerCase();
+
+/** The boxes whose name is exactly `name`, ignoring case and surrounding spaces. */
+export function boxesNamed<T extends { title: string }>(name: string, boxes: T[]): T[] {
+  const key = boxNameKey(name);
+  return key ? boxes.filter((box) => boxNameKey(box.title ?? '') === key) : [];
+}
 
 /**
  * Search for or create the physical Disc catalog record this rip belongs to.
@@ -148,6 +156,14 @@ export default function DiscCatalogLinkPanel({
   const [newFormat, setNewFormat] = useState<DiscFormat | ''>('');
   const format: DiscFormat = newFormat || (discType === 'bluray' ? 'BLURAY' : 'DVD');
   const releaseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Boxes already in the catalog under exactly the typed name. One is joined
+  // without being asked for; several are offered, never guessed between.
+  const [boxMatch, setBoxMatch] = useState<{ name: string; boxes: ReleaseOption[] } | null>(null);
+  // The user wants a second box with a name the catalog already has.
+  const [newBoxAnyway, setNewBoxAnyway] = useState(false);
+  const [notice, setNotice] = useState('');
+  // Bumped whenever the name changes hands, so a slow lookup cannot overwrite a newer one.
+  const boxLookup = useRef(0);
 
   // The box the linked disc is in, for "Disc 1 of 4".
   const [linkedRelease, setLinkedRelease] = useState<CatalogRelease | null>(null);
@@ -221,14 +237,66 @@ export default function DiscCatalogLinkPanel({
 
   // ── Details form ──────────────────────────────────────────────────────────
 
-  const openCreate = () => {
-    setError('');
-    setReleaseId(null);
-    setReleaseTitle(suggestReleaseTitle(mediaType, discTitle || searchInput, year, season));
+  // A box already in the catalog: take its size and offer the next free number.
+  const applyRelease = async (option: ReleaseOption, lookup: number) => {
+    setReleaseId(option.id);
+    const release = await getRelease(option.id);
+    if (!release || lookup !== boxLookup.current) return;
+    const discs = release.discs ?? [];
+    const count = release.expectedDiscCount ?? discs.length;
+    if (count) setDiscCount(String(Math.max(count, discs.length + 1)));
+    const fromLabel = discNumberFromLabel(volumeLabel);
+    const taken = discs.some((d) => d.discNumber === fromLabel);
+    setDiscNumber(String(fromLabel && !taken ? fromLabel : nextDiscNumber(discs)));
+    if (release.edition) setEdition(release.edition);
+  };
+
+  /**
+   * Look for boxes with exactly this name. Exactly one is joined, the same as
+   * picking it from the list; with several the user has to choose.
+   */
+  const matchBoxByName = async (name: string): Promise<ReleaseOption[]> => {
+    const lookup = ++boxLookup.current;
+    if (!boxNameKey(name)) { setBoxMatch(null); return []; }
+    const boxes = boxesNamed(name, await searchBoxes(name));
+    if (lookup !== boxLookup.current) return boxes;
+    setBoxMatch({ name: boxNameKey(name), boxes });
+    if (boxes.length === 1) await applyRelease(boxes[0], lookup);
+    return boxes;
+  };
+
+  const resetDiscPlace = () => {
     setDiscNumber(String(discNumberFromLabel(volumeLabel) ?? ''));
     setDiscCount('');
     setEdition('');
+  };
+
+  const openCreate = () => {
+    const suggested = suggestReleaseTitle(mediaType, discTitle || searchInput, year, season);
+    setError('');
+    setNotice('');
+    setReleaseId(null);
+    setReleaseTitle(suggested);
+    resetDiscPlace();
+    setBoxMatch(null);
+    setNewBoxAnyway(false);
     setFormMode('create');
+    // The suggested name is often a box that is already there (disc 2 of a season).
+    void matchBoxByName(suggested);
+  };
+
+  const makeNewBoxInstead = () => {
+    boxLookup.current++;
+    setNotice('');
+    setNewBoxAnyway(true);
+    setReleaseId(null);
+    resetDiscPlace();
+  };
+
+  const joinExistingBox = (box: ReleaseOption) => {
+    setNotice('');
+    setNewBoxAnyway(false);
+    void applyRelease(box, ++boxLookup.current);
   };
 
   const openEdit = () => {
@@ -247,27 +315,46 @@ export default function DiscCatalogLinkPanel({
 
   const handleReleaseInput = (value: string, reason: string) => {
     setReleaseTitle(value);
-    // Typing a name is a new box (or a rename, when editing); picking one is not.
-    if (reason === 'input' && formMode === 'create') setReleaseId(null);
     if (formMode !== 'create') return;
+    const typed = reason === 'input' || reason === 'clear';
+    if (typed) {
+      // A typed name is a new box unless the catalog has a box with exactly
+      // that name, which the lookup below finds (a rename, when editing).
+      boxLookup.current++;
+      setReleaseId(null);
+      setBoxMatch(null);
+      setNewBoxAnyway(false);
+      setNotice('');
+    }
     if (releaseTimer.current) clearTimeout(releaseTimer.current);
-    releaseTimer.current = setTimeout(async () => setReleaseOptions(await searchReleases(value)), 300);
+    releaseTimer.current = setTimeout(async () => {
+      if (typed) void matchBoxByName(value);
+      setReleaseOptions(await searchReleases(value));
+    }, 300);
   };
 
-  // A box already in the catalog: take its size and offer the next free number.
+  // Picked from the list: the box is joined, whatever else shares its name.
   const pickRelease = async (option: ReleaseOption) => {
-    setReleaseId(option.id);
+    setNotice('');
+    setNewBoxAnyway(false);
     setReleaseTitle(option.title);
-    const release = await getRelease(option.id);
-    if (!release) return;
-    const discs = release.discs ?? [];
-    const count = release.expectedDiscCount ?? discs.length;
-    if (count) setDiscCount(String(Math.max(count, discs.length + 1)));
-    const fromLabel = discNumberFromLabel(volumeLabel);
-    const taken = discs.some((d) => d.discNumber === fromLabel);
-    setDiscNumber(String(fromLabel && !taken ? fromLabel : nextDiscNumber(discs)));
-    if (release.edition) setEdition(release.edition);
+    setBoxMatch((current) => (
+      current?.name === boxNameKey(option.title) && current.boxes.some((b) => b.id === option.id)
+        ? current
+        : { name: boxNameKey(option.title), boxes: [option] }
+    ));
+    await applyRelease(option, ++boxLookup.current);
   };
+
+  // What the catalog already has under the name as it is typed right now.
+  const namedBoxes = formMode === 'create' && boxMatch?.name === boxNameKey(releaseTitle) ? boxMatch.boxes : [];
+  const joinedBox = formMode === 'create' && releaseId
+    ? namedBoxes.find((box) => box.id === releaseId) ?? null
+    : null;
+  // Several boxes share the name and none is chosen: saving would be a guess.
+  const mustChooseBox = formMode === 'create' && !releaseId && !newBoxAnyway && namedBoxes.length > 1;
+  const describeBox = (box: ReleaseOption) =>
+    box.discCount != null ? `${box.discCount} disc${box.discCount === 1 ? '' : 's'} so far` : '';
 
   const plan = discSavePlan({
     releaseTitle, releaseId, discNumber, discCount, edition, format, barcode: barcodeInput,
@@ -301,6 +388,15 @@ export default function DiscCatalogLinkPanel({
       } else if (releaseId) {
         // The barcode stays on the box: a box's discs share it.
         onLink(await createDisc({ ...plan.disc, setId: releaseId, isPartOfSet: true }));
+      } else if (!newBoxAnyway && (await matchBoxByName(releaseTitle)).length > 0) {
+        // The catalog has this box (the lookup had not answered when Create
+        // was pressed, or the box is new since). It is now filled in above:
+        // nothing is saved until the user has seen it.
+        setNotice(
+          'A box with this name is already in your catalog. Check the box and disc number above, '
+          + 'then press Create and Link again.',
+        );
+        return;
       } else {
         const release = await createRelease({ ...plan.release, discs: [plan.disc] });
         const disc = release.discs?.[0];
@@ -333,7 +429,27 @@ export default function DiscCatalogLinkPanel({
               {...params}
               label="Name on the box"
               helperText={
-                mediaType === 'show'
+                joinedBox ? (
+                  <>
+                    “{joinedBox.title}” is a box already in your catalog
+                    {describeBox(joinedBox) ? ` (${describeBox(joinedBox)})` : ''}: this disc will be added to
+                    it.{' '}
+                    <Link component="button" type="button" variant="caption" onClick={makeNewBoxInstead}>
+                      Make a new box instead
+                    </Link>
+                  </>
+                ) : mustChooseBox ? (
+                  `${namedBoxes.length} boxes in your catalog have this name. Choose the one this disc belongs to below.`
+                ) : newBoxAnyway && namedBoxes.length > 0 ? (
+                  <>
+                    A new box will be made with a name your catalog already has.{' '}
+                    {namedBoxes.length === 1 && (
+                      <Link component="button" type="button" variant="caption" onClick={() => joinExistingBox(namedBoxes[0])}>
+                        Add to the existing box instead
+                      </Link>
+                    )}
+                  </>
+                ) : mediaType === 'show'
                   ? 'As printed on the case, e.g. “Burn Notice: The Complete First Season”. One name for the whole box.'
                   : 'As printed on the case, e.g. “Alien (1979)” or “Alien Anthology”.'
               }
@@ -372,6 +488,26 @@ export default function DiscCatalogLinkPanel({
           ))}
         </TextField>
       </Stack>
+      {formMode === 'create' && namedBoxes.length > 1 && (
+        <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
+          <Typography variant="caption">Boxes with this name:</Typography>
+          {namedBoxes.map((box) => (
+            <Chip
+              key={box.id}
+              label={[box.title, describeBox(box)].filter(Boolean).join(' · ')}
+              size="small"
+              clickable
+              color="primary"
+              variant={releaseId === box.id ? 'filled' : 'outlined'}
+              onClick={() => joinExistingBox(box)}
+            />
+          ))}
+          {!newBoxAnyway && !releaseId && (
+            <Button size="small" onClick={makeNewBoxInstead}>Make a new box instead</Button>
+          )}
+        </Stack>
+      )}
+      {notice && <Alert severity="info" sx={{ mt: 1, py: 0 }}>{notice}</Alert>}
       <Stack direction="row" spacing={1} alignItems="flex-start" flexWrap="wrap" useFlexGap sx={{ mt: 1.5 }}>
         <TextField
           size="small"
@@ -385,7 +521,7 @@ export default function DiscCatalogLinkPanel({
         <Button
           variant="contained"
           size="small"
-          disabled={saving || !releaseTitle.trim()}
+          disabled={saving || !releaseTitle.trim() || mustChooseBox}
           startIcon={saving ? <CircularProgress size={14} /> : undefined}
           onClick={handleSave}
           sx={{ mt: 0.25 }}

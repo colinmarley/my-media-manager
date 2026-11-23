@@ -18,6 +18,36 @@ export async function findRipsByFingerprint(fingerprint: string): Promise<Stored
   }
 }
 
+/**
+ * The stored rips of one season of a show, each with the titles it declared
+ * (so the episodes other discs already produced are known). Matched on the
+ * TMDB series id or the IMDb id the rips were started with; empty when the
+ * show has neither, has no rips, or the lookup fails.
+ */
+export async function findSeasonRips(query: {
+  tmdbId?: number | null; imdbId?: string | null; season: number;
+}): Promise<StoredRip[]> {
+  const imdbId = query.imdbId?.trim();
+  if (query.tmdbId == null && !imdbId) return [];
+  try {
+    const rips = await api.get<StoredRip[]>('/api/rips?limit=500');
+    const matching = (Array.isArray(rips) ? rips : []).filter((rip) =>
+      rip.mediaType !== 'movie'
+      && rip.season === query.season
+      && ((query.tmdbId != null && rip.tmdbId === query.tmdbId) || (!!imdbId && rip.imdbId === imdbId)));
+    const detailed = await Promise.all(matching.map(async (rip) => {
+      try {
+        return await api.get<StoredRip>(`/api/rips/${encodeURIComponent(rip.id)}`);
+      } catch {
+        return null;
+      }
+    }));
+    return detailed.filter((rip): rip is StoredRip => rip != null);
+  } catch {
+    return [];
+  }
+}
+
 export async function getDisc(id: string): Promise<CatalogDisc | null> {
   try {
     return await api.get<CatalogDisc>(`/api/catalog/discs/${encodeURIComponent(id)}`);

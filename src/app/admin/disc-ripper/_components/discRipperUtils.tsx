@@ -1,5 +1,6 @@
 import React from 'react';
 import { Chip } from '@mui/material';
+import { EXTRAS_FILENAME_SUFFIX } from '@/types/disc-ripper/DiscRipper.type';
 import type {
   Assignment, DiscStream, DiscTitle, ExtrasCategory, RipJob, RipTitleRecord, StartJobRequest,
   StoredRip, TitleDeclaration, TmdbEpisode,
@@ -87,38 +88,6 @@ export function suggestedRangeEnd(
     .filter((n) => n > episodeNumber)
     .sort((x, y) => x - y)[0];
   return next ?? null;
-}
-
-export function previewFilenames(
-  mediaType: 'movie' | 'show',
-  title: string,
-  year: number,
-  selectedIndices: number[],
-  assignments: Record<number, Assignment>,
-  season: number,
-  episodes: TmdbEpisode[] = [],
-): string[] {
-  if (!title.trim() || !selectedIndices.length) return [];
-  const sorted = [...selectedIndices].sort((a, b) => a - b);
-  if (mediaType === 'movie') {
-    if (sorted.length === 1) return [`${title} (${year}).mkv`];
-    return sorted.map((_, i) => `${title} (${year}) - Version ${i + 1}.mkv`);
-  }
-  // show
-  let specialN = 0;
-  return sorted.map((idx, i) => {
-    const a = assignments[idx];
-    if (a?.type === 'episode') return `${title} ${episodeValue(season, a, episodes)}.mkv`;
-    if (!a) return `${title} ${epCode(season, i + 1)}.mkv`;
-    if (a.type === 'special') {
-      specialN++;
-      return `${title} SpecialFeature${String(specialN).padStart(3, '0')}.mkv`;
-    }
-    if (a.type === 'custom') {
-      return a.name.trim() ? `${title} ${a.name.trim()}.mkv` : '(custom name pending)';
-    }
-    return `${title} ${epCode(season, i + 1)}.mkv`;
-  });
 }
 
 export interface StartJobInput {
@@ -216,6 +185,85 @@ export function buildStartJobRequest(input: StartJobInput): StartJobRequest {
   };
 }
 
+/** The ripper's `_safe_title`: a show title with the characters a filename cannot hold removed. */
+function safeTitle(text: string): string {
+  return [...text]
+    .filter((ch) => ch.charCodeAt(0) > 0x1f && !'/\\:*?"<>|'.includes(ch))
+    .join('')
+    .trim();
+}
+
+/** The ripper's `_unique_dest_name` within one job: a repeated name gets " - Copy N" before any extras suffix. */
+function uniqueName(name: string, taken: Set<string>): string {
+  if (!taken.has(name.toLowerCase())) return name;
+  let stem = name.toLowerCase().endsWith('.mkv') ? name.slice(0, -4) : name;
+  let tail = '';
+  for (const suffix of Object.values(EXTRAS_FILENAME_SUFFIX)) {
+    if (stem.endsWith(`-${suffix}`)) {
+      stem = stem.slice(0, -(suffix.length + 1));
+      tail = `-${suffix}`;
+      break;
+    }
+  }
+  for (let n = 2; ; n++) {
+    const candidate = `${stem} - Copy ${n}${tail}.mkv`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
+/**
+ * The file names the ripper gives a job's titles, in rip order. This is the
+ * ripper's own rule (job_manager.py: `_plan_destinations`, `_build_dest_name`):
+ *
+ * - a title tagged with an extras category is "Title (Year)-clip.mkv", then
+ *   "Title (Year) 2-clip.mkv", counted per category;
+ * - every other title is a main title, numbered only among the main titles:
+ *   a movie is "Title (Year).mkv" (or "- Version N" when there are several),
+ *   an episode is "Title <its episode_map entry>.mkv", or "Title S01E0N.mkv"
+ *   by its place among the main titles when it has no entry.
+ *
+ * A name already on disk gets " - Copy N" at delivery; that cannot be known here.
+ */
+export function plannedOutputNames(req: StartJobRequest): string[] {
+  const declared: Record<string, string | undefined> = { ...(req.title_content_types ?? {}) };
+  for (const t of req.titles ?? []) {
+    if (t.content_type) declared[String(t.title_index)] = t.content_type;
+  }
+  const suffixOf = (idx: number): string | undefined =>
+    (EXTRAS_FILENAME_SUFFIX as Record<string, string>)[declared[String(idx)] ?? ''];
+
+  const mainIndices = req.mkv_title_indices.filter((idx) => !suffixOf(idx));
+  const episodeMap = req.episode_map ?? {};
+  const counts: Record<string, number> = {};
+  const taken = new Set<string>();
+
+  return req.mkv_title_indices.map((idx) => {
+    const suffix = suffixOf(idx);
+    let name: string;
+    if (suffix) {
+      const n = (counts[suffix] ?? 0) + 1;
+      counts[suffix] = n;
+      name = `${req.title} (${req.year})${n > 1 ? ` ${n}` : ''}-${suffix}.mkv`;
+    } else if (req.media_type === 'movie') {
+      name = mainIndices.length > 1
+        ? `${req.title} (${req.year}) - Version ${mainIndices.indexOf(idx) + 1}.mkv`
+        : `${req.title} (${req.year}).mkv`;
+    } else {
+      const code = episodeMap[String(idx)] ?? epCode(req.season || 1, mainIndices.indexOf(idx) + 1);
+      name = `${safeTitle(req.title)} ${code}.mkv`;
+    }
+    name = uniqueName(name, taken);
+    taken.add(name.toLowerCase());
+    return name;
+  });
+}
+
+/** The output file names for the Configure step as it stands, one per selected title. */
+export function previewFilenames(input: Omit<StartJobInput, 'catalogDiscId'>): string[] {
+  if (!input.title.trim() || !input.selectedIndices.length) return [];
+  return plannedOutputNames(buildStartJobRequest({ ...input, catalogDiscId: '' }));
+}
+
 /** Why Start Rip is not allowed yet, or null when it is. */
 export function startJobBlocker(input: {
   title: string; year: number; selectedIndices: number[]; linkedDiscId: string | null | undefined;
@@ -292,9 +340,11 @@ export function describeStoredRip(rip: StoredRip): string {
 
 // ── Reading a scan ──────────────────────────────────────────────────────────
 
-/** Why a scanned title is probably not something to rip as its own file. */
+/** What the scan suggests about a title: a repeat, a play-all, a clip. */
 export type TitleHint =
   | { kind: 'duplicate'; of: number }
+  // Close to another title in length and size, but not shown to be the same video.
+  | { kind: 'possible_duplicate'; of: number; short: boolean }
   | { kind: 'play_all'; of: number[] }
   | { kind: 'short' };
 
@@ -305,11 +355,28 @@ export const MIN_EPISODE_SECONDS = 600;
 
 type ScannedTitle = Pick<DiscTitle, 'index' | 'duration_seconds' | 'file_size_bytes'>;
 
-function sameContent(a: ScannedTitle, b: ScannedTitle): boolean {
-  if (Math.abs(a.duration_seconds - b.duration_seconds) > 1) return false;
-  if (!a.file_size_bytes || !b.file_size_bytes) return true;
+/**
+ * A repeat of a title points at the same video on the disc, so the scan gives
+ * it the same length to the second and the same size. The size may differ by
+ * a few disc sectors (a real disc listed one episode twice 10 KB apart in
+ * 3.4 GB), never by megabytes.
+ */
+const SAME_SIZE_BYTES = 64 * 1024;
+const SAME_SIZE_RATIO = 0.0001;
+
+/**
+ * "same": the scan shows the two titles to be the same video. "near": close
+ * enough in length and size that they may be, but they may just as well be
+ * two different clips of about the same length.
+ */
+function contentMatch(a: ScannedTitle, b: ScannedTitle): 'same' | 'near' | null {
+  const seconds = Math.abs(a.duration_seconds - b.duration_seconds);
+  if (seconds > 1) return null;
+  if (!a.file_size_bytes || !b.file_size_bytes) return seconds === 0 ? 'near' : null;
   const larger = Math.max(a.file_size_bytes, b.file_size_bytes);
-  return Math.abs(a.file_size_bytes - b.file_size_bytes) / larger < 0.01;
+  const bytes = Math.abs(a.file_size_bytes - b.file_size_bytes);
+  if (seconds === 0 && bytes <= Math.max(SAME_SIZE_BYTES, larger * SAME_SIZE_RATIO)) return 'same';
+  return bytes / larger < 0.01 ? 'near' : null;
 }
 
 /** The fewest titles (two or more) whose lengths add up to `target`, or null. */
@@ -329,7 +396,10 @@ function partsSummingTo(target: ScannedTitle, parts: ScannedTitle[]): number[] |
  * Hints for a disc's titles, keyed by title index. A DVD lists the same
  * programme several ways: each episode on its own, the same episode again
  * from the "play all" menu, and one long title that is all of them joined.
- * Titles without a hint are the ones worth ripping.
+ *
+ * Only a title the scan shows to be the same video as an earlier one is
+ * called a duplicate. A near match is a `possible_duplicate`: it is treated
+ * as a title of its own (see `isPreselected`) and only carries a note.
  */
 export function analyzeTitles(titles: ScannedTitle[]): Record<number, TitleHint> {
   const hints: Record<number, TitleHint> = {};
@@ -337,7 +407,7 @@ export function analyzeTitles(titles: ScannedTitle[]): Record<number, TitleHint>
 
   const originals: ScannedTitle[] = [];
   for (const t of sorted) {
-    const twin = originals.find((o) => sameContent(o, t));
+    const twin = originals.find((o) => contentMatch(o, t) === 'same');
     if (twin) hints[t.index] = { kind: 'duplicate', of: twin.index };
     else originals.push(t);
   }
@@ -350,15 +420,167 @@ export function analyzeTitles(titles: ScannedTitle[]): Record<number, TitleHint>
   }
 
   for (const t of originals) {
-    if (!hints[t.index] && t.duration_seconds < SHORT_CLIP_SECONDS) hints[t.index] = { kind: 'short' };
+    if (hints[t.index]) continue;
+    const short = t.duration_seconds < SHORT_CLIP_SECONDS;
+    const near = originals.find((o) => o.index < t.index && contentMatch(o, t) === 'near');
+    if (near) hints[t.index] = { kind: 'possible_duplicate', of: near.index, short };
+    else if (short) hints[t.index] = { kind: 'short' };
   }
   return hints;
+}
+
+/**
+ * Whether a title starts out selected. Repeats, play-all titles and short
+ * clips do not. A possible duplicate is not known to be a repeat, so it is
+ * selected like any other title of its length.
+ */
+export function isPreselected(hint: TitleHint | undefined): boolean {
+  if (!hint) return true;
+  return hint.kind === 'possible_duplicate' && !hint.short;
 }
 
 export function titleHintLabel(hint: TitleHint): string {
   if (hint.kind === 'duplicate') return `Same as title ${hint.of}`;
   if (hint.kind === 'play_all') return `Play-all of titles ${hint.of.join(' + ')}`;
+  if (hint.kind === 'possible_duplicate') {
+    return hint.short
+      ? `Short clip, possibly the same as title ${hint.of}`
+      : `Possibly the same as title ${hint.of}`;
+  }
   return 'Short clip: an extra, ad or preview';
+}
+
+/** A sentence for a hint that needs explaining, or null. */
+export function titleHintNote(hint: TitleHint | undefined): string | null {
+  if (hint?.kind !== 'possible_duplicate') return null;
+  return `Close to title ${hint.of} in length and size, but not identical, so it may be different video. `
+    + (hint.short ? 'Select it to rip it as well.' : 'Deselect it if it is a repeat.');
+}
+
+/**
+ * How much longer than a typical episode of the disc a title must be to be
+ * taken for a double-length episode rather than a bonus feature.
+ */
+const DOUBLE_EPISODE_RATIO = 1.5;
+
+/**
+ * Whether a title on a TV disc should start out as an extra, not an episode.
+ *
+ * When the disc has a play-all title, the titles it joins are the episodes.
+ * A title that is not one of them (nor an exact repeat of one) is something
+ * else on the disc: a featurette, a gag reel. The exception is a title much
+ * longer than those episodes, which is more likely a double-length episode
+ * the play-all left out. Without a play-all title nothing is known, and
+ * the answer is always no.
+ */
+export function defaultsToExtra(
+  index: number, titles: ScannedTitle[], hints: Record<number, TitleHint>,
+): boolean {
+  const members = new Set<number>();
+  for (const hint of Object.values(hints)) {
+    if (hint.kind === 'play_all') hint.of.forEach((i) => members.add(i));
+  }
+  if (!members.size) return false;
+  const hint = hints[index];
+  if (members.has(index) || hint?.kind === 'play_all') return false;
+  if (hint?.kind === 'duplicate' && members.has(hint.of)) return false;
+  const title = titles.find((t) => t.index === index);
+  if (!title) return false;
+  const lengths = titles
+    .filter((t) => members.has(t.index))
+    .map((t) => t.duration_seconds)
+    .sort((a, b) => a - b);
+  const typical = lengths[Math.floor((lengths.length - 1) / 2)] ?? 0;
+  return !(typical > 0 && title.duration_seconds >= typical * DOUBLE_EPISODE_RATIO);
+}
+
+/** The extras category a title that is not an episode starts out with. */
+export const DEFAULT_EXTRA_TYPE: ExtrasCategory = 'clip';
+
+// ── Default episode numbering ───────────────────────────────────────────────
+
+/**
+ * The first assignment of the selected titles on a TV disc, in title order.
+ * A title tagged as an extra takes no episode. A title long enough to be an
+ * episode takes the next episode that is not in `held` (episodes already in
+ * the library or on another disc's rip); when every episode of the season is
+ * held, `held` says nothing useful and numbering starts at the first episode.
+ */
+export function autoAssignEpisodes(input: {
+  selectedIndices: number[];
+  titles: ScannedTitle[];
+  episodes: TmdbEpisode[];
+  contentTypes?: Record<number, ExtrasCategory | ''>;
+  held?: Set<number>;
+}): Record<number, Assignment> {
+  const held = input.held ?? new Set<number>();
+  const free = input.episodes.filter((e) => !held.has(e.episodeNumber));
+  const pool = free.length ? free : input.episodes;
+  const assignments: Record<number, Assignment> = {};
+  let next = 0;
+  for (const idx of [...input.selectedIndices].sort((a, b) => a - b)) {
+    if (input.contentTypes?.[idx]) continue;
+    const length = input.titles.find((t) => t.index === idx)?.duration_seconds ?? 0;
+    const ep = length >= MIN_EPISODE_SECONDS && next < pool.length ? pool[next++] : null;
+    assignments[idx] = ep
+      ? { type: 'episode', episodeNumber: ep.episodeNumber, episodeName: ep.name }
+      : { type: 'special' };
+  }
+  return assignments;
+}
+
+/** One file of a series as the library lists it (GET /api/catalog/media/series/{id}/files). */
+type HeldFile = { episodeNumber?: number | null; episodeEndNumber?: number | null; isAvailable?: boolean | null };
+
+/**
+ * The episodes of a season that already exist: files in the library, and
+ * titles other discs' rips declared as episodes. Episodes that an earlier rip
+ * of the disc now in the drive (same fingerprint) produced are left out, so
+ * ripping a disc again numbers it the way it was numbered before.
+ */
+export function heldEpisodeNumbers(input: {
+  season: number;
+  librarySeasons?: { seasonNumber: number | null; episodes: HeldFile[] }[] | null;
+  rips?: StoredRip[];
+  /** Fingerprint of the disc in the drive. */
+  fingerprint?: string | null;
+}): Set<number> {
+  const held = new Set<number>();
+  const add = (set: Set<number>, first?: number | null, last?: number | null) => {
+    if (first == null || first < 1) return;
+    for (let n = first; n <= Math.max(first, last ?? first); n++) set.add(n);
+  };
+  for (const group of input.librarySeasons ?? []) {
+    if (group.seasonNumber !== input.season) continue;
+    for (const file of group.episodes) {
+      if (file.isAvailable !== false) add(held, file.episodeNumber, file.episodeEndNumber);
+    }
+  }
+  const own = new Set<number>();
+  for (const rip of input.rips ?? []) {
+    if (rip.status === 'failed' || rip.status === 'cancelled') continue;
+    const sameDisc = !!input.fingerprint && rip.fingerprint === input.fingerprint;
+    for (const title of rip.titles ?? []) {
+      if (title.status === 'failed' || title.episode == null) continue;
+      if ((title.season ?? rip.season) !== input.season) continue;
+      add(sameDisc ? own : held, title.episode, title.episodeEnd);
+    }
+  }
+  own.forEach((n) => held.delete(n));
+  return held;
+}
+
+/** "1–5, 7" for a set of episode numbers. */
+export function formatEpisodeNumbers(numbers: Iterable<number>): string {
+  const sorted = [...new Set(numbers)].sort((a, b) => a - b);
+  const parts: string[] = [];
+  for (let i = 0; i < sorted.length; i++) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+    parts.push(j > i ? `${sorted[i]}–${sorted[j]}` : String(sorted[i]));
+    i = j;
+  }
+  return parts.join(', ');
 }
 
 /** "dvd" or "bluray" from MakeMKV's own name for the disc ("DVD disc"), else null. */
