@@ -58,7 +58,12 @@ function ContactSheet({ id, fileName }: { id: string; fileName: string }) {
           loading="lazy"
           onLoad={() => setState('ready')}
           onError={() => setState('failed')}
-          style={{ display: state === 'ready' ? 'block' : 'none', width: '100%', height: 'auto', borderRadius: 4 }}
+          // Kept in the layout while loading: a lazy image that is display:none is never fetched.
+          style={{
+            display: 'block', width: '100%', height: 'auto', borderRadius: 4,
+            minHeight: state === 'ready' ? undefined : 1,
+            opacity: state === 'ready' ? 1 : 0,
+          }}
         />
       )}
     </Box>

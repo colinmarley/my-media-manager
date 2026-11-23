@@ -419,10 +419,18 @@ export function analyzeTitles(titles: ScannedTitle[]): Record<number, TitleHint>
     if (parts) hints[t.index] = { kind: 'play_all', of: parts };
   }
 
+  // A play-all joins each of its parts once, so two parts of one play-all are different
+  // video however alike their length and size (sitcom episodes all run about 22 minutes).
+  const playAlls = Object.values(hints).flatMap((h) => (h.kind === 'play_all' ? [h.of] : []));
+  const partsOfOnePlayAll = (a: number, b: number) =>
+    playAlls.some((parts) => parts.includes(a) && parts.includes(b));
+
   for (const t of originals) {
     if (hints[t.index]) continue;
     const short = t.duration_seconds < SHORT_CLIP_SECONDS;
-    const near = originals.find((o) => o.index < t.index && contentMatch(o, t) === 'near');
+    const near = originals.find(
+      (o) => o.index < t.index && contentMatch(o, t) === 'near' && !partsOfOnePlayAll(o.index, t.index),
+    );
     if (near) hints[t.index] = { kind: 'possible_duplicate', of: near.index, short };
     else if (short) hints[t.index] = { kind: 'short' };
   }
