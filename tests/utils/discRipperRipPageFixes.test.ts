@@ -192,6 +192,28 @@ describe('titles a play-all leaves out', () => {
     expect(defaultsToExtra(0, burn, burnHints)).toBe(false);
   });
 
+  it('makes a long title authored unlike the episodes an extra', () => {
+    // Everybody Loves Raymond S6 D5: four 22 minute episodes with three audio tracks and
+    // subtitles, their play-all, and a 43 minute documentary with one audio track and none.
+    const s = (audio: number, subs: number) => [
+      { index: 0, type: 'video', codec: 'Mpeg2', lang_code: '', lang_name: '', name: '' },
+      ...Array.from({ length: audio }, (_, i) => ({ index: 1 + i, type: 'audio', codec: 'AC3', lang_code: 'eng', lang_name: '', name: '' })),
+      ...Array.from({ length: subs }, (_, i) => ({ index: 1 + audio + i, type: 'subtitles', codec: 'DVD', lang_code: 'eng', lang_name: '', name: '' })),
+    ];
+    const ep = (i: number, secs: number) => ({ ...t(i, secs, 1_100_000_000 + i * 5_000_000), streams: s(3, 3) });
+    const raymond = [
+      { ...t(0, 5383, 4_400_000_000), streams: s(3, 3) },
+      ep(1, 1346), ep(2, 1346), ep(3, 1345), ep(4, 1346),
+      { ...t(13, 2612, 2_100_000_000), streams: s(1, 0) },
+    ];
+    const rHints = analyzeTitles(raymond);
+    expect(rHints[0]).toEqual({ kind: 'play_all', of: [1, 2, 3, 4] });
+    expect(defaultsToExtra(13, raymond, rHints)).toBe(true);
+    // The same title authored like the episodes stays a likely double episode.
+    const double = [...raymond.slice(0, 5), { ...t(13, 2612, 2_100_000_000), streams: s(3, 3) }];
+    expect(defaultsToExtra(13, double, analyzeTitles(double))).toBe(false);
+  });
+
   it('treats an exact repeat of an episode as an episode, and a short clip as an extra', () => {
     const more = [...disc, t(7, 1320, 1_000_000_000), t(8, 120, 90_000_000)];
     const moreHints = analyzeTitles(more);

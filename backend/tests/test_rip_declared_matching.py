@@ -149,6 +149,28 @@ async def test_only_a_delivered_title_counts():
     assert await rip_records.declaration_for_path(FakeSession(), PATH, 1000) is None
 
 
+def _delivering(status="ripped", size=1000, rip_status="delivering"):
+    rip, title = _rows(status=status, size=size)
+    rip.status = rip_status
+    return [rip, title]
+
+
+async def test_a_title_announced_by_a_rip_still_delivering_counts_at_its_exact_size():
+    """The rip says "delivered" only after its last file has moved; an extra that
+    ingest reaches before then is still the rip's, not a file to match by name."""
+    found = await rip_records.declaration_for_path(FakeSession(_delivering()), PATH, file_size=1000)
+    assert found is not None and found["rip_id"] == "rip-1"
+
+
+async def test_an_announced_title_needs_the_exact_size_and_a_rip_still_delivering():
+    assert await rip_records.declaration_for_path(FakeSession(_delivering()), PATH, file_size=999) is None
+    assert await rip_records.declaration_for_path(FakeSession(_delivering()), PATH, file_size=0) is None
+    assert await rip_records.declaration_for_path(
+        FakeSession(_delivering(rip_status="failed")), PATH, file_size=1000) is None
+    assert await rip_records.declaration_for_path(
+        FakeSession(_delivering(status="failed")), PATH, file_size=1000) is None
+
+
 # ── The queue's lookup, including the manifest left in the folder ───────────
 
 async def test_lookup_without_a_database_is_no_record(tmp_path):

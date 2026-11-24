@@ -112,7 +112,11 @@ async def get_contact_sheet(extra_id: str, req: Request) -> FileResponse:
     sheet = await asyncio.to_thread(contact_sheet.build, view.get("file_path") or "", duration_ms / 1000.0)
     if sheet is None:
         raise HTTPException(status_code=422, detail="Could not read frames from this file")
-    return FileResponse(sheet, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
+    # The URL names the queue item, and an item id is reused when a later disc
+    # delivers a file to the same ingest path: the browser must ask again each
+    # time (the ETag of the cached sheet makes that cheap) instead of showing
+    # the previous file's frames.
+    return FileResponse(sheet, media_type="image/jpeg", headers={"Cache-Control": "private, no-cache"})
 
 
 async def _update_held_extra(queue_service: Any, extra_id: str, body: dict[str, Any]) -> Optional[dict]:

@@ -353,7 +353,7 @@ export const SHORT_CLIP_SECONDS = 300;
 /** Shorter than this, a title on a TV disc is not an episode. */
 export const MIN_EPISODE_SECONDS = 600;
 
-type ScannedTitle = Pick<DiscTitle, 'index' | 'duration_seconds' | 'file_size_bytes'>;
+type ScannedTitle = Pick<DiscTitle, 'index' | 'duration_seconds' | 'file_size_bytes'> & { streams?: DiscStream[] };
 
 /**
  * A repeat of a title points at the same video on the disc, so the scan gives
@@ -478,8 +478,10 @@ const DOUBLE_EPISODE_RATIO = 1.5;
  * A title that is not one of them (nor an exact repeat of one) is something
  * else on the disc: a featurette, a gag reel. The exception is a title much
  * longer than those episodes, which is more likely a double-length episode
- * the play-all left out. Without a play-all title nothing is known, and
- * the answer is always no.
+ * the play-all left out — unless its tracks say otherwise: a bonus feature is
+ * usually authored with fewer audio tracks than the episodes (one where they
+ * have three) and without their subtitles. Without a play-all title nothing
+ * is known, and the answer is always no.
  */
 export function defaultsToExtra(
   index: number, titles: ScannedTitle[], hints: Record<number, TitleHint>,
@@ -499,7 +501,31 @@ export function defaultsToExtra(
     .map((t) => t.duration_seconds)
     .sort((a, b) => a - b);
   const typical = lengths[Math.floor((lengths.length - 1) / 2)] ?? 0;
-  return !(typical > 0 && title.duration_seconds >= typical * DOUBLE_EPISODE_RATIO);
+  const looksDouble = typical > 0 && title.duration_seconds >= typical * DOUBLE_EPISODE_RATIO;
+  if (!looksDouble) return true;
+  return authoredUnlikeEpisodes(title, titles.filter((t) => members.has(t.index)));
+}
+
+function trackCount(title: ScannedTitle, type: 'audio' | 'subtitles'): number | null {
+  if (!title.streams?.length) return null;
+  return title.streams.filter((s) => s.type === type).length;
+}
+
+/**
+ * Whether ``title`` has fewer audio tracks than every one of the episodes, or
+ * no subtitles where every episode has some. False when the scan did not
+ * list the streams.
+ */
+function authoredUnlikeEpisodes(title: ScannedTitle, episodes: ScannedTitle[]): boolean {
+  const audio = trackCount(title, 'audio');
+  const subs = trackCount(title, 'subtitles');
+  if (audio === null || subs === null || !episodes.length) return false;
+  const episodeAudio = episodes.map((t) => trackCount(t, 'audio'));
+  const episodeSubs = episodes.map((t) => trackCount(t, 'subtitles'));
+  if (episodeAudio.some((n) => n === null) || episodeSubs.some((n) => n === null)) return false;
+  const fewerAudio = episodeAudio.every((n) => audio < (n as number));
+  const noSubs = subs === 0 && episodeSubs.every((n) => (n as number) > 0);
+  return fewerAudio || noSubs;
 }
 
 /** The extras category a title that is not an episode starts out with. */

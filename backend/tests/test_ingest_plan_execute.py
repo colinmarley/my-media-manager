@@ -197,6 +197,24 @@ def test_path_builder_spells_each_role():
     assert path(media_type='home_video') is None
 
 
+def test_episode_names_lose_the_part_marker_tmdb_adds():
+    """TMDB names the parts of a story "Mother's Day (1)", "The Bigger Person (2)"; the
+    episode code orders them, and Jellyfin would show the marker in the name."""
+    clean = PathBuilder.clean_episode_title
+    assert clean("Mother's Day (1)") == "Mother's Day"
+    assert clean("The First Time (3)") == "The First Time"
+    assert clean("Pilot (Part 2)") == "Pilot"
+    assert clean("Dead Drop (Pt. 1)") == "Dead Drop"
+    # Numbers that belong to the title stay.
+    assert clean("The One with 5 Steaks (Part 1) Redux") == "The One with 5 Steaks (Part 1) Redux"
+    assert clean("Catch-22") == "Catch-22"
+    assert clean("1969 (1969)") == "1969 (1969)"
+    assert clean(None) == ""
+    spec = PathSpec(media_type='episode', title='Everybody Loves Raymond', year=1996, imdb_id='tt0115167',
+                    role=ROLE_EPISODE, season=6, episode=22, episode_title="Mother's Day (1)", extension='.mkv')
+    assert PathBuilder.relative_path(spec).endswith("S06E22 Mother's Day.mkv")
+
+
 # ---------------------------------------------------------------------------
 # Known limit: special-feature numbers from two passes collided
 # ---------------------------------------------------------------------------
