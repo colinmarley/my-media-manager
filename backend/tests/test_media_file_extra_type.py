@@ -109,12 +109,14 @@ def test_stems_split_into_base_counter_and_suffix():
 def test_every_category_has_a_suffix_the_library_parser_reads_back():
     assert set(extras_taxonomy.CATEGORY_TO_SUFFIX) == set(extras_taxonomy.CATEGORIES)
     for category in extras_taxonomy.CATEGORIES:
+        # A blooper is filed under Jellyfin's "other" suffix, which reads back as other.
+        expected = "other" if category == "blooper" else category
         assert extras_taxonomy.classify_extra_category_from_stem(
-            extras_taxonomy.suffixed_stem("Show (2001)", category)) == category
+            extras_taxonomy.suffixed_stem("Show (2001)", category)) == expected
         assert extras_taxonomy.split_suffixed_stem(
             extras_taxonomy.suffixed_stem("Show (2001)", category, 4)) == {
                 "base": "Show (2001)", "number": "4",
-                "suffix": extras_taxonomy.CATEGORY_TO_SUFFIX[category], "category": category}
+                "suffix": extras_taxonomy.CATEGORY_TO_SUFFIX[category], "category": expected}
 
 
 # -- the endpoint ----------------------------------------------------------
@@ -161,24 +163,24 @@ async def test_renames_the_file_moves_its_sidecars_and_keeps_the_record(app, lib
 
 async def test_takes_the_next_number_when_the_plain_name_is_taken(app, library):
     row = _scene(library)
-    _put(library, f"{SEASON}/Burn Notice (2007)-blooper.mkv")
-    # "2-blooper" is free on disk but another record holds it, and "3-blooper" has a stray nfo.
-    held = _row(library, f"{SEASON}/Burn Notice (2007) 2-blooper.mkv", id_="f2")
-    _put(library, f"{SEASON}/Burn Notice (2007) 3-blooper.nfo")
+    _put(library, f"{SEASON}/Burn Notice (2007)-other.mkv")
+    # "2-other" is free on disk but another record holds it, and "3-other" has a stray nfo.
+    held = _row(library, f"{SEASON}/Burn Notice (2007) 2-other.mkv", id_="f2")
+    _put(library, f"{SEASON}/Burn Notice (2007) 3-other.nfo")
     session = FakeSession([row, held])
 
-    preview = await _post(app, session, "blooper")
+    preview = await _post(app, session, "other")
     assert preview.status_code == 200, preview.text
-    assert preview.json()["newName"] == "Burn Notice (2007) 4-blooper.mkv"
+    assert preview.json()["newName"] == "Burn Notice (2007) 4-other.mkv"
 
-    resp = await _post(app, session, "blooper", dry_run=False)
+    resp = await _post(app, session, "other", dry_run=False)
     assert resp.status_code == 200, resp.text
-    assert row.file_name == "Burn Notice (2007) 4-blooper.mkv"
-    assert (library / SEASON / "Burn Notice (2007) 4-blooper.mkv").read_bytes() == b"video"
-    assert (library / SEASON / "Burn Notice (2007) 4-blooper.nfo").read_text() == (
-        "<movie>\n  <title>Burn Notice 4-blooper</title>\n</movie>\n")
-    assert (library / SEASON / "Burn Notice (2007)-blooper.mkv").read_bytes() == b"x"  # untouched
-    assert held.file_name == "Burn Notice (2007) 2-blooper.mkv"
+    assert row.file_name == "Burn Notice (2007) 4-other.mkv"
+    assert (library / SEASON / "Burn Notice (2007) 4-other.mkv").read_bytes() == b"video"
+    assert (library / SEASON / "Burn Notice (2007) 4-other.nfo").read_text() == (
+        "<movie>\n  <title>Burn Notice 4-other</title>\n</movie>\n")
+    assert (library / SEASON / "Burn Notice (2007)-other.mkv").read_bytes() == b"x"  # untouched
+    assert held.file_name == "Burn Notice (2007) 2-other.mkv"
 
 
 async def test_a_first_of_its_type_file_becomes_the_first_of_the_new_type(app, library):

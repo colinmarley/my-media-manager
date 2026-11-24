@@ -43,14 +43,23 @@ CATEGORY_TO_FOLDER: Dict[str, str] = {
     "sample": "samples",
     "short": "shorts",
     "clip": "clips",
-    "blooper": "bloopers",
+    # Jellyfin has no bloopers folder (nor suffix): a gag reel there would be
+    # read as an episode. It is filed with the other extras Jellyfin knows.
+    "blooper": "other",
     "other": "other",
 }
 
-FOLDER_TO_CATEGORY: Dict[str, str] = {v: k for k, v in CATEGORY_TO_FOLDER.items()}
+# "other" maps back to "other", not "blooper" (later entries win). A "bloopers" folder or a
+# "-blooper" name (the disc ripper still names gag reels that way in ingest) reads as a blooper.
+FOLDER_TO_CATEGORY: Dict[str, str] = {
+    **{v: k for k, v in CATEGORY_TO_FOLDER.items()},
+    "bloopers": "blooper",
+}
 
-# The Jellyfin filename suffix of each category ("Title (Year)-trailer.mkv"). The same table the
-# disc ripper names its extras from (disc-ripper-service job_manager.CONTENT_TYPE_SUFFIX).
+# The Jellyfin filename suffix of each category ("Title (Year)-trailer.mkv"). Every suffix here
+# must be one Jellyfin reads as an extra (Emby.Naming NamingOptions: trailer, sample, scene, clip,
+# interview, behindthescenes, deleted, deletedscene, featurette, short, extra, other); any other
+# file in a season folder is taken for an episode.
 CATEGORY_TO_SUFFIX: Dict[str, str] = {
     "behind_the_scenes": "behindthescenes",
     "deleted_scene": "deletedscene",
@@ -61,9 +70,15 @@ CATEGORY_TO_SUFFIX: Dict[str, str] = {
     "sample": "sample",
     "short": "short",
     "clip": "clip",
-    "blooper": "blooper",
+    "blooper": "other",
     "other": "other",
 }
+
+# The extra types Jellyfin recognises by file-name suffix.
+JELLYFIN_EXTRA_SUFFIXES = frozenset({
+    "trailer", "sample", "scene", "clip", "interview", "behindthescenes",
+    "deleted", "deletedscene", "featurette", "short", "extra", "other",
+})
 
 
 def extra_file_name(base: str, category: str, extension: str, taken: Iterable[str] = ()) -> str:

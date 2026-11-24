@@ -351,9 +351,15 @@ DURATION_TOLERANCE = 0.02
 async def declaration_for_path(db: Any, path: Any, file_size: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """What a rip declared the file at ``path`` to be, or None.
 
-    Only a delivered title counts, and only while the file is still the one
-    the rip delivered: a different size means another file now sits at that
+    A delivered title counts, and only while the file is still the one the
+    rip delivered: a different size means another file now sits at that
     path, and the record says nothing about it.
+
+    So does a title a rip announced and is still delivering, when the file is
+    exactly the size the ripper recorded. The rip confirms "delivered" only
+    after its last file has moved, and ingest can reach an earlier file first
+    (a short extra lands while a long title is still copying); without this,
+    such an extra was filed by its name, unreviewed.
     """
     normalized = media_file_index.normalize_path(path)
     if not normalized:
@@ -361,13 +367,26 @@ async def declaration_for_path(db: Any, path: Any, file_size: Optional[int] = No
     rows = (await db.execute(
         select(DiscRipTitle).where(DiscRipTitle.delivered_path == normalized)
     )).scalars().all()
-    rows = [row for row in rows if row.status == DELIVERED]
-    if file_size and any(row.size_bytes for row in rows):
-        rows = [row for row in rows if not row.size_bytes or row.size_bytes == file_size]
+    rips = {
+        rip.id: rip
+        for rip in (await db.execute(
+            select(DiscRip).where(DiscRip.id.in_(list({row.rip_id for row in rows})))
+        )).scalars().all()
+    } if rows else {}
+    delivered = [row for row in rows if row.status == DELIVERED]
+    if file_size and any(row.size_bytes for row in delivered):
+        delivered = [row for row in delivered if not row.size_bytes or row.size_bytes == file_size]
+    announced = [
+        row for row in rows
+        if row.status not in (DELIVERED, "failed")
+        and getattr(rips.get(row.rip_id), "status", None) == "delivering"
+        and file_size and row.size_bytes == file_size
+    ]
+    rows = delivered or announced
     if not rows:
         return None
     title = max(rows, key=lambda row: (row.created_at is not None, row.created_at))
-    rip = (await db.execute(select(DiscRip).where(DiscRip.id == title.rip_id))).scalar_one_or_none()
+    rip = rips.get(title.rip_id)
     if rip is None:
         return None
     return {

@@ -19,7 +19,10 @@ def test_every_category_has_a_folder_mapping():
 
 def test_folder_to_category_is_a_true_inverse():
     for category, folder in CATEGORY_TO_FOLDER.items():
+        if category == "blooper":
+            continue  # filed under Jellyfin's "other", which reads back as other
         assert FOLDER_TO_CATEGORY[folder] == category
+    assert FOLDER_TO_CATEGORY["bloopers"] == "blooper"
 
 
 def test_all_canonical_folders_are_in_extra_folder_names():
@@ -34,7 +37,7 @@ def test_all_canonical_folders_are_in_extra_folder_names():
 def test_folder_for_category_matches_the_table():
     assert folder_for_category("trailer") == "trailers"
     assert folder_for_category("deleted_scene") == "deleted scenes"
-    assert folder_for_category("blooper") == "bloopers"
+    assert folder_for_category("blooper") == "other"  # Jellyfin has no bloopers folder
 
 
 def test_folder_for_category_unknown_returns_none():

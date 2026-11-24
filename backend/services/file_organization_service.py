@@ -25,6 +25,23 @@ from services import storage_paths
 from services.path_builder import PathBuilder
 from utils.logging import logger
 
+_EPISODE_CODE_RE = re.compile(r"\bS\d{1,3}E\d{1,4}\b", re.IGNORECASE)
+
+
+def _is_extra_path(path: str) -> bool:
+    """Whether the file at ``path`` is an extra: it sits in an extras folder
+    ("deleted scenes", "featurettes"…) or is named "Title (Year)-suffix" with no
+    episode code."""
+    from services import extras_taxonomy
+
+    folder = os.path.basename(os.path.dirname(path)).strip().lower()
+    if folder in extras_taxonomy.EXTRA_FOLDER_NAMES:
+        return True
+    stem = os.path.splitext(os.path.basename(path))[0]
+    if _EPISODE_CODE_RE.search(stem):
+        return False
+    return extras_taxonomy.split_suffixed_stem(stem) is not None
+
 
 class FileOrganizationService:
     """Organizes files into Jellyfin-compliant folder structures."""
@@ -861,6 +878,11 @@ class FileOrganizationService:
                     if not destination:
                         continue
                     stem, _ = os.path.splitext(destination)
+                    if _is_extra_path(destination):
+                        # An extra is not an episode: an episodedetails file would
+                        # give it an episode number (1 when none is known) and a
+                        # title made from its ingest name.
+                        continue
                     episode_nfo_path = f"{stem}.nfo"
                     xml_text = self._build_episode_nfo(media, assignment)
                     if await self._write_nfo_if_missing(episode_nfo_path, xml_text, recorder):
@@ -952,7 +974,7 @@ class FileOrganizationService:
         except (TypeError, ValueError):
             episode_number = 1
 
-        episode_title = assignment.get("parsedInfo", {}).get("episode_title") or ""
+        episode_title = PathBuilder.clean_episode_title(assignment.get("parsedInfo", {}).get("episode_title"))
         if episode_title:
             safe_episode_title = escape(str(episode_title))
         else:

@@ -38,6 +38,8 @@ _INVALID_CHARS = '<>:"|?*'
 # become a hyphen instead of being dropped ("5050").
 _SEPARATOR_CHARS = "/\\"
 _IMDB_ID_RE = re.compile(r"tt\d+")
+# "(1)", "(2)", "(Part 3)", "(Pt. 2)" at the end of an episode title.
+_PART_MARKER_RE = re.compile(r"\s*\((?:part|pt\.?)?\s*\d{1,2}\)\s*$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -67,6 +69,13 @@ def _as_int(value: Any) -> Optional[int]:
 
 class PathBuilder:
     """Builds library-relative destination paths from a :class:`PathSpec`."""
+
+    @staticmethod
+    def clean_episode_title(title: Any) -> str:
+        """An episode title without the part marker TMDB appends to the episodes of a
+        multi-part story ("Mother's Day (1)", "Pilot (Part 2)"). The episode code
+        already orders the parts; Jellyfin would show the marker as part of the name."""
+        return _PART_MARKER_RE.sub("", str(title or "")).strip()
 
     @staticmethod
     def sanitize(name: Any) -> str:
@@ -166,7 +175,7 @@ class PathBuilder:
                 label = f"S{max(season, 0):02d}E{episode:02d}"
                 if episode_end is not None and episode_end > episode:
                     label = f"{label}E{episode_end:02d}"
-            episode_title = cls.sanitize(spec.episode_title)
+            episode_title = cls.sanitize(cls.clean_episode_title(spec.episode_title))
             suffix = f" {episode_title}" if episode_title else ""
             return f"{folder} {label}{suffix}{ext}"
 

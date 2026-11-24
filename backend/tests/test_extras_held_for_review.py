@@ -103,9 +103,23 @@ def test_extra_file_name_numbers_from_the_second_of_a_kind():
 
 
 def test_every_category_has_a_suffix_the_taxonomy_reads_back():
+    # A blooper is filed under Jellyfin's "other" (Jellyfin has no blooper type), so it reads back as one.
     for category in extras_taxonomy.CATEGORIES:
         stem = os.path.splitext(extras_taxonomy.extra_file_name("X (2000)", category, ".mkv"))[0]
-        assert extras_taxonomy.classify_extra_category_from_stem(stem) == category
+        expected = "other" if category == "blooper" else category
+        assert extras_taxonomy.classify_extra_category_from_stem(stem) == expected
+
+
+def test_every_category_is_filed_under_a_name_and_folder_jellyfin_reads_as_an_extra():
+    """Any other file in a season folder is taken by Jellyfin for an episode."""
+    jellyfin_folders = {"trailers", "behind the scenes", "deleted scenes", "interviews", "scenes",
+                        "samples", "shorts", "featurettes", "extras", "other", "clips"}
+    for category in extras_taxonomy.CATEGORIES:
+        assert extras_taxonomy.CATEGORY_TO_SUFFIX[category] in extras_taxonomy.JELLYFIN_EXTRA_SUFFIXES
+        assert extras_taxonomy.CATEGORY_TO_FOLDER[category] in jellyfin_folders
+    assert extras_taxonomy.extra_file_name("Show (1996)", "blooper", ".mkv") == "Show (1996)-other.mkv"
+    # The disc ripper still names a gag reel "-blooper" in ingest; that reads as a blooper.
+    assert extras_taxonomy.classify_extra_category_from_stem("Show (1996)-blooper") == "blooper"
 
 
 # ── apply_declaration ───────────────────────────────────────────────────────
@@ -158,7 +172,7 @@ def test_changing_the_type_renames_the_proposal(tmp_path):
 
     updated = asyncio.run(service.set_extras_category(item.id, "blooper"))
     assert updated.parsed_info["extras_category"] == "blooper"
-    assert updated.proposed_path == "Movies/Gone Girl (2014) [imdbid-tt2267998]/Gone Girl (2014)-blooper.mkv"
+    assert updated.proposed_path == "Movies/Gone Girl (2014) [imdbid-tt2267998]/Gone Girl (2014)-other.mkv"
     assert service.is_held_extra(updated)
 
     with pytest.raises(ValueError):
@@ -181,7 +195,7 @@ def test_extras_of_one_type_are_numbered_against_each_other_and_the_library(tmp_
 
     assert all(item.status == QUEUE_NEEDS_REVIEW for item in items)
     names = sorted(os.path.basename(view["proposed_path"]) for view in service.held_extras())
-    assert names == ["Burn Notice (2007) 2-scene.mkv", "Burn Notice (2007) 3-scene.mkv", "Burn Notice (2007)-blooper.mkv"]
+    assert names == ["Burn Notice (2007) 2-scene.mkv", "Burn Notice (2007) 3-scene.mkv", "Burn Notice (2007)-other.mkv"]
     folders = {os.path.dirname(view["proposed_path"]) for view in service.held_extras()}
     assert folders == {"TV Shows/Burn Notice (2007) [imdbid-tt0810788]/Season 01"}
 
@@ -277,7 +291,7 @@ async def test_patch_sets_the_type_then_confirm_files_it(app, tmp_path):
         changed = await ac.patch(f"/api/media/extras/{item.id}", json={"category": "blooper"})
         assert changed.status_code == 200
         assert changed.json()["category"] == "blooper" and changed.json()["confirmed"] is False
-        assert changed.json()["proposedPath"].endswith("Gone Girl (2014)-blooper.mkv")
+        assert changed.json()["proposedPath"].endswith("Gone Girl (2014)-other.mkv")
         assert accepted == []
 
         bad = await ac.patch(f"/api/media/extras/{item.id}", json={"category": "nonsense"})
@@ -308,6 +322,10 @@ async def test_contact_sheet_is_served_for_a_held_extra_only(app, tmp_path, monk
         assert ok.status_code == 200 and ok.headers["content-type"] == "image/jpeg"
         assert ok.content == b"\xff\xd8jpeg"
         assert asked == [item.file_path]
+        # An item id is reused when a later disc delivers to the same path: the
+        # browser must revalidate, not show the earlier file's frames.
+        assert ok.headers["cache-control"] == "private, no-cache"
+        assert ok.headers.get("etag")
         assert (await ac.get("/api/media/extras/nope/contact-sheet")).status_code == 404
 
         monkeypatch.setattr(contact_sheet, "build", lambda *_: None)
@@ -378,7 +396,7 @@ async def test_confirming_through_the_api_files_the_extra_under_the_chosen_type(
     assert len(orchestrator.calls) == 1
     filed = orchestrator.calls[0]
     assert filed["proposed_path"].replace("\\", "/").endswith(
-        "Movies/Gone Girl (2014) [imdbid-tt2267998]/Gone Girl (2014)-blooper.mkv"
+        "Movies/Gone Girl (2014) [imdbid-tt2267998]/Gone Girl (2014)-other.mkv"
     )
     assert filed["parsed_info"]["extras_category"] == "blooper"
     assert filed["parsed_info"]["extras_confirmed"] is True
