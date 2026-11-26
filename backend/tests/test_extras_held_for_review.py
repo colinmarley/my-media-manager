@@ -3,13 +3,15 @@
 import asyncio
 import json
 import os
+import shutil
+import subprocess
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from config.settings import settings
-from services import contact_sheet, extras_taxonomy, rip_records, storage_paths
+from services import contact_sheet, extra_preview, extras_taxonomy, rip_records, storage_paths
 from services.ingress_queue_service import (
     QUEUE_AUTO_ASSIGNED,
     QUEUE_COMPLETED,
@@ -330,6 +332,141 @@ async def test_contact_sheet_is_served_for_a_held_extra_only(app, tmp_path, monk
 
         monkeypatch.setattr(contact_sheet, "build", lambda *_: None)
         assert (await ac.get(f"/api/media/extras/{item.id}/contact-sheet")).status_code == 422
+
+
+async def test_preview_streams_a_held_extra_from_the_asked_time_and_track(app, tmp_path, monkeypatch):
+    service, item = await _held(tmp_path)
+    asked = []
+
+    async def stream(path, start, audio):
+        asked.append((path, start, audio))
+        yield b"ftyp"
+        yield b"moof"
+
+    monkeypatch.setattr(extra_preview, "stream", stream)
+    monkeypatch.setattr(
+        extra_preview, "playback_info",
+        lambda path: {"durationSeconds": 120.0, "audioTracks": [{"index": 0}, {"index": 1, "commentary": True}]},
+    )
+    async with _client(app, service) as ac:
+        ok = await ac.get(f"/api/media/extras/{item.id}/preview", params={"start": 61.5, "audio": 1})
+        assert ok.status_code == 200 and ok.headers["content-type"] == "video/mp4"
+        assert ok.content == b"ftypmoof"
+        assert "no-store" in ok.headers["cache-control"]
+        assert asked == [(item.file_path, 61.5, 1)]
+
+        info = await ac.get(f"/api/media/extras/{item.id}/playback-info")
+        assert info.status_code == 200 and info.json()["audioTracks"][1]["commentary"] is True
+
+        assert (await ac.get("/api/media/extras/nope/preview")).status_code == 404
+        assert (await ac.get(f"/api/media/extras/{item.id}/preview", params={"start": -1})).status_code == 422
+
+        os.remove(item.file_path)
+        assert (await ac.get(f"/api/media/extras/{item.id}/preview")).status_code == 404
+        assert (await ac.get(f"/api/media/extras/{item.id}/playback-info")).status_code == 404
+
+
+@pytest.mark.parametrize("spec_version", ["2.3", "2.4"])
+async def test_an_abandoned_preview_is_closed_so_ffmpeg_stops(spec_version):
+    """The browser drops a stream on every jump; the generator's cleanup (which kills ffmpeg) must run
+    as the response ends, not whenever the abandoned generator is garbage collected."""
+    from api.extras import _ClosingStreamingResponse
+
+    closed = []
+    chunks_sent = []
+
+    async def stream():
+        try:
+            while True:
+                yield b"x" * 1024
+        finally:
+            closed.append(True)
+
+    async def receive():
+        await asyncio.sleep(0.05)
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        if message["type"] != "http.response.body":
+            return
+        chunks_sent.append(message)
+        if len(chunks_sent) > 1:
+            # The client has gone: a slow write that never drains (spec 2.3), or an error (2.4).
+            if spec_version == "2.4":
+                raise OSError("connection lost")
+            await asyncio.Event().wait()
+
+    response = _ClosingStreamingResponse(stream(), media_type="video/mp4")
+    scope = {"type": "http", "asgi": {"version": "3.0", "spec_version": spec_version}}
+    from starlette.requests import ClientDisconnect
+
+    try:
+        await asyncio.wait_for(response(scope, receive, send), timeout=5)
+    except (OSError, ClientDisconnect):
+        pass  # how the lost connection surfaces depends on the Starlette version
+    assert closed == [True]
+
+
+# ── previews ────────────────────────────────────────────────────────────────
+
+def test_preview_command_seeks_before_reading_and_maps_the_chosen_audio_track():
+    cmd = extra_preview.command("/in/a.mkv", 75.25, 2)
+    assert cmd[0] == "ffmpeg" and cmd[-1] == "pipe:1"
+    assert cmd.index("-ss") < cmd.index("-i") and cmd[cmd.index("-ss") + 1] == "75.250"
+    assert "0:a:2?" in cmd and "0:v:0?" in cmd
+    assert "frag_keyframe+empty_moov+default_base_moof" in cmd
+    # Out-of-range input is clamped, not passed to ffmpeg.
+    assert "0.000" in extra_preview.command("/in/a.mkv", -5, -1) and "0:a:0?" in extra_preview.command("/in/a.mkv", 0, -1)
+
+
+needs_ffmpeg = pytest.mark.skipif(
+    not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="ffmpeg/ffprobe not installed"
+)
+
+
+def _two_track_clip(tmp_path) -> str:
+    """A four-second MKV with MPEG-2 video and two AC-3 tracks, the second marked as a commentary."""
+    path = os.fspath(tmp_path / "clip.mkv")
+    subprocess.run(
+        [
+            "ffmpeg", "-v", "error", "-y",
+            "-f", "lavfi", "-i", "testsrc=size=720x480:rate=30000/1001:duration=4",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+            "-f", "lavfi", "-i", "sine=frequency=880:duration=4",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a",
+            "-c:v", "mpeg2video", "-c:a", "ac3",
+            "-metadata:s:a:1", "title=Commentary", "-disposition:a:1", "comment",
+            path,
+        ],
+        check=True, capture_output=True, timeout=60,
+    )
+    return path
+
+
+@needs_ffmpeg
+def test_playback_info_gives_the_length_and_each_audio_track(tmp_path):
+    info = extra_preview.playback_info(_two_track_clip(tmp_path))
+    assert 3.5 < info["durationSeconds"] < 4.5
+    tracks = info["audioTracks"]
+    assert [t["index"] for t in tracks] == [0, 1]
+    assert tracks[0]["codec"] == "ac3" and tracks[1]["title"] == "Commentary" and tracks[1]["commentary"] is True
+    assert extra_preview.playback_info(os.fspath(tmp_path / "gone.mkv")) == {"durationSeconds": None, "audioTracks": []}
+
+
+@needs_ffmpeg
+async def test_preview_stream_is_a_playable_fragmented_mp4(tmp_path):
+    clip = _two_track_clip(tmp_path)
+    data = b"".join([chunk async for chunk in extra_preview.stream(clip, 1.0, 1)])
+    assert data[4:8] == b"ftyp" and b"moof" in data
+    out = tmp_path / "preview.mp4"
+    out.write_bytes(data)
+    probe = json.loads(subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_name:format=duration", "-of", "json", os.fspath(out)],
+        check=True, capture_output=True, timeout=60,
+    ).stdout)
+    assert sorted(s["codec_name"] for s in probe["streams"]) == ["aac", "h264"]
+    # Started a second in: about three seconds remain.
+    assert 2.0 < float(probe["format"]["duration"]) < 3.6
 
 
 # ── contact sheets ──────────────────────────────────────────────────────────

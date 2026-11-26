@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 import ExtrasReviewPanel from '../../src/app/admin/_components/ExtrasReviewPanel';
@@ -9,6 +9,7 @@ import { PendingExtra } from '../../src/types/library/ExtrasReview.type';
 const listPendingMock = vi.fn();
 const listCategoriesMock = vi.fn();
 const updateMock = vi.fn();
+const playbackInfoMock = vi.fn();
 
 vi.mock('../../src/service/library/ExtrasReviewService', () => ({
   default: {
@@ -16,6 +17,8 @@ vi.mock('../../src/service/library/ExtrasReviewService', () => ({
     listCategories: (...args: unknown[]) => listCategoriesMock(...args),
     update: (...args: unknown[]) => updateMock(...args),
     contactSheetUrl: (id: string) => `/sheet/${id}`,
+    playbackInfo: (...args: unknown[]) => playbackInfoMock(...args),
+    previewUrl: (id: string, start = 0, audio = 0) => `/preview/${id}?start=${start}&audio=${audio}`,
   },
 }));
 
@@ -63,6 +66,10 @@ describe('ExtrasReviewPanel', () => {
     listCategoriesMock.mockReset().mockResolvedValue(['clip', 'blooper', 'featurette']);
     listPendingMock.mockReset().mockResolvedValue([HELD, LEGACY]);
     updateMock.mockReset();
+    playbackInfoMock.mockReset().mockResolvedValue({ durationSeconds: 189, audioTracks: [] });
+    // jsdom has no media playback; the player pauses and reloads its <video> to let go of a stream.
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
   });
 
   // The name can show twice in a row: as the file, and as the name it will be filed under.
@@ -117,5 +124,50 @@ describe('ExtrasReviewPanel', () => {
 
     fireEvent.click(within(row).getByRole('button', { name: 'Confirm and file' }));
     expect(await screen.findByText(/could not be filed: target exists/)).toBeInTheDocument();
+  });
+
+  it('plays a held extra from the start and closes the player', async () => {
+    render(<ExtrasReviewPanel />);
+    const row = await rowOf('Burn Notice (2007)-clip.mkv');
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Play' }));
+    await act(async () => {}); // the player's track lookup
+    const video = within(row).getByLabelText('Playing Burn Notice (2007)-clip.mkv');
+    expect(video).toHaveAttribute('src', '/preview/q1?start=0&audio=0');
+    expect(playbackInfoMock).toHaveBeenCalledWith('q1');
+    expect(within(row).getByRole('slider', { name: 'Jump to' })).toBeInTheDocument();
+
+    fireEvent.click(within(row).getByRole('button', { name: 'Close player' }));
+    expect(within(row).queryByLabelText('Playing Burn Notice (2007)-clip.mkv')).not.toBeInTheDocument();
+    // The older-style row has no file to stream.
+    expect(within(await rowOf('Making Of.mkv')).queryByRole('button', { name: 'Play' })).not.toBeInTheDocument();
+  });
+
+  it('plays from the moment of a frame clicked on the contact sheet', async () => {
+    render(<ExtrasReviewPanel />);
+    const row = await rowOf('Burn Notice (2007)-clip.mkv');
+    fireEvent.load(within(row).getByAltText('Twelve frames from Burn Notice (2007)-clip.mkv'));
+
+    // 189 s over twelve frames is one every 15.75 s: the fifth is at 63 s.
+    fireEvent.click(within(row).getByRole('button', { name: 'Play from 1:03' }));
+    await act(async () => {});
+    expect(within(row).getByLabelText('Playing Burn Notice (2007)-clip.mkv')).toHaveAttribute('src', '/preview/q1?start=63&audio=0');
+  });
+
+  it('switches to another audio track, such as a commentary', async () => {
+    playbackInfoMock.mockResolvedValue({
+      durationSeconds: 189,
+      audioTracks: [
+        { index: 0, codec: 'ac3', channels: 6, language: 'eng', title: null, default: true, commentary: false },
+        { index: 1, codec: 'ac3', channels: 2, language: 'eng', title: 'Director', default: false, commentary: true },
+      ],
+    });
+    render(<ExtrasReviewPanel />);
+    const row = await rowOf('Burn Notice (2007)-clip.mkv');
+    fireEvent.click(within(row).getByRole('button', { name: 'Play' }));
+
+    fireEvent.mouseDown(await within(row).findByRole('combobox', { name: 'Audio' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Track 2 · Director · Commentary · eng · 2ch · ac3' }));
+    expect(within(row).getByLabelText('Playing Burn Notice (2007)-clip.mkv')).toHaveAttribute('src', '/preview/q1?start=0&audio=1');
   });
 });

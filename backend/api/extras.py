@@ -17,17 +17,18 @@ Two kinds of pending extras are listed together:
 """
 
 import asyncio
-from typing import Any, Optional
+import os
+from typing import Any, AsyncGenerator, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_db
 from db.models import AssignmentExtraFile, MediaFile
 from api.auth import require_session
-from services import contact_sheet
+from services import contact_sheet, extra_preview
 from services.extras_taxonomy import CATEGORIES
 
 router = APIRouter(prefix="/api/media/extras", tags=["Extras Review"])
@@ -99,15 +100,28 @@ async def list_pending_extras(req: Request, db: AsyncSession = Depends(get_db)) 
     return held + [_row_to_dict(extra, media_file) for extra, media_file in result.all()]
 
 
-@router.get("/{extra_id}/contact-sheet", dependencies=[Depends(require_session)])
-async def get_contact_sheet(extra_id: str, req: Request) -> FileResponse:
-    """A JPEG of twelve evenly spaced frames from a held extra (made on first request, then cached)."""
+def _held_view(req: Request, extra_id: str) -> dict:
+    """The queue view of the held extra ``extra_id``; 404 when it is not one."""
     queue_service = _queue_service(req)
     view = None
     if queue_service is not None:
         view = next((v for v in queue_service.held_extras() if v.get("id") == extra_id), None)
     if view is None:
         raise HTTPException(status_code=404, detail="Extra not found")
+    return view
+
+
+def _held_file(req: Request, extra_id: str) -> str:
+    path = _held_view(req, extra_id).get("file_path") or ""
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="The file is no longer there")
+    return path
+
+
+@router.get("/{extra_id}/contact-sheet", dependencies=[Depends(require_session)])
+async def get_contact_sheet(extra_id: str, req: Request) -> FileResponse:
+    """A JPEG of twelve evenly spaced frames from a held extra (made on first request, then cached)."""
+    view = _held_view(req, extra_id)
     duration_ms = view.get("media_duration_ms") or 0
     sheet = await asyncio.to_thread(contact_sheet.build, view.get("file_path") or "", duration_ms / 1000.0)
     if sheet is None:
@@ -117,6 +131,58 @@ async def get_contact_sheet(extra_id: str, req: Request) -> FileResponse:
     # time (the ETag of the cached sheet makes that cheap) instead of showing
     # the previous file's frames.
     return FileResponse(sheet, media_type="image/jpeg", headers={"Cache-Control": "private, no-cache"})
+
+
+@router.get("/{extra_id}/playback-info", dependencies=[Depends(require_session)])
+async def get_playback_info(extra_id: str, req: Request) -> dict:
+    """The held extra's length and audio tracks, so the player can jump anywhere and switch to a commentary."""
+    return await asyncio.to_thread(extra_preview.playback_info, _held_file(req, extra_id))
+
+
+async def _until_disconnected(req: Request, chunks: AsyncGenerator[bytes, None]) -> AsyncGenerator[bytes, None]:
+    """``chunks`` until the browser goes away (uvicorn drops writes to a closed connection without an error)."""
+    try:
+        async for chunk in chunks:
+            if await req.is_disconnected():
+                break
+            yield chunk
+    finally:
+        await chunks.aclose()
+
+
+class _ClosingStreamingResponse(StreamingResponse):
+    """A StreamingResponse that always closes its body when the response ends.
+
+    Each jump or track change in the player abandons a stream. Starlette then
+    stops iterating the body but leaves the generator suspended, so the
+    ``finally`` that stops ffmpeg would wait for garbage collection, and the
+    abandoned transcode ran on to the end of the file.
+    """
+
+    async def __call__(self, scope, receive, send) -> None:  # type: ignore[override]
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            aclose = getattr(self.body_iterator, "aclose", None)
+            if aclose is not None:
+                await aclose()
+
+
+@router.get("/{extra_id}/preview", dependencies=[Depends(require_session)])
+async def get_preview(
+    extra_id: str,
+    req: Request,
+    start: float = Query(0.0, ge=0),
+    audio: int = Query(0, ge=0, le=63),
+) -> StreamingResponse:
+    """The held extra as a browser-playable MP4 stream from ``start`` seconds, with audio track ``audio``."""
+    path = _held_file(req, extra_id)
+    return _ClosingStreamingResponse(
+        _until_disconnected(req, extra_preview.stream(path, start, audio)),
+        media_type="video/mp4",
+        # A live transcode: never cached, and never compressed or buffered by a proxy on the way.
+        headers={"Cache-Control": "no-store, no-transform", "X-Accel-Buffering": "no"},
+    )
 
 
 async def _update_held_extra(queue_service: Any, extra_id: str, body: dict[str, Any]) -> Optional[dict]:
