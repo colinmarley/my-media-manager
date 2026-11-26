@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { spawn } from 'child_process';
 import { Readable } from 'stream';
 import type { ChildProcess } from 'child_process';
+import { longGet } from '../longGet';
 
 // Server-side only: the browser never talks to disc-ripper-service directly, it
 // goes through this proxy (behind the session check in middleware.ts). Read per
@@ -30,6 +31,13 @@ const DROP_RESPONSE_HEADERS = new Set([
 const STREAM_PATH_RE = /^\/jobs\/[^/]+\/files\/\d+\/stream$/;
 // Matches /jobs/<id>/files/<n>/metadata
 const METADATA_PATH_RE = /^\/jobs\/[^/]+\/files\/\d+\/metadata$/;
+// GET /disc/info: a disc scan, which answers only when MakeMKV has finished.
+const SCAN_PATH_RE = /^\/disc\/info$/;
+// A damaged disc can take many minutes to scan (MakeMKV retries every unreadable
+// sector; one took 9 minutes). fetch() gives up after 300 s without response
+// headers, so scans go through node:http with this limit instead. It is above
+// the ripper's own SCAN_TIMEOUT_SECONDS, so the ripper's answer always arrives.
+const SCAN_PROXY_TIMEOUT_MS = 20 * 60 * 1000;
 
 // Wraps a Node.js readable into a Web ReadableStream that kills the ffmpeg
 // process when the browser disconnects mid-stream, preventing the
@@ -221,6 +229,9 @@ async function handler(request: NextRequest): Promise<NextResponse> {
   const base = discRipperBaseUrl();
   if (STREAM_PATH_RE.test(path)) {
     return transcodeStream(`${base}${path}`);
+  }
+  if (request.method === 'GET' && SCAN_PATH_RE.test(path)) {
+    return longGet(`${base}${path}${request.nextUrl.search}`, request.signal, SCAN_PROXY_TIMEOUT_MS);
   }
   if (METADATA_PATH_RE.test(path)) {
     const streamUrl = `${base}${path.replace('/metadata', '/stream')}`;
