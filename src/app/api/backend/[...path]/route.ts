@@ -44,6 +44,10 @@ async function proxy(request: NextRequest): Promise<NextResponse> {
   const init: RequestInit = {
     method: request.method,
     headers: forwardHeaders,
+    // Abort the backend request when the browser goes away: a streamed response
+    // (Extras Review's video preview, a live ffmpeg transcode) otherwise runs on
+    // to its end after every jump in the player.
+    signal: request.signal,
     // @ts-expect-error duplex required for streaming body in Node.js fetch
     duplex: 'half',
   };
@@ -52,7 +56,14 @@ async function proxy(request: NextRequest): Promise<NextResponse> {
     init.body = request.body;
   }
 
-  const response = await fetch(url, init);
+  let response: Response;
+  try {
+    response = await fetch(url, init);
+  } catch (err) {
+    // The browser left before the backend answered: nobody is waiting for this response.
+    if (request.signal.aborted) return new NextResponse(null, { status: 499 });
+    throw err;
+  }
 
   // Forward response headers back to the browser, excluding CORS and Set-Cookie
   // (Set-Cookie is handled separately below via cookies.set() for reliable delivery)

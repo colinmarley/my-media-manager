@@ -23,3 +23,20 @@ export interface PendingExtra {
   queueStatus?: string | null;
   error?: string | null;
 }
+
+/** One audio track of a held extra, in file order (``index`` is what the preview's ``audio`` takes). */
+export interface ExtraAudioTrack {
+  index: number;
+  codec: string | null;
+  channels: number | null;
+  language: string | null;
+  title: string | null;
+  default: boolean;
+  /** Marked as a commentary track in the file. */
+  commentary: boolean;
+}
+
+export interface ExtraPlaybackInfo {
+  durationSeconds: number | null;
+  audioTracks: ExtraAudioTrack[];
+}
